@@ -756,7 +756,7 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 	root_run 'set -e
 		ip link add ip1 type veth peer name ipc0; ip addr add 10.83.0.1/24 dev ip1; ip link set ip1 up
 		ip link add ip2 type veth peer name ips0; ip addr add 10.84.0.1/24 dev ip2; ip link set ip2 up
-		ip netns add ipc; ip link set ipc0 netns ipc; ip -n ipc addr add 10.83.0.2/24 dev ipc0; ip -n ipc addr add 10.83.0.3/24 dev ipc0
+		ip netns add ipc; ip link set ipc0 netns ipc; ip -n ipc addr add 10.83.0.2/24 dev ipc0; ip -n ipc addr add 10.83.0.3/24 dev ipc0; ip -n ipc addr add 10.83.0.4/24 dev ipc0
 		ip -n ipc link set ipc0 up; ip -n ipc link set lo up; ip -n ipc route add default via 10.83.0.1
 		ip netns add ipsrv; ip link set ips0 netns ipsrv; ip -n ipsrv addr add 10.84.0.2/24 dev ips0
 		ip -n ipsrv link set ips0 up; ip -n ipsrv link set lo up; ip -n ipsrv route add default via 10.84.0.1
@@ -802,6 +802,42 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 		pass "threat log: rule, action and severity per match; the default profile's informational matches not logged" || fail "threat log: $lt"
 	ut=$(ui "$UI/ui/api/logs/threat?q=$(python3 -c 'import urllib.parse;print(urllib.parse.quote("severity = critical"))')")
 	[[ $ut == *'"sid":9900001'* && $ut != *'"severity":"major"'* ]] && pass "web UI threat log with a query" || fail "ui threat log: ${ut:0:300}"
+	si=$(cli_run show ips)
+	[[ $si == *"inspection"*"INSPECTING"* ]] && pass "show ips: inspection state INSPECTING (the engine is bound to its queue)" || fail "inspection state: $si"
+
+	# App Identification and the IPS together: 10.83.0.4 may only use HTTP
+	# (application rule with the default profile); anything else from it is
+	# denied. Packets that pass before App Identification names the
+	# connection carry the rule's tag, so the IPS inspects them too, and the
+	# pending allowance is bounded.
+	script=$'configure\nset address app-host cidr 10.83.0.4\nset rule app-ips from ipscli to ipssrv source app-host application [ http ] action allow ips-profile default\nset rule app-host-rest from ipscli to ipssrv source app-host action deny\nmove rule app-ips top\nmove rule app-host-rest after app-ips\ncommit -m "boot test: app + ips"\nexit\nexit\n'
+	out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
+	[[ $out == *"committed revision"* ]] || fail "app + ips commit: $out"
+	sleep 2
+	raw() { root_run "ip netns exec ipc python3 /root/ips-traffic.py raw 10.84.0.2 10.83.0.4 $1"; }
+	stream() { root_run "ip netns exec ipc python3 /root/ips-traffic.py stream 10.84.0.2 10.83.0.4 $1"; }
+	r=$(printf '%s ' "$(get 10.83.0.4 plain)" "$(get 10.83.0.4 SJB-IPS-TEST-CRITICAL)" "$(raw hello)" "$(raw SJB-IPS-TEST-CRITICAL)")
+	[[ $r == "200 blocked passed blocked " ]] &&
+		pass "application rule + IPS: HTTP allowed, a signature in the first request blocked, and a signature in the first bytes, before the application is known, blocked too" ||
+		fail "app + ips: $r (want: 200 blocked passed blocked)"
+	# Classifier failure: with appidd stopped nothing is classified (its
+	# queue is bypassed). The application rule still lets an unidentified
+	# connection through for at most 40 packets, then the deny below it decides.
+	root_run systemctl stop appidd
+	sleep 2
+	sa=$(cli_run show app)
+	[[ $sa == *"Traffic: UNAVAILABLE"*"at most 40 packets"* ]] && pass "appidd stopped: show app says App Identification is unavailable and what that means" || fail "show app with appidd stopped: $sa"
+	n=$(stream 100)
+	[[ $n =~ ^[0-9]+$ && $n -gt 0 && $n -lt 40 ]] &&
+		pass "appidd stopped: an unidentified connection on the application rule is cut after $n echoes (bounded, not unrestricted)" ||
+		fail "appidd stopped: $n of 100 echoes came back (want a bounded cut-off)"
+	r=$(raw SJB-IPS-TEST-CRITICAL)
+	[[ $r == blocked ]] && pass "appidd stopped: the IPS still inspects the application rule's pending traffic" || fail "appidd stopped, signature: $r"
+	root_run systemctl start appidd
+	for _ in $(seq 15); do [[ $(cli_run show app) == *"Traffic: CLASSIFYING"* ]] && break; sleep 2; done
+	[[ $(cli_run show app) == *"Traffic: CLASSIFYING"* ]] && pass "appidd back: show app says CLASSIFYING" || fail "appidd restart: $(cli_run show app | head -3)"
+	script=$'configure\ndelete rule app-ips\ndelete rule app-host-rest\ndelete address app-host\ncommit -m "boot test: app + ips cleanup"\nexit\nexit\n'
+	retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
 	# (The test VM's emulated network sometimes times out DNS lookups.)
 	for _ in 1 2 3 4 5 6; do
 		up=$(cli_run request ips update 2>&1)

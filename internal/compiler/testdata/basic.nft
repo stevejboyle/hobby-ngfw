@@ -32,7 +32,7 @@ table inet ngfw {
 		iifname "veth-users" ip saddr @dag_quarantine counter log prefix "ngfw block-quarantined deny " ct mark set ct mark or 0x4000 drop comment "rule:block-quarantined"
 		iifname "veth-users" oifname "veth-inet" meta l4proto tcp ct mark and 0x7ff == 37 counter log prefix "ngfw block-p2p reset " ct mark set ct mark or 0x4000 reject with tcp reset comment "rule:block-p2p"
 		iifname "veth-users" oifname "veth-inet" ct mark and 0x7ff == 37 counter log prefix "ngfw block-p2p reset " ct mark set ct mark or 0x4000 reject with icmpx type admin-prohibited comment "rule:block-p2p"
-		iifname "veth-users" oifname "veth-inet" ip daddr 9.9.9.9 meta l4proto udp th dport 53 counter jump allowed comment "rule:allow-dns"
+		iifname "veth-users" oifname "veth-inet" ip daddr 9.9.9.9 meta l4proto udp th dport 53 counter ct mark set ct mark and 0x0000f7ff or 0x00000000 jump allowed comment "rule:allow-dns"
 		iifname "veth-users" oifname "veth-inet" ip saddr 10.10.1.0/24 meta l4proto tcp th dport { 80, 443 } ct mark and 0x8000 == 0 log prefix "ngfw allow-web allow " ct mark set ct mark or 0x8000
 		iifname "veth-users" oifname "veth-inet" ip saddr 10.10.1.0/24 meta l4proto tcp th dport { 80, 443 } counter ct mark set ct mark and 0x0000f7ff or 0x00040800 jump allowed comment "rule:allow-web"
 		counter comment "default-deny"

@@ -855,8 +855,13 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 	# (While Suricata shuts down it still holds the queue; bypass applies once
 	# it has exited.)
 	root_run systemctl stop sjb-ips
-	r=$(get 10.83.0.2 SJB-IPS-TEST-CRITICAL)
-	[[ $r == 200 ]] || { sleep 3; r=$(get 10.83.0.2 SJB-IPS-TEST-CRITICAL); }
+	# A stop during a rule reload waits for the reload to finish, and the
+	# engine holds its queue until it exits: keep trying for up to 30 s.
+	for _ in $(seq 10); do
+		r=$(get 10.83.0.2 SJB-IPS-TEST-CRITICAL)
+		[[ $r == 200 ]] && break
+		sleep 3
+	done
 	for _ in $(seq 20); do [[ $(root_run systemctl is-active sjb-ips) == active ]] && break; sleep 2; done
 	[[ $r == 200 && $(root_run systemctl is-active sjb-ips) == active ]] &&
 		pass "traffic flows with Suricata stopped (queue bypass); ngfwd restarts it" ||
@@ -884,7 +889,7 @@ sj=$(ui "$UI/ui/api/stats?window=1h")
 	fail "stats: $(python3 -c 'import json,sys
 j=json.load(sys.stdin)
 print("samples", j.get("samples"), "| apps", [a.get("name") for a in j.get("apps") or []], "| hosts", [h.get("name") for h in j.get("hosts") or []],
-      "| sids", [x.get("sid") for x in (j.get("threats") or {}).get("signatures") or []], "| keys", sorted(j))' <<<"$sj" 2>&1) / samples on disk: $(root_run 'wc -l < /var/lib/ngfw/stats/samples.jsonl; head -c 120 /var/lib/ngfw/stats/samples.jsonl; echo; date +%s')"
+      "| sids", [x.get("sid") for x in (j.get("threats") or {}).get("top") or []], "| keys", sorted(j))' <<<"$sj" 2>&1) / samples on disk: $(root_run 'wc -l < /var/lib/ngfw/stats/samples.jsonl; head -c 120 /var/lib/ngfw/stats/samples.jsonl; echo; date +%s')"
 ss=$(cli_run show statistics 1h)
 [[ $ss == *YouTube* && $ss == *"10.81.0.2"* && $ss == *9900001* ]] && pass "show statistics prints the same" || fail "show statistics: ${ss:0:300}"
 n1=$(grep -o '"samples":[0-9]*' <<<"$sj" | grep -o '[0-9]*$')

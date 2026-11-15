@@ -101,8 +101,7 @@ The design below is the target. Phase 1 simplified it on purpose:
 - The management API is HTTP/JSON on a root-only Unix socket, not gRPC.
 - nftables is driven through `nft -f` transactions, not netlink.
 - Tag registration flushes the host's conntrack entries, and `ngfwd` start
-  flushes all of them, so existing sessions are re-evaluated (as
-  enterprise firewalls do on dynamic address group changes).
+  flushes all of them, so existing sessions are re-evaluated.
 - With no committed config, `ngfwd` applies a forward default-deny.
 - The ruleset also has a fixed input chain (zoned interfaces may only ping
   the firewall) and, when configured, a masquerade NAT chain.
@@ -349,9 +348,19 @@ sequenceDiagram
 1. Edits land in the candidate config.
 2. Validate: schema plus semantic checks (unknown references, shadowed rules).
 3. Compile to a bundle: nftables ruleset, Suricata rule selection, App Identification map.
-4. Apply atomically (`nft -f`), then reload Suricata and `appidd`. Any failure
-   rolls back to the previous revision.
-5. Store the revision with author, time and diff. `rollback N` re-commits N.
+4. Record the revision (and, for commit-confirmed, its rollback target and
+   deadline), then apply the nftables ruleset in one atomic `nft -f`
+   transaction, then make the revision running. A failure at any of these
+   steps undoes the earlier ones and leaves the previous policy in force; if
+   restoring the previous ruleset fails too, the daemon reports a recovery
+   state (Status, `show status`, the web UI) instead of claiming success.
+5. If the compiled policy changed, flush conntrack so every existing
+   connection is re-evaluated against it (its ct mark holds the old rule
+   positions, IPS tag and classification bits).
+6. Routing (FRR), DHCP (Kea), the IPS engine, interface addresses and VLANs
+   converge after the commit, asynchronously: failures are warnings and
+   periodic retries, not rollbacks. Only the nftables step is atomic.
+   `rollback N` re-commits N through the same steps.
 
 Tag registrations and EDL updates change set membership only, never the
 ruleset, so they apply in milliseconds without a commit.

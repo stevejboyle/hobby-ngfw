@@ -1,7 +1,11 @@
 # Security
 
-SJB-OS is a demonstration, not a supported product: run it in a lab, not in
-front of anything that matters. Security reports are still welcome.
+SJB-OS is an experimental demonstration of AI-generated software for
+isolated lab use. It is not a commercial, supported, or production-ready
+security product; do not rely on it to protect production systems. Working
+code does not establish security effectiveness, resilience, or operational
+readiness, and SJB-OS has not been independently security-tested. Security
+reports are still welcome.
 
 ## Reporting a vulnerability
 
@@ -22,3 +26,7 @@ do, as signed upgrade bundles on the releases page.
   is separate from forwarded traffic.
 - Known limits: a self-signed certificate, one admin account, password SSH
   for `admin` unless you set `admin_ssh_key`, and no independent audit.
+- Inspection fails open, deliberately: when App Identification or the IPS
+  isn't receiving traffic, packets pass unclassified or uninspected (rules
+  that name applications still allow an unidentified connection only 40
+  packets). `show ips` and `show app` say which state each is in.

@@ -67,6 +67,14 @@ type Daemon struct {
 	ips         ipsState
 	stats       *stats.Store
 	statsRoot   string
+	// policy is the running config's ruleset without tag set elements: a
+	// commit that changes it flushes conntrack (see flushIfPolicyChanged).
+	policy string
+	// recovery, when set, says live enforcement may not match the recorded
+	// running revision (a failed commit could not restore the previous
+	// ruleset, or an auto-rollback failed). Status reports it; the next
+	// successful commit or rollback clears it.
+	recovery string
 }
 
 type pending struct {
@@ -88,6 +96,9 @@ type Status struct {
 	Running   int        `json:"running_revision"`
 	ConfirmBy *time.Time `json:"confirm_by,omitempty"`
 	Pending   bool       `json:"uncommitted_changes"`
+	// Recovery is set when live enforcement may not match the running
+	// revision; it says what failed and what to do.
+	Recovery string `json:"recovery,omitempty"`
 }
 
 // New builds a daemon. Call Start before serving.
@@ -335,6 +346,7 @@ func (d *Daemon) Start() error {
 		return err
 	}
 	d.sets = res.Sets
+	d.policy = policyOf(cfg)
 	d.wantNICs = wantedNICs(cfg)
 	d.wantNet = wantedNet(cfg)
 	d.wantRoutes = wantedRoutes(cfg)
@@ -384,6 +396,7 @@ func (d *Daemon) restorePendingLocked(running int) {
 	left := sp.Deadline.Sub(d.Now())
 	if left <= 0 {
 		d.log.Warn("commit was not confirmed before its deadline passed while ngfwd was stopped; rolling back", "revision", sp.Revision)
+		d.pending = p
 		d.rollbackUnconfirmedLocked(p, fmt.Sprintf("auto-rollback: revision %d not confirmed (deadline passed while ngfwd was stopped)", p.rev))
 		return
 	}
@@ -499,7 +512,7 @@ func (d *Daemon) Status() (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	s := Status{Running: n, Pending: string(cand) != string(run)}
+	s := Status{Running: n, Pending: string(cand) != string(run), Recovery: d.recovery}
 	if d.pending != nil {
 		t := d.pending.deadline
 		s.ConfirmBy = &t
@@ -547,14 +560,75 @@ func (d *Daemon) commitLocked(data []byte, author, message string, confirm time.
 	if err != nil {
 		return nil, err
 	}
-	// nft -f is atomic: on failure the previous ruleset stays in place.
+	// A pending confirmation this commit supersedes: its rollback target
+	// stays the last confirmed revision, and if this commit fails it stays
+	// pending, on disk as in memory.
+	var old *store.Pending
+	if d.pending != nil {
+		prev = d.pending.prev
+		old = &store.Pending{Revision: d.pending.rev, Previous: d.pending.prev, Deadline: d.pending.deadline}
+	}
+
+	// 1. Record the revision (not yet running) and, for a confirmed commit,
+	// its rollback target and deadline, before anything changes: a commit
+	// reports success only once what would undo it is on disk.
+	rev, err := d.store.SaveRevision(data, author, message, d.Now())
+	if err != nil {
+		return nil, fmt.Errorf("could not record the revision, nothing applied: %w", err)
+	}
+	var deadline time.Time
+	if confirm > 0 {
+		deadline = d.Now().Add(confirm)
+		if err := d.store.SavePending(store.Pending{Revision: rev.N, Previous: prev, Deadline: deadline}); err != nil {
+			d.store.DeleteRevision(rev.N)
+			return nil, fmt.Errorf("could not record the confirmation deadline, nothing applied: %w", err)
+		}
+	}
+	undo := func() {
+		d.restorePendingRecordLocked(old)
+		d.store.DeleteRevision(rev.N)
+	}
+
+	// 2. Apply. nft -f is atomic: on failure the previous ruleset stays.
 	if err := d.nft.Apply(res.Ruleset); err != nil {
+		undo()
 		return nil, fmt.Errorf("apply failed, previous ruleset still active: %w", err)
 	}
-	rev, err := d.store.Save(data, author, message, d.Now())
-	if err != nil {
-		return nil, fmt.Errorf("applied but not recorded: %w", err)
+
+	// 3. Make it the running revision. If that can't be recorded, put the
+	// previous ruleset back so enforcement matches what is recorded.
+	if err := d.store.SetRunning(rev.N); err != nil {
+		undo()
+		if rerr := d.reapplyRunningLocked(); rerr != nil {
+			d.recovery = fmt.Sprintf("revision %d was applied but could not be recorded (%v), and the previous ruleset could not be restored (%v): "+
+				"enforcement may not match running revision %d. Commit again, or restart ngfwd to re-apply the recorded revision", rev.N, err, rerr, prev)
+			d.log.Error("commit failed and the previous ruleset could not be restored", "revision", rev.N, "err", err, "restore_err", rerr)
+			return nil, fmt.Errorf("applied but could not record revision %d (%v), and restoring the previous ruleset failed (%v): see show status", rev.N, err, rerr)
+		}
+		return nil, fmt.Errorf("could not record revision %d as running (%v); the previous ruleset was restored", rev.N, err)
 	}
+	var warnings []string
+	if err := d.store.SetCandidate(data); err != nil {
+		warnings = append(warnings, fmt.Sprintf("the candidate could not be updated to the committed config: %v", err))
+	}
+
+	// Committed. Policy (nftables) is now in force; routing, DHCP, the IPS
+	// and interface changes converge below and report problems as warnings.
+	d.recovery = ""
+	if d.pending != nil {
+		if d.pending.timer != nil {
+			d.pending.timer.Stop()
+		}
+		d.pending = nil
+	}
+	if confirm > 0 {
+		p := &pending{prev: prev, rev: rev.N, deadline: deadline}
+		p.timer = time.AfterFunc(confirm, func() { d.autoRollback(p) })
+		d.pending = p
+	} else if err := d.store.ClearPending(); err != nil {
+		warnings = append(warnings, fmt.Sprintf("could not clear the old confirmation record (it is ignored after a restart): %v", err))
+	}
+	warnings = append(warnings, d.flushIfPolicyChangedLocked(cfg)...)
 	d.sets = res.Sets
 	d.wantNICs = wantedNICs(cfg)
 	d.wantNet = wantedNet(cfg)
@@ -566,23 +640,70 @@ func (d *Daemon) commitLocked(data []byte, author, message string, confirm time.
 	routeWarnings = append(routeWarnings, d.syncDHCPLocked(true)...)
 	routeWarnings = append(routeWarnings, d.syncIPSLocked()...)
 
-	// A new commit supersedes a pending confirmation; the rollback target
-	// stays the last confirmed revision.
-	if d.pending != nil {
-		d.pending.timer.Stop()
-		prev = d.pending.prev
-		d.pending = nil
-	}
-	out := &CommitResult{Revision: rev, Warnings: append(res.Warnings, routeWarnings...)}
+	out := &CommitResult{Revision: rev, Warnings: append(append(res.Warnings, warnings...), routeWarnings...)}
 	if confirm > 0 {
-		p := &pending{prev: prev, rev: rev.N, deadline: d.Now().Add(confirm)}
-		p.timer = time.AfterFunc(confirm, func() { d.autoRollback(p) })
-		d.pending = p
-		out.ConfirmBy = &p.deadline
+		out.ConfirmBy = &deadline
 	}
-	d.persistPendingLocked()
 	d.log.Info("commit", "revision", rev.N, "author", author, "message", message, "confirm", confirm)
 	return out, nil
+}
+
+// restorePendingRecordLocked puts the on-disk confirmation record back to
+// old (nil: none) after a failed commit.
+func (d *Daemon) restorePendingRecordLocked(old *store.Pending) {
+	var err error
+	if old == nil {
+		err = d.store.ClearPending()
+	} else {
+		err = d.store.SavePending(*old)
+	}
+	if err != nil {
+		d.log.Error("could not restore the confirmation record after a failed commit", "err", err)
+	}
+}
+
+// reapplyRunningLocked applies the ruleset of the config that is running
+// (d.running), after a failed commit replaced it.
+func (d *Daemon) reapplyRunningLocked() error {
+	cfg := d.running
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+	res, err := compiler.Compile(cfg, d.snapshot())
+	if err != nil {
+		return err
+	}
+	return d.nft.Apply(res.Ruleset)
+}
+
+// policyOf is a config's ruleset without tag set elements (they change
+// with every tag registration and TTL, not with policy).
+func policyOf(cfg *config.Config) string {
+	res, err := compiler.Compile(cfg, nil)
+	if err != nil {
+		return ""
+	}
+	return res.Ruleset
+}
+
+// flushIfPolicyChangedLocked clears conntrack when the policy changed, so
+// no existing connection keeps the old policy's verdict or the ct mark it
+// wrote: the rule position the IPS and appidd's log go by, and the
+// classified, final and denied bits. Every flow is re-evaluated against the
+// new policy on its next packet (the kernel picks mid-stream TCP up again).
+// Management traffic is unaffected: mgmt is never filtered. Flows the new
+// policy denies stop; NATed flows may need to reconnect.
+func (d *Daemon) flushIfPolicyChangedLocked(cfg *config.Config) []string {
+	pol := policyOf(cfg)
+	if pol == d.policy {
+		return nil
+	}
+	d.policy = pol
+	if err := d.ct.FlushAll(); err != nil {
+		d.log.Warn("could not flush conntrack after a policy change", "err", err)
+		return []string{fmt.Sprintf("existing connections could not be reset (%v): they keep the old policy's verdict until they close", err)}
+	}
+	return nil
 }
 
 // Confirm accepts a pending commit.
@@ -605,49 +726,75 @@ func (d *Daemon) autoRollback(p *pending) {
 	if d.pending != p {
 		return // confirmed or superseded meanwhile
 	}
-	d.pending = nil
 	d.rollbackUnconfirmedLocked(p, fmt.Sprintf("auto-rollback: revision %d not confirmed", p.rev))
 }
 
 // rollbackUnconfirmedLocked restores what was running before the
-// unconfirmed revision p.rev. d.pending must already be cleared.
+// unconfirmed revision p.rev; d.pending is p. On success the confirmation is
+// gone. On failure p stays pending (in memory and on disk, so a restart
+// tries again), Status reports the failure, and it is retried in a minute.
 func (d *Daemon) rollbackUnconfirmedLocked(p *pending, msg string) {
+	var err error
 	if p.prev == 0 {
-		res, err := compiler.Compile(&config.Config{}, d.snapshot())
+		err = d.rollbackToNothingLocked()
+	} else {
+		var data []byte
+		data, err = d.store.Get(p.prev)
 		if err == nil {
-			err = d.nft.Apply(res.Ruleset)
+			_, err = d.commitLocked(data, "system", fmt.Sprintf("%s; restored %d", msg, p.prev), 0)
 		}
-		if err == nil {
-			err = d.store.SetRunning(0)
-		}
-		if err != nil {
-			d.log.Error("auto-rollback failed", "err", err)
-			return
-		}
-		d.sets = res.Sets
-		d.wantNICs = nil
-		d.wantNet = netdev.Want{}
-		d.wantRoutes = nil
-		d.wantFRR = frr.Compile(&config.Config{})
-		d.running = &config.Config{}
-		d.syncNetLocked(nicaddr.Commit)
-		d.syncRoutesLocked()
-		d.syncFRRLocked()
-		d.syncDHCPLocked(true)
-		d.syncIPSLocked()
-		d.persistPendingLocked()
+	}
+	if err != nil {
+		d.recovery = fmt.Sprintf("%s, but the rollback failed (%v): revision %d is still in force; retrying every minute", msg, err, p.rev)
+		d.log.Error("auto-rollback failed", "revision", p.rev, "err", err)
+		d.pending = p
+		p.timer = time.AfterFunc(time.Minute, func() { d.autoRollback(p) })
+		return
+	}
+	if p.prev == 0 {
 		d.log.Warn(msg+"; no earlier revision, forward default-deny applied", "revision", p.rev)
 		return
 	}
-	data, err := d.store.Get(p.prev)
-	if err == nil {
-		_, err = d.commitLocked(data, "system", fmt.Sprintf("%s; restored %d", msg, p.prev), 0)
-	}
-	if err != nil {
-		d.log.Error("auto-rollback failed", "err", err)
-		return
-	}
 	d.log.Warn(msg, "restored", p.prev)
+}
+
+// rollbackToNothingLocked undoes the first commit: no config, forward
+// default-deny.
+func (d *Daemon) rollbackToNothingLocked() error {
+	empty := &config.Config{}
+	res, err := compiler.Compile(empty, d.snapshot())
+	if err != nil {
+		return err
+	}
+	if err := d.nft.Apply(res.Ruleset); err != nil {
+		return err
+	}
+	if err := d.store.SetRunning(0); err != nil {
+		if rerr := d.reapplyRunningLocked(); rerr != nil {
+			return fmt.Errorf("%v; and re-applying the unconfirmed revision failed: %v", err, rerr)
+		}
+		return err
+	}
+	d.recovery = ""
+	d.pending = nil
+	if err := d.store.ClearPending(); err != nil {
+		d.log.Warn("could not clear the confirmation record; it is ignored after a restart", "err", err)
+	}
+	for _, w := range d.flushIfPolicyChangedLocked(empty) {
+		d.log.Warn(w)
+	}
+	d.sets = res.Sets
+	d.wantNICs = nil
+	d.wantNet = netdev.Want{}
+	d.wantRoutes = nil
+	d.wantFRR = frr.Compile(empty)
+	d.running = empty
+	d.syncNetLocked(nicaddr.Commit)
+	d.syncRoutesLocked()
+	d.syncFRRLocked()
+	d.syncDHCPLocked(true)
+	d.syncIPSLocked()
+	return nil
 }
 
 // Rollback re-commits revision n as a new revision.

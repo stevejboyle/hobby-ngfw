@@ -22,6 +22,7 @@ import (
 	"github.com/stevejboyle/hobby-ngfw/internal/diff"
 	"github.com/stevejboyle/hobby-ngfw/internal/frr"
 	"github.com/stevejboyle/hobby-ngfw/internal/netdev"
+	"github.com/stevejboyle/hobby-ngfw/internal/nfqueue"
 	"github.com/stevejboyle/hobby-ngfw/internal/nft"
 	"github.com/stevejboyle/hobby-ngfw/internal/nicaddr"
 	"github.com/stevejboyle/hobby-ngfw/internal/routes"
@@ -70,6 +71,9 @@ type Daemon struct {
 	// policy is the running config's ruleset without tag set elements: a
 	// commit that changes it flushes conntrack (see flushIfPolicyChanged).
 	policy string
+	// Queues reports whether NFQUEUE queues have a listener (App
+	// Identification 0-1, IPS 2-3). Tests replace it.
+	Queues func(queues ...int) nfqueue.State
 	// recovery, when set, says live enforcement may not match the recorded
 	// running revision (a failed commit could not restore the previous
 	// ruleset, or an auto-rollback failed). Status reports it; the next
@@ -103,7 +107,8 @@ type Status struct {
 
 // New builds a daemon. Call Start before serving.
 func New(st *store.Store, reg *tags.Registry, runner nft.Runner, ct conntrack.Flusher, log *slog.Logger) *Daemon {
-	return &Daemon{store: st, tags: reg, nft: runner, ct: ct, log: log, Now: time.Now, sets: map[string]string{}, router: routes.Noop{}, nics: nicaddr.Noop{}, netdev: netdev.Noop{}, frr: frr.Noop{}, dhcp: dhcp.Noop{}}
+	return &Daemon{store: st, tags: reg, nft: runner, ct: ct, log: log, Now: time.Now, sets: map[string]string{},
+		Queues: func(q ...int) nfqueue.State { return nfqueue.Read("", q...) }, router: routes.Noop{}, nics: nicaddr.Noop{}, netdev: netdev.Noop{}, frr: frr.Noop{}, dhcp: dhcp.Noop{}}
 }
 
 // SetRouter sets how static routes reach the kernel. Call before Start.

@@ -182,7 +182,16 @@ let confirmTimer;
 function renderBars() {
   const st = state.status;
   const pend = $("#pending-bar");
-  if (st.uncommitted_changes) {
+  if (st.recovery) {
+    // Live enforcement may not match the running revision: say so first.
+    pend.replaceChildren(
+      h("strong", { class: "action-deny" }, "Needs attention"),
+      h("span", {}, st.recovery),
+      h("span", { class: "spacer" }),
+      h("span", { class: "buttons" }, h("button", { class: "primary", onclick: commitDialog }, "Commit…")),
+    );
+    pend.classList.remove("hidden");
+  } else if (st.uncommitted_changes) {
     pend.replaceChildren(
       h("strong", {}, "Uncommitted changes"),
       h("span", {}, "Edits go to the candidate config. Nothing reaches the firewall until you commit."),
@@ -1253,6 +1262,12 @@ const fmtBytes = (n) => {
 };
 state.apps = { q: "" };
 
+// stateBadge shows what an inspection engine does to traffic now.
+function stateBadge(state) {
+  const cls = { inspecting: "action-allow", classifying: "action-allow", loading: "action-reset", starting: "action-deny", unavailable: "action-deny" }[state] || "muted";
+  return h("span", { class: cls }, state ? state[0].toUpperCase() + state.slice(1) : "?");
+}
+
 async function pageApps() {
   const st = await api("GET", "apps");
   const status = !st.enabled ? h("span", { class: "muted" }, "Off")
@@ -1296,6 +1311,7 @@ async function pageApps() {
       h("h2", {}, "Seen since App Identification started"),
       h("p", {}, "App Identification: ", status, st.running ? ` · ${st.active_flows} connections being identified` : "",
         st.note && st.apps.length ? h("span", { class: "muted" }, " · " + st.note) : null),
+      h("p", {}, "Traffic: ", stateBadge(st.state), h("span", { class: "muted" }, " · " + (st.state_detail || ""))),
       seen,
       h("p", { class: "muted small" }, "Counted when connections end. Each rule's own connections, with their application, are in Logs (end entries) for rules with logging on.")),
     h("section", { class: "panel" },
@@ -1539,6 +1555,7 @@ async function pageIPS() {
     h("div", { class: "page-head" }, h("h1", {}, "IPS"), btn),
     h("p", { class: "tagline" }, "Known troublemakers are stopped at the border."),
     h("div", { class: "cards" },
+      card("Inspection", stateBadge(st.state), st.state_detail || ""),
       card("Engine", engine, engineSub),
       card("Signatures", (sig.signatures || 0).toLocaleString(), sig.source ? `${sig.source}${sig.version ? ", version " + sig.version : ""}` : "none yet"),
       card("Last update", when(sig.updated), sig.last_error ? `last attempt failed: ${sig.last_error}` : "checked daily"),

@@ -63,22 +63,42 @@ versions from snapshot.debian.org, the checksum-verified nDPI tarball, and
 the Go modules. The build scripts in this repository (`deploy/appliance/`)
 are the scripts used to build the images and bundles.
 
-## Open questions
+## How these licenses are met
 
-These are not resolved and nothing here is legal advice:
+SJB-OS follows the standard terms of each license:
 
-- For the GPL components (the kernel, Suricata, FRR, nftables, the
-  netfilter libraries and others), the manifests and fetch script point to
-  exact sources held by third parties (snapshot.debian.org, GitHub). Whether
-  that satisfies each license's source-offer terms for downloads
-  distributed by this project, or whether the source archive should be
-  published beside each release (or a written offer included), has not
-  been reviewed by counsel.
-- `appidd`'s distributed binary combines Apache-2.0 code with
-  GPL-2.0-or-later libraries; the combination is treated here as GPL-3.0
-  for distribution. This has not been reviewed by counsel.
-- The Emerging Threats Open ruleset's terms apply to its use on the
-  appliance; they have not been reviewed beyond what is noted below.
+- **GPL and LGPL components** (the Linux kernel, Suricata, FRR, nftables,
+  the netfilter libraries, nDPI and the other Debian packages): every
+  release publishes the corresponding-source manifests beside its
+  downloads, and a release that ships third-party code built by this
+  repository also attaches that source (`sjb-os-<version>-sources.tar.gz`:
+  nDPI's tarball, the Go modules and SJB-OS's own source). Debian packages
+  are unmodified Debian builds; their exact sources are listed in the
+  manifests and fetched by `fetch-sources.py`. In addition, the written
+  offer below covers everything.
+- **nDPI (LGPL-3.0-or-later)** ships unmodified as a separate shared
+  library (`/usr/share/sjb-os/lib/libndpi.so.6`) that `appidd` links
+  dynamically, so it can be replaced; its license is in
+  `/usr/share/sjb-os/licenses/nDPI-COPYING`.
+- **appidd**: its own source is Apache-2.0; the binary as distributed links
+  GPL-2.0-or-later libraries, so it is distributed under the GNU GPL
+  version 3 (with which Apache-2.0 is compatible). Its complete source is
+  this repository at the commit each manifest records.
+- **MPL-2.0 (Kea), BSD, MIT and Apache-2.0 components** keep their notices
+  in `/usr/share/doc/<package>/copyright` on the appliance and in the
+  source they come from.
+- **Emerging Threats Open** signatures are not redistributed: each
+  appliance downloads them from Proofpoint and uses them under the
+  ruleset's own terms.
+
+### Written offer for source code
+
+For at least three years after SJB-OS's last distribution of a given
+version, anyone may obtain the complete corresponding source code, in
+machine-readable form, of every GPL- or LGPL-licensed component that
+version's OVA or upgrade bundle contains, for no more than the cost of
+providing it. Ask by opening an issue at
+<https://github.com/stevejboyle/hobby-ngfw/issues> naming the version.
 
 ## Downloaded at run time, not distributed
 

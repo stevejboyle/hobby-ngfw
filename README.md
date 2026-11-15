@@ -1,29 +1,25 @@
-# hobby-ngfw (SJB-OS)
+# SJB-OS: an experiment in building systems software with AI
 
-**An experimental demonstration of AI-generated software for isolated lab
-use. Not a commercial, supported, or production-ready security product. Do
-not rely on it to protect production systems. Working code does not
-establish security effectiveness, resilience, or operational readiness.**
+**The goal of this project is to find out how far one person can get
+building a real, complex piece of systems software (here, a firewall
+appliance) by directing an AI coding assistant instead of writing code, and
+to record the evidence honestly: what got built, how it was tested, and how
+much human time it took.** It is not an attempt to build a firewall anyone
+should rely on.
 
-SJB-OS ("Stops Junk at the Border") is a firewall appliance for VMware built
-without manually writing code: zone-based policy compiled to nftables,
-application identification with nDPI, inline intrusion prevention with
-Suricata, host tagging through an API, routing and DHCP, managed with a
-commit/rollback configuration model from a web UI and a CLI. The point is to
-see how far AI-assisted development goes in building such a system, not to
-offer one. Everything that makes a security product trustworthy beyond
-working code (independent testing, threat research and signature content,
-performance engineering, support, certification, long-term maintenance) is
-out of scope. See [docs/architecture.md](docs/architecture.md) for the
-design and [docs/effort-log.md](docs/effort-log.md) for how it was built,
-release by release, with the human hours behind each.
+> **An experimental demonstration of AI-generated software for isolated lab
+> use. Not a commercial, supported, or production-ready security product. Do
+> not rely on it to protect production systems. Working code does not
+> establish security effectiveness, resilience, or operational readiness.**
+
+## How it was built
 
 Steve Boyle used Claude Code to generate the project-specific implementation,
 tests, and documentation under his direction. He also used ChatGPT to review
 the code and help optimize and finalize the solution, including identifying
 correctness gaps and defining release-readiness fixes. Steve supplied the
 architecture, requirements and decisions, and tested the results on his own
-appliances.
+lab appliances.
 
 > I intentionally did not write, or even look at, a single line of code
 > during this whole process. That isn't a good idea, and it isn't how a real
@@ -35,6 +31,35 @@ appliances.
 That statement is about Steve's own work: the code was still reviewed, by
 AI (ChatGPT) and by the automated tests and boot tests described below.
 
+## The evidence
+
+- **Time:** about a week of calendar time (2026-11-08 to 2026-11-15) and
+  21.7 hours of Steve's own time, measured from the session transcripts
+  release by release: [docs/effort-log.md](docs/effort-log.md).
+- **Size:** about 25,000 lines of Go, C, JavaScript and shell, tests
+  included.
+- **Testing:** unit tests, network-namespace gates in CI (including
+  established sessions across policy changes), and a QEMU boot test of every
+  release with VMware's device models: over 130 end-to-end checks of
+  first boot, policy, application identification, intrusion prevention,
+  routing, DHCP, upgrades and rollback.
+- **Design:** [docs/architecture.md](docs/architecture.md).
+
+What this does *not* show: that the result is secure, robust under real
+traffic, fast, or maintainable over years. Everything that makes a security
+product trustworthy beyond working code (independent testing, threat
+research, performance engineering, support, certification, long-term
+maintenance) is out of scope.
+
+## What got built
+
+SJB-OS ("Stops Junk at the Border") is a firewall appliance for VMware:
+zone-based policy compiled to nftables, application identification with
+nDPI, inline intrusion prevention with Suricata, host tagging through an
+API, routing and DHCP, managed with a commit/rollback configuration model
+from a web UI and a CLI. See [Status](#status) for exactly what is
+implemented and tested.
+
 The heavy lifting happens in established open-source software that SJB-OS
 configures and ties together: the Linux kernel's netfilter (nftables,
 conntrack, NFQUEUE), nDPI, Suricata with the Emerging Threats Open
@@ -43,7 +68,7 @@ the credit for what they do; see [Built on](#built-on).
 
 ## Deploying
 
-The SJB-OS OVA is the only supported way to run hobby-ngfw. Deploy it on
+If you want to try it in a lab, the OVA is the way to run it. Deploy it on
 vSphere 8.0 U1 or later with three networks: **mgmt**, **inside** and **outside**.
 
 1. Download the OVA from [Releases](https://github.com/stevejboyle/hobby-ngfw/releases)

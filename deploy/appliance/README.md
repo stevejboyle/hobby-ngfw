@@ -1,5 +1,9 @@
 # SJB-OS appliance guide
 
+SJB-OS exists to show how far one person can get building systems software
+by directing AI instead of writing code (see the repo's README for the goal
+and the evidence). This guide is for trying it in a lab.
+
 **An experimental demonstration of AI-generated software for isolated lab
 use. Not a commercial, supported, or production-ready security product. Do
 not rely on it to protect production systems. Working code does not

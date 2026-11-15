@@ -1,6 +1,8 @@
 # Architecture
 
-The design of SJB-OS, as built: what each part does, how they fit, and the
+SJB-OS is an experiment in how far one person can get building systems
+software by directing AI instead of writing code. This is its design, as
+built: what each part does, how they fit, and the
 build plan by phase. Diagrams are Mermaid, so GitHub renders them. Code
 reviews and Claude sessions rely on it; keep it in step with the code.
 

@@ -50,3 +50,5 @@ jobs:
         run: sudo make lab-up lab-smoke lab-down
       - name: Phase 1 gate
         run: sudo make lab-gate1
+      - name: Sessions gate (connections across policy commits)
+        run: sudo make lab-gate-sessions

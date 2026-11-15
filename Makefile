@@ -1,4 +1,4 @@
-.PHONY: build test validate lab-up lab-down lab-status lab-smoke lab-gate1 clean
+.PHONY: build test validate lab-up lab-down lab-status lab-smoke lab-gate1 lab-gate-sessions clean
 
 build:
 	go build -o bin/ ./cmd/...
@@ -26,6 +26,11 @@ lab-smoke:
 # Phase 1 gate: needs `make build` first (as your user), then run as root.
 lab-gate1:
 	./lab/gate1.sh
+
+# Sessions gate: established connections across policy commits (insertion,
+# reorder, deletion, IPS-profile change, manual and automatic rollback).
+lab-gate-sessions:
+	./lab/gate-sessions.sh
 
 clean:
 	rm -rf bin

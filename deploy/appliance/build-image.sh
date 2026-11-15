@@ -81,6 +81,14 @@ install -m 644 "$OUT"/appidd/libndpi.so.* "$MNT/usr/share/sjb-os/lib/"
 install -m 644 "$OUT/appidd/catalog.json" "$MNT/usr/share/sjb-os/appid/"
 install -m 644 "$OUT/appidd/nDPI-COPYING" "$MNT/usr/share/sjb-os/licenses/"
 install -m 644 "$SRC/LICENSE" "$SRC/NOTICE" "$SRC/THIRD_PARTY_NOTICES.md" "$MNT/usr/share/sjb-os/licenses/"
+# Corresponding source of the image: build.sh's manifest (SJB-OS, nDPI, Go)
+# plus every installed Debian package with its source package and version.
+{
+	cat "$OUT/sources-base.txt"
+	echo "# Debian packages installed in the image (source at snapshot.debian.org)"
+	in_root dpkg-query -W -f='deb ${Package} ${Version} ${source:Package} ${source:Version}\n'
+} >"$MNT/usr/share/sjb-os/licenses/SOURCES-image.txt"
+cp "$MNT/usr/share/sjb-os/licenses/SOURCES-image.txt" "$OUT/sjb-os-$VERSION.ova-sources.txt"
 install -d -m 755 "$MNT/var/lib/sjb-os"
 # Root's SSH key: none in a release image (operators set one at deploy time).
 # A lab build may carry its owner's (build.sh ROOT_KEY_FILE).

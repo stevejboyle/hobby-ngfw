@@ -2,8 +2,12 @@ SJB-OS
 Copyright 2026 Steve Boyle / SJB Consulting
 
 This product is licensed under the Apache License, Version 2.0 (see
-LICENSE). It was written largely with Claude Code (Anthropic) under the
-direction of its author.
+LICENSE). It is an experimental demonstration of AI-generated software for
+isolated lab use, not a commercial, supported, or production-ready security
+product. Steve Boyle used Claude Code to generate the project-specific
+implementation, tests, and documentation under his direction. He also used
+ChatGPT to review the code and help optimize and finalize the solution,
+including identifying correctness gaps and defining release-readiness fixes.
 
 The appliance images (OVA) and upgrade bundles built from this repository
 also contain third-party software under its own licenses; see

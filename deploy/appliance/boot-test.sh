@@ -197,8 +197,8 @@ code=$(curl -sk -o /dev/null -w '%{http_code}' "https://127.0.0.1:$API_PORT/api/
 hdr=$(curl -skI -H "X-API-Key: $KEY" "https://127.0.0.1:$API_PORT/api/v1/tags" | tr -d '\r' | grep -i '^x-sjb-os:')
 [[ $hdr == *"Stops Junk at the Border"* ]] && pass "API answers with $hdr" || fail "no X-SJB-OS header"
 root_run "grep -q '^PRETTY_NAME=\"SJB-OS' /etc/os-release" && pass "os-release says SJB-OS" || fail "os-release not branded"
-root_run "grep -q 'Apache License' /usr/share/sjb-os/licenses/LICENSE && grep -q 'marks of SJB Consulting' /usr/share/sjb-os/licenses/NOTICE && grep -q LGPL /usr/share/sjb-os/licenses/THIRD_PARTY_NOTICES.md" &&
-	pass "license, notice and third-party notices in /usr/share/sjb-os/licenses" || fail "license files missing: $(root_run 'ls /usr/share/sjb-os/licenses' 2>&1)"
+root_run "grep -q 'Apache License' /usr/share/sjb-os/licenses/LICENSE && grep -q 'marks of SJB Consulting' /usr/share/sjb-os/licenses/NOTICE && grep -q LGPL /usr/share/sjb-os/licenses/THIRD_PARTY_NOTICES.md && grep -q '^ndpi ' /usr/share/sjb-os/licenses/SOURCES*.txt" &&
+	pass "license, notice, third-party notices and the corresponding-source manifest in /usr/share/sjb-os/licenses" || fail "license files missing: $(root_run 'ls /usr/share/sjb-os/licenses' 2>&1)"
 root_run "grep -q 'Stops Junk at the Border' /etc/issue && grep -q 'login: admin' /etc/issue" && pass "console login banner has the SJB-OS mark" || fail "/etc/issue not branded: $(root_run cat /etc/issue)"
 # The client only prints the server's banner at LogLevel INFO or above.
 banner=$(sshpass -p "$PW" ssh -p "$SSH_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \

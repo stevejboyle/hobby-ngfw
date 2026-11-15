@@ -59,6 +59,9 @@ else
 		cp "$ROOT_KEY_FILE" "$OUT/dev-root-key.pub"
 		echo "WARNING: development image: root may log in with $(awk '{print $NF}' "$ROOT_KEY_FILE" | head -1). Never publish it."
 	fi
+	# Corresponding-source manifest: build-image.sh adds the image's Debian
+	# packages and ships it as /usr/share/sjb-os/licenses/SOURCES-image.txt.
+	deploy/appliance/sources-manifest.sh "$VERSION" "$OUT/sources-base.txt"
 	docker run --rm --privileged --platform linux/amd64 \
 		-v "$PWD":/src -w /src -e VERSION="$VERSION" \
 		debian:trixie bash deploy/appliance/build-image.sh
@@ -95,6 +98,10 @@ if [[ -f $SIGNING_KEY ]]; then
 	docker run --rm --privileged --platform linux/amd64 -v "$PWD":/src -w /src \
 		-e BASE_RAW="$BASE_RAW" -e PACKAGES="$PACKAGES" -e DEST="$STAGE/usr/share/sjb-os/packages" \
 		debian:trixie bash deploy/appliance/fetch-packages.sh
+	# What third-party code this bundle carries and where its source is
+	# (fetch-sources.py downloads it); also published beside the bundle.
+	deploy/appliance/sources-manifest.sh "$VERSION" "$STAGE/usr/share/sjb-os/licenses/SOURCES.txt" "$STAGE/usr/share/sjb-os/packages"
+	cp "$STAGE/usr/share/sjb-os/licenses/SOURCES.txt" "$OUT/sjb-os-$VERSION.sources.txt"
 	if [[ ${LEGACY_LAYOUT:-} == 1 ]]; then
 		mv "$STAGE/usr/share/sjb-os" "$STAGE/usr/share/groot-os"
 	fi

@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/stevejboyle/hobby-ngfw/internal/appid"
@@ -74,6 +75,11 @@ type Daemon struct {
 	// Queues reports whether NFQUEUE queues have a listener (App
 	// Identification 0-1, IPS 2-3). Tests replace it.
 	Queues func(queues ...int) nfqueue.State
+	// statsIfaces is the running config's zoned interfaces, for the
+	// statistics sampler, which must not wait for d.mu: a commit can hold it
+	// for minutes (rebuilding the IPS signatures), and a sampler stuck
+	// behind it skips minutes.
+	statsIfaces atomic.Pointer[[]string]
 	// recovery, when set, says live enforcement may not match the recorded
 	// running revision (a failed commit could not restore the previous
 	// ruleset, or an auto-rollback failed). Status reports it; the next
@@ -359,7 +365,7 @@ func (d *Daemon) Start() error {
 	// DHCP: Kea starts at boot from the file the last run wrote; the
 	// periodic pass applies any change once networking (and the firewall's
 	// DNS servers) are up.
-	d.running = cfg
+	d.setRunningLocked(cfg)
 	d.started = d.Now()
 	warns := append(d.syncNetLocked(nicaddr.Deferred), d.syncRoutesLocked()...)
 	// IPS: rebuild the rules file once per start (a new SJB-OS version
@@ -639,7 +645,7 @@ func (d *Daemon) commitLocked(data []byte, author, message string, confirm time.
 	d.wantNet = wantedNet(cfg)
 	d.wantRoutes = wantedRoutes(cfg)
 	d.wantFRR = frrRes
-	d.running = cfg
+	d.setRunningLocked(cfg)
 	routeWarnings := append(d.syncNetLocked(nicaddr.Commit), d.syncRoutesLocked()...)
 	routeWarnings = append(routeWarnings, d.syncFRRLocked()...)
 	routeWarnings = append(routeWarnings, d.syncDHCPLocked(true)...)
@@ -651,6 +657,18 @@ func (d *Daemon) commitLocked(data []byte, author, message string, confirm time.
 	}
 	d.log.Info("commit", "revision", rev.N, "author", author, "message", message, "confirm", confirm)
 	return out, nil
+}
+
+// setRunningLocked makes cfg the running config.
+func (d *Daemon) setRunningLocked(cfg *config.Config) {
+	d.running = cfg
+	var names []string
+	for _, i := range cfg.Interfaces {
+		if i.Zone != "" {
+			names = append(names, i.Name)
+		}
+	}
+	d.statsIfaces.Store(&names)
 }
 
 // restorePendingRecordLocked puts the on-disk confirmation record back to
@@ -793,7 +811,7 @@ func (d *Daemon) rollbackToNothingLocked() error {
 	d.wantNet = netdev.Want{}
 	d.wantRoutes = nil
 	d.wantFRR = frr.Compile(empty)
-	d.running = empty
+	d.setRunningLocked(empty)
 	d.syncNetLocked(nicaddr.Commit)
 	d.syncRoutesLocked()
 	d.syncFRRLocked()

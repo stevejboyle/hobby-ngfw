@@ -464,6 +464,49 @@ static int ct_setup(void)
 	return 0;
 }
 
+// stats_load picks up the totals the previous appidd wrote, so a restart
+// (an upgrade, a crash, systemctl restart) doesn't lose what was counted
+// since its last write; ngfwd samples the totals as running counters. Only
+// a reboot (which clears /run) starts them from zero, and ngfwd treats
+// counters that went down as new. Reads appidd's own format, one object a
+// line.
+static void stats_load(void)
+{
+	FILE *f = fopen(STATS_PATH, "r");
+	if (!f)
+		return;
+	char line[1024];
+	unsigned apps = 0, nhosts = 0;
+	while (fgets(line, sizeof line, f)) {
+		unsigned id;
+		unsigned long long flows, bytes;
+		long last;
+		char ip[INET_ADDRSTRLEN];
+		const char *p;
+		if (sscanf(line, " {\"id\": %u,", &id) == 1 && id <= APP_MASK && (p = strstr(line, "\"flows\":")) &&
+		    sscanf(p, "\"flows\": %llu, \"bytes\": %llu, \"last_seen\": %ld", &flows, &bytes, &last) == 3) {
+			stats[id] = (struct appstat){.flows = flows, .bytes = bytes, .last = last};
+			apps++;
+		} else if (sscanf(line, " {\"ip\": \"%15[0-9.]\", \"flows\": %llu, \"bytes\": %llu}", ip, &flows, &bytes) == 3) {
+			uint32_t a;
+			if (inet_pton(AF_INET, ip, &a) != 1 || !a)
+				continue;
+			unsigned h = (ntohl(a) * 2654435761u) % MAX_HOSTS;
+			for (unsigned i = 0; i < MAX_HOSTS; i++) {
+				struct hoststat *e = &hosts[(h + i) % MAX_HOSTS];
+				if (!e->ip) {
+					*e = (struct hoststat){.ip = a, .flows = flows, .bytes = bytes, .last = time(NULL)};
+					nhosts++;
+					break;
+				}
+			}
+		}
+	}
+	fclose(f);
+	if (apps || nhosts)
+		fprintf(stderr, "appidd: carried on from %s: %u applications, %u hosts\n", STATS_PATH, apps, nhosts);
+}
+
 // ---- main --------------------------------------------------------------------
 
 static void on_signal(int sig)
@@ -510,6 +553,7 @@ int main(int argc, char **argv)
 	if (!stats || queue_setup() < 0 || ct_setup() < 0)
 		return 1;
 	mkdir("/run/appidd", 0755);
+	stats_load();
 	signal(SIGTERM, on_signal);
 	signal(SIGINT, on_signal);
 	fprintf(stderr, "appidd: nDPI %s, %u applications, queues 0-%d. Checking papers at the border.\n",

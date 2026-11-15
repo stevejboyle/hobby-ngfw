@@ -881,7 +881,10 @@ sj=$(ui "$UI/ui/api/stats?window=1h")
 [[ $sj == *'"samples":'[1-9]* && $sj == *'"name":"YouTube"'* && $sj == *'"name":"10.81.0.2"'* && $sj == *'"sid":9900001'* &&
 	$sj == *'"in_bytes":'[1-9]* ]] &&
 	pass "dashboard statistics: throughput, applications (YouTube), hosts and IPS matches in the last hour" ||
-	fail "stats: ${sj:0:400}"
+	fail "stats: $(python3 -c 'import json,sys
+j=json.load(sys.stdin)
+print("samples", j.get("samples"), "| apps", [a.get("name") for a in j.get("apps") or []], "| hosts", [h.get("name") for h in j.get("hosts") or []],
+      "| sids", [x.get("sid") for x in (j.get("threats") or {}).get("signatures") or []], "| keys", sorted(j))' <<<"$sj" 2>&1) / samples on disk: $(root_run 'wc -l < /var/lib/ngfw/stats/samples.jsonl; head -c 120 /var/lib/ngfw/stats/samples.jsonl; echo; date +%s')"
 ss=$(cli_run show statistics 1h)
 [[ $ss == *YouTube* && $ss == *"10.81.0.2"* && $ss == *9900001* ]] && pass "show statistics prints the same" || fail "show statistics: ${ss:0:300}"
 n1=$(grep -o '"samples":[0-9]*' <<<"$sj" | grep -o '[0-9]*$')

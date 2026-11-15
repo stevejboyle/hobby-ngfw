@@ -1,0 +1,58 @@
+# Config the phase 1 gate test (lab/gate1.sh) commits in the namespace lab.
+system:
+  hostname: fw-lab
+
+zones:
+  - name: users
+  - name: internet
+
+interfaces:
+  - name: veth-users
+    zone: users
+    address: 10.10.1.1/24
+  - name: veth-inet
+    zone: internet
+    address: 203.0.113.1/24
+
+addresses:
+  - name: users-net
+    cidr: 10.10.1.0/24
+
+address_groups:
+  - name: quarantine
+    tag: quarantine
+
+services:
+  - name: ping
+    protocol: icmp
+  - name: web
+    protocol: tcp
+    ports: "80"
+
+nat:
+  - name: users-out
+    from: [users]
+    to: [internet]
+    type: masquerade
+
+rules:
+  - name: block-quarantined
+    from: [users]
+    source: [quarantine]
+    action: deny
+    log: true
+
+  - name: allow-ping
+    from: [users]
+    to: [internet]
+    source: [users-net]
+    service: [ping]
+    action: allow
+
+  - name: allow-web
+    from: [users]
+    to: [internet]
+    source: [users-net]
+    service: [web]
+    action: allow
+    log: true

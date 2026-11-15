@@ -1,0 +1,72 @@
+# Intrusion prevention (IPS, Suricata with the free Emerging Threats Open
+# signatures). An allow rule names an IPS profile; its traffic is inspected
+# and each signature match is handled by severity: block (drop the packet
+# and the rest of the connection), alert (let it through, log it) or
+# ignore. Matches show in the Threat log (show log threat).
+#
+# The built-in "default" profile blocks critical and major, alerts on
+# minor and ignores informational. Give the VM 4 GB of RAM for IPS.
+system:
+  hostname: sjb-fw
+  mgmt_interface: mgmt
+  # Signatures that misfire on your network (signature IDs from the
+  # Threat log) can be left out:
+  ips_disabled_signatures: ["2013504"]
+
+zones:
+  - name: inside
+  - name: dmz
+  - name: outside
+
+interfaces:
+  - name: mgmt
+  - name: inside
+    zone: inside
+    address: 10.10.1.1/24
+  - name: inside.20
+    zone: dmz
+    address: 172.16.20.1/24
+  - name: outside
+    zone: outside
+
+addresses:
+  - name: web-server
+    cidr: 172.16.20.10
+
+services:
+  - name: web
+    protocol: tcp
+    ports: 80,443
+
+nat:
+  - name: out
+    from: [inside, dmz]
+    to: [outside]
+    type: masquerade
+
+ips_profiles:
+  # Stricter for the server: minor matches are blocked too.
+  - name: strict
+    critical: block
+    major: block
+    minor: block
+    informational: alert
+
+rules:
+  - name: web-in
+    from: [outside]
+    to: [dmz]
+    destination: [web-server]
+    service: [web]
+    action: allow
+    log: true
+    ips_profile: strict
+  - name: inside-out
+    from: [inside]
+    to: [outside]
+    action: allow
+    ips_profile: default
+  - name: dmz-out
+    from: [dmz]
+    to: [outside]
+    action: allow

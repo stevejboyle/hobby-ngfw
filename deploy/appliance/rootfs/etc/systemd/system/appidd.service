@@ -1,0 +1,24 @@
+[Unit]
+Description=SJB-OS App Identification (appidd: nDPI on the first packets of each connection)
+Documentation=https://github.com/stevejboyle/hobby-ngfw
+After=ngfwd.service
+
+[Service]
+ExecStart=/usr/local/sbin/appidd
+# Until the bundle's libnetfilter-queue is installed (in the background,
+# after an upgrade) appidd can't start; keep trying. Traffic flows without
+# it: the ruleset queues with bypass.
+Restart=on-failure
+RestartSec=15
+SyslogIdentifier=appidd
+RuntimeDirectory=appidd
+RuntimeDirectoryMode=0755
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

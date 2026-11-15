@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Envelope xmlns="http://schemas.dmtf.org/ovf/envelope/1"
+    xmlns:cim="http://schemas.dmtf.org/wbem/wscim/1/common"
+    xmlns:ovf="http://schemas.dmtf.org/ovf/envelope/1"
+    xmlns:rasd="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData"
+    xmlns:vmw="http://www.vmware.com/schema/ovf"
+    xmlns:vssd="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_VirtualSystemSettingData"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <References>
+    <File ovf:href="@DISK@" ovf:id="file1" ovf:size="@DISK_SIZE@"/>
+  </References>
+  <DiskSection>
+    <Info>Virtual disk information</Info>
+    <Disk ovf:capacity="@CAPACITY_GB@" ovf:capacityAllocationUnits="byte * 2^30" ovf:diskId="vmdisk1" ovf:fileRef="file1" ovf:format="http://www.vmware.com/interfaces/specifications/vmdk.html#streamOptimized"/>
+  </DiskSection>
+  <NetworkSection>
+    <Info>The list of logical networks</Info>
+    <Network ovf:name="mgmt">
+      <Description>Management: SSH and the tag API. Never filtered by policy.</Description>
+    </Network>
+    <Network ovf:name="inside">
+      <Description>Protected inside zone</Description>
+    </Network>
+    <Network ovf:name="outside">
+      <Description>Outside zone (upstream, internet)</Description>
+    </Network>
+  </NetworkSection>
+  <VirtualSystem ovf:id="sjb-os">
+    <Info>SJB-OS: Stops Junk at the Border</Info>
+    <Name>SJB-OS</Name>
+    <AnnotationSection>
+      <Info>Notes</Info>
+      <Annotation>SJB-OS @VERSION@ (Stops Junk at the Border). NIC 1 = mgmt, NIC 2 = inside, NIC 3 = outside; log in as admin, and a generated password shows on the console until changed. https://github.com/stevejboyle/hobby-ngfw</Annotation>
+    </AnnotationSection>
+    <ProductSection ovf:required="false">
+      <Info>Appliance settings, applied once at first boot</Info>
+      <Product>SJB-OS</Product>
+      <Vendor>SJB Consulting</Vendor>
+      <Version>@VERSION@</Version>
+      <FullVersion>@VERSION@</FullVersion>
+      <Category>System</Category>
+      <Property ovf:key="hostname" ovf:type="string" ovf:userConfigurable="true" ovf:value="sjb-fw">
+        <Label>Hostname</Label>
+        <Description>Appliance hostname</Description>
+      </Property>
+      <Property ovf:key="admin_password" ovf:type="string" ovf:password="true" ovf:userConfigurable="true" ovf:value="">
+        <Label>Admin password</Label>
+        <Description>Password for user admin (SSH, console and web UI), at least 10 characters. Leave empty to generate one and show it on the VM console.</Description>
+      </Property>
+      <Property ovf:key="admin_ssh_key" ovf:type="string" ovf:userConfigurable="true" ovf:value="">
+        <Label>Admin SSH public key</Label>
+        <Description>Optional authorized key for user admin, e.g. ssh-ed25519 AAAA...</Description>
+      </Property>
+      <Property ovf:key="root_ssh_key" ovf:type="string" ovf:userConfigurable="true" ovf:value="">
+        <Label>Root SSH public key (recovery)</Label>
+        <Description>Optional. Allows root over SSH with this key only, for recovery. Empty: root has no SSH access. No key ships with SJB-OS.</Description>
+      </Property>
+      <Property ovf:key="root_password" ovf:type="string" ovf:password="true" ovf:userConfigurable="true" ovf:value="">
+        <Label>Root console password (recovery)</Label>
+        <Description>Optional, at least 10 characters. Allows root on the VMware console only (never over SSH). Empty: root console login is locked.</Description>
+      </Property>
+      <Category>Management network</Category>
+      <Property ovf:key="mgmt_ip" ovf:type="string" ovf:userConfigurable="true" ovf:value="">
+        <Label>Management IP (CIDR)</Label>
+        <Description>e.g. 192.168.10.20/24. Empty for DHCP.</Description>
+      </Property>
+      <Property ovf:key="mgmt_gateway" ovf:type="string" ovf:userConfigurable="true" ovf:value="">
+        <Label>Management gateway</Label>
+        <Description>Used only for management traffic (separate routing table).</Description>
+      </Property>
+      <Property ovf:key="mgmt_dns" ovf:type="string" ovf:userConfigurable="true" ovf:value="">
+        <Label>Management DNS servers</Label>
+        <Description>Comma-separated</Description>
+      </Property>
+      <Category>Data networks</Category>
+      <Property ovf:key="inside_ip" ovf:type="string" ovf:userConfigurable="true" ovf:value="10.10.1.1/24">
+        <Label>Inside IP (CIDR)</Label>
+        <Description>Gateway address for inside clients</Description>
+      </Property>
+      <Property ovf:key="outside_ip" ovf:type="string" ovf:userConfigurable="true" ovf:value="">
+        <Label>Outside IP (CIDR)</Label>
+        <Description>e.g. 203.0.113.2/24. Empty for DHCP.</Description>
+      </Property>
+      <Property ovf:key="outside_gateway" ovf:type="string" ovf:userConfigurable="true" ovf:value="">
+        <Label>Outside gateway</Label>
+        <Description>Default route for forwarded traffic (static outside IP only)</Description>
+      </Property>
+      <Property ovf:key="outside_dns" ovf:type="string" ovf:userConfigurable="true" ovf:value="">
+        <Label>Outside DNS servers</Label>
+        <Description>Comma-separated (static outside IP only)</Description>
+      </Property>
+    </ProductSection>
+    <OperatingSystemSection ovf:id="96" vmw:osType="debian12_64Guest">
+      <Info>The kind of installed guest operating system</Info>
+      <Description>Debian GNU/Linux 13 (64-bit)</Description>
+    </OperatingSystemSection>
+    <VirtualHardwareSection ovf:transport="com.vmware.guestInfo">
+      <Info>Virtual hardware requirements</Info>
+      <System>
+        <vssd:ElementName>Virtual Hardware Family</vssd:ElementName>
+        <vssd:InstanceID>0</vssd:InstanceID>
+        <vssd:VirtualSystemIdentifier>sjb-os</vssd:VirtualSystemIdentifier>
+        <vssd:VirtualSystemType>vmx-20</vssd:VirtualSystemType>
+      </System>
+      <Item>
+        <rasd:AllocationUnits>hertz * 10^6</rasd:AllocationUnits>
+        <rasd:Description>Number of Virtual CPUs</rasd:Description>
+        <rasd:ElementName>2 virtual CPU(s)</rasd:ElementName>
+        <rasd:InstanceID>1</rasd:InstanceID>
+        <rasd:ResourceType>3</rasd:ResourceType>
+        <rasd:VirtualQuantity>2</rasd:VirtualQuantity>
+      </Item>
+      <Item>
+        <rasd:AllocationUnits>byte * 2^20</rasd:AllocationUnits>
+        <rasd:Description>Memory Size</rasd:Description>
+        <rasd:ElementName>2048MB of memory</rasd:ElementName>
+        <rasd:InstanceID>2</rasd:InstanceID>
+        <rasd:ResourceType>4</rasd:ResourceType>
+        <rasd:VirtualQuantity>2048</rasd:VirtualQuantity>
+      </Item>
+      <Item>
+        <rasd:Address>0</rasd:Address>
+        <rasd:Description>SCSI Controller</rasd:Description>
+        <rasd:ElementName>SCSI controller 0</rasd:ElementName>
+        <rasd:InstanceID>3</rasd:InstanceID>
+        <rasd:ResourceSubType>VirtualSCSI</rasd:ResourceSubType>
+        <rasd:ResourceType>6</rasd:ResourceType>
+      </Item>
+      <Item>
+        <rasd:AddressOnParent>0</rasd:AddressOnParent>
+        <rasd:ElementName>Hard disk 1</rasd:ElementName>
+        <rasd:HostResource>ovf:/disk/vmdisk1</rasd:HostResource>
+        <rasd:InstanceID>4</rasd:InstanceID>
+        <rasd:Parent>3</rasd:Parent>
+        <rasd:ResourceType>17</rasd:ResourceType>
+      </Item>
+      <Item>
+        <rasd:AddressOnParent>7</rasd:AddressOnParent>
+        <rasd:AutomaticAllocation>true</rasd:AutomaticAllocation>
+        <rasd:Connection>mgmt</rasd:Connection>
+        <rasd:Description>VmxNet3 ethernet adapter on "mgmt"</rasd:Description>
+        <rasd:ElementName>Network adapter 1</rasd:ElementName>
+        <rasd:InstanceID>5</rasd:InstanceID>
+        <rasd:ResourceSubType>VmxNet3</rasd:ResourceSubType>
+        <rasd:ResourceType>10</rasd:ResourceType>
+      </Item>
+      <Item>
+        <rasd:AddressOnParent>8</rasd:AddressOnParent>
+        <rasd:AutomaticAllocation>true</rasd:AutomaticAllocation>
+        <rasd:Connection>inside</rasd:Connection>
+        <rasd:Description>VmxNet3 ethernet adapter on "inside"</rasd:Description>
+        <rasd:ElementName>Network adapter 2</rasd:ElementName>
+        <rasd:InstanceID>6</rasd:InstanceID>
+        <rasd:ResourceSubType>VmxNet3</rasd:ResourceSubType>
+        <rasd:ResourceType>10</rasd:ResourceType>
+      </Item>
+      <Item>
+        <rasd:AddressOnParent>9</rasd:AddressOnParent>
+        <rasd:AutomaticAllocation>true</rasd:AutomaticAllocation>
+        <rasd:Connection>outside</rasd:Connection>
+        <rasd:Description>VmxNet3 ethernet adapter on "outside"</rasd:Description>
+        <rasd:ElementName>Network adapter 3</rasd:ElementName>
+        <rasd:InstanceID>7</rasd:InstanceID>
+        <rasd:ResourceSubType>VmxNet3</rasd:ResourceSubType>
+        <rasd:ResourceType>10</rasd:ResourceType>
+      </Item>
+      <vmw:Config ovf:required="false" vmw:key="firmware" vmw:value="bios"/>
+      <vmw:Config ovf:required="false" vmw:key="tools.syncTimeWithHost" vmw:value="true"/>
+    </VirtualHardwareSection>
+  </VirtualSystem>
+</Envelope>

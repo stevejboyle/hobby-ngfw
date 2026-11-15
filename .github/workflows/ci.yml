@@ -1,0 +1,52 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make test
+      - run: make validate
+
+  lab:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install nftables
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq nftables conntrack
+      - name: Build
+        run: make build
+      - name: Check generated rulesets parse
+        run: |
+          for f in internal/compiler/testdata/*.nft; do
+            sudo nft -c -f "$f"
+          done
+      - name: Check generated FRR configs parse
+        run: |
+          sudo apt-get install -y -qq --no-install-recommends frr
+          for f in internal/frr/testdata/*.conf; do
+            vtysh -C -f "$f"
+          done
+      - name: Check generated Kea DHCP configs (the appliance's Kea, Debian 13)
+        run: |
+          docker run --rm -v "$PWD/internal/dhcp/testdata":/t:ro debian:trixie bash -c '
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends kea-dhcp4-server >/dev/null
+            for f in /t/*-check.conf; do kea-dhcp4 -t "$f" >/dev/null || { kea-dhcp4 -t "$f"; exit 1; }; done'
+      - name: Lab smoke test (no policy)
+        run: sudo make lab-up lab-smoke lab-down
+      - name: Phase 1 gate
+        run: sudo make lab-gate1

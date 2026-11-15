@@ -1,0 +1,90 @@
+# BGP and OSPF on the appliance. SJB-OS peers with an upstream router over
+# eBGP on outside, runs OSPF with an inside core router, and runs a second
+# BGP instance in VRF lab for a lab network on VLAN 20.
+system:
+  hostname: sjb-fw
+  mgmt_interface: mgmt
+
+vrfs:
+  - name: lab
+
+zones:
+  - name: inside
+  - name: outside
+  - name: lab
+
+interfaces:
+  - name: mgmt
+  - name: inside
+    zone: inside
+    address: 10.10.1.1/24
+  - name: outside
+    zone: outside
+    address: 192.0.2.10/24
+  - name: inside.20
+    zone: lab
+    vrf: lab
+    address: 172.16.20.1/24
+
+addresses:
+  - name: inside-net
+    cidr: 10.10.1.0/24
+
+routing:
+  - name: default
+    router_id: 10.10.1.1
+    bgp_asn: 65010
+    bgp_networks: [10.10.0.0/16]
+    bgp_redistribute: [ospf]
+    ospf: true
+    ospf_redistribute: [static, bgp]
+  - name: lab
+    router_id: 172.16.20.1
+    bgp_asn: 65020
+
+bgp_neighbors:
+  - name: upstream
+    address: 192.0.2.1
+    remote_as: 64500
+    description: ISP edge
+    import: from-upstream
+    export: to-upstream
+  - name: core
+    address: 10.10.1.2
+    remote_as: 65010
+    next_hop_self: true
+  - name: lab-router
+    vrf: lab
+    address: 172.16.20.2
+    remote_as: 65021
+
+ospf_interfaces:
+  - name: inside
+    area: 0
+    cost: 10
+  - name: outside
+    area: 0.0.0.0
+    passive: true
+
+prefix_lists:
+  - name: from-upstream
+    entries:
+      - permit 0.0.0.0/0
+      - deny any
+  - name: to-upstream
+    entries:
+      - permit 10.10.0.0/16 le 24
+      - deny any
+
+nat:
+  - name: out
+    from: [inside]
+    to: [outside]
+    type: masquerade
+
+rules:
+  - name: inside-out
+    from: [inside]
+    to: [outside]
+    source: [inside-net]
+    action: allow

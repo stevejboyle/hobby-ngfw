@@ -1,0 +1,24 @@
+[Unit]
+Description=SJB-OS IPS (Suricata inline on NFQUEUE 2-3)
+Documentation=https://github.com/stevejboyle/hobby-ngfw
+After=ngfwd.service
+
+[Service]
+# ngfwd enables and starts this when an allow rule names an IPS profile,
+# and stops it when none does. Suricata only marks packets by signature
+# severity; the firewall's ips_enforce chain blocks per the rule's profile.
+# The ruleset queues with bypass, so traffic flows while it starts or is
+# down.
+ExecStart=/usr/bin/suricata -c /usr/share/sjb-os/ips/suricata.yaml -q 2 -q 3 --pidfile /run/sjb-ips/suricata.pid
+# Live rule reload (ngfwd rewrites the rules after an update).
+ExecReload=/bin/kill -USR2 $MAINPID
+Restart=on-failure
+RestartSec=15
+SyslogIdentifier=sjb-ips
+RuntimeDirectory=sjb-ips
+LogsDirectory=suricata
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

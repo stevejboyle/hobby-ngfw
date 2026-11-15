@@ -1,0 +1,14 @@
+# One saying per line, picked at random by the message of the day and
+# `fwctl sjb`. Lines starting with # are skipped.
+Papers, please. Every packet shows its papers at the border.
+Default deny. No exceptions. Not even for you.
+Commit with -confirm. A guard who can step back can afford to step forward.
+Did you run show diff before committing? The border guard noticed you didn't.
+The quarantine tag is not a punishment. It is a time-out.
+That host is in quarantine, and it stays there until it explains itself.
+Logs are the guard's notebook. Read them to learn what happened.
+Rollback exists so you can be brave. Use it.
+NAT: everyone leaves through the same gate, wearing the same badge.
+Junk stopped: plenty. Good traffic: waved through.
+New rules, same vigilance.
+An allow rule is a promise. Keep them few and specific.

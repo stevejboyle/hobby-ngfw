@@ -1,0 +1,60 @@
+# The firewall as DHCP server: on inside, and on VLAN 20 (a lab in its own
+# VRF). Each served interface needs its address in the config; clients get
+# that address as their gateway unless gateway says otherwise, and the
+# firewall's own DNS servers unless dns says otherwise.
+system:
+  hostname: sjb-fw
+  mgmt_interface: mgmt
+
+vrfs:
+  - name: lab
+
+zones:
+  - name: inside
+  - name: outside
+  - name: labs
+
+interfaces:
+  - name: mgmt
+  - name: inside
+    zone: inside
+    address: 192.168.150.1/24
+  - name: outside
+    zone: outside
+  - name: inside.20
+    zone: labs
+    vrf: lab
+    address: 172.16.20.1/24
+
+dhcp_servers:
+  - name: inside
+    range: 192.168.150.100-192.168.150.199
+    domain: home.example
+    options:
+      - 66=tftp.home.example # TFTP server, for phones and PXE
+  - name: inside.20
+    range: 172.16.20.50-172.16.20.99
+    dns: [9.9.9.9, 149.112.112.112]
+    lease_time: 3600
+
+dhcp_reservations:
+  - name: printer
+    interface: inside
+    mac: 52:54:00:12:34:56
+    address: 192.168.150.20
+
+nat:
+  - name: out
+    from: [inside, labs]
+    to: [outside]
+    type: masquerade
+
+rules:
+  - name: inside-out
+    from: [inside]
+    to: [outside]
+    action: allow
+  - name: labs-out
+    from: [labs]
+    to: [outside]
+    action: allow

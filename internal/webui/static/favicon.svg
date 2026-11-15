@@ -1,0 +1,6 @@
+<svg viewBox="0 0 240 240" xmlns="http://www.w3.org/2000/svg">
+  <rect width="240" height="240" fill="#15212F" rx="28"/>
+  <path d="M 96,52 L 52,52 L 52,96" fill="none" stroke="#C2884A" stroke-width="9" stroke-linejoin="miter"/>
+  <path d="M 144,188 L 188,188 L 188,144" fill="none" stroke="#C2884A" stroke-width="9" stroke-linejoin="miter"/>
+  <text x="120" y="122" font-family="'IBM Plex Sans','Helvetica Neue',Helvetica,Arial,sans-serif" font-weight="600" font-size="58" fill="#FFFFFF" text-anchor="middle" dominant-baseline="central" letter-spacing="2">SJB</text>
+</svg>

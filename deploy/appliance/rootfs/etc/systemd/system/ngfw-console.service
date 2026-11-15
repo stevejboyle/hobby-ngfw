@@ -1,0 +1,11 @@
+[Unit]
+Description=hobby-ngfw console status banner
+After=ngfwd.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ngfw-console
+
+[Install]
+WantedBy=multi-user.target

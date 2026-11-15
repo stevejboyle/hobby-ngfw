@@ -1,0 +1,67 @@
+# VRFs and VLAN subinterfaces on the appliance. inside and outside are the
+# appliance's NICs; inside.20 and inside.30 are VLANs 20 and 30 on inside's
+# trunk (VMware port group VLAN 4095), each in its own VRF. The two labs use
+# the same addresses: separate VRFs (and conntrack zones) keep them apart.
+system:
+  hostname: sjb-fw
+  mgmt_interface: mgmt
+
+vrfs:
+  - name: lab-a
+  - name: lab-b
+
+zones:
+  - name: inside
+  - name: outside
+  - name: labs
+
+interfaces:
+  - name: mgmt
+  - name: inside
+    zone: inside
+    address: 10.10.1.1/24
+  - name: outside
+    zone: outside
+  - name: inside.20
+    zone: labs
+    vrf: lab-a
+    address: 172.16.0.1/24
+  - name: inside.30
+    zone: labs
+    vrf: lab-b
+    address: 172.16.0.1/24
+
+addresses:
+  - name: inside-net
+    cidr: 10.10.1.0/24
+
+routes:
+  # Each lab VRF reaches the internet by handing traffic to the default VRF's
+  # outside interface; the default VRF's own default route comes from first boot.
+  - name: lab-a-out
+    vrf: lab-a
+    destination: 0.0.0.0/0
+    gateway: 192.0.2.1
+    interface: outside
+  - name: lab-a-to-b
+    vrf: lab-a
+    destination: 172.17.0.0/16
+    next_vrf: lab-b
+
+nat:
+  - name: out
+    from: [inside, labs]
+    to: [outside]
+    type: masquerade
+
+rules:
+  - name: inside-out
+    from: [inside]
+    to: [outside]
+    source: [inside-net]
+    action: allow
+  - name: labs-out
+    from: [labs]
+    to: [outside]
+    action: allow
+    log: true

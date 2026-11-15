@@ -1,0 +1,76 @@
+# A small home-lab config: users and servers behind one firewall.
+# Matches the network-namespace lab in lab/topology.sh.
+system:
+  hostname: fw1
+  mgmt_interface: mgmt0
+
+zones:
+  - name: users
+  - name: internet
+
+interfaces:
+  - name: mgmt0
+  - name: veth-users
+    zone: users
+    address: 10.10.1.1/24
+  - name: veth-inet
+    zone: internet
+    address: 203.0.113.1/24
+
+addresses:
+  - name: users-net
+    cidr: 10.10.1.0/24
+  - name: dns-quad9
+    cidr: 9.9.9.9
+
+# Static routes, installed at commit. The default route comes from the
+# deployment settings; these reach networks behind other routers.
+routes:
+  - name: lab-net
+    destination: 10.20.0.0/16
+    gateway: 10.10.1.254
+
+address_groups:
+  # Dynamic: members are registered at runtime through the tag API.
+  - name: quarantine
+    tag: quarantine
+  - name: dns-servers
+    static: [dns-quad9]
+
+services:
+  - name: web
+    protocol: tcp
+    ports: "80,443"
+  - name: dns
+    protocol: udp
+    ports: "53"
+
+rules:
+  - name: block-quarantined
+    from: [users]
+    to: [any]
+    source: [quarantine]
+    action: deny
+    log: true
+
+  - name: block-p2p
+    from: [users]
+    to: [internet]
+    application: [bittorrent]
+    action: reset
+    log: true
+
+  - name: allow-dns
+    from: [users]
+    to: [internet]
+    destination: [dns-servers]
+    service: [dns]
+    action: allow
+
+  - name: allow-web
+    from: [users]
+    to: [internet]
+    source: [users-net]
+    service: [web]
+    action: allow
+    log: true

@@ -1,0 +1,22 @@
+#!/bin/bash
+# SJB-OS message of the day: the banner, live status and a saying.
+# Runs as root at each login (pam_motd), with whatever PATH sshd has.
+PATH=/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+
+cat /usr/share/sjb-os/banner.txt
+echo
+
+REV=$(fwctl status 2>/dev/null | grep -o '"running_revision": [0-9]*' | grep -o '[0-9]*$')
+RULES=$(nft list chain inet ngfw forward 2>/dev/null | grep -c 'comment "rule:')
+QUAR=$(fwctl tags quarantine 2>/dev/null | grep -c '"ip"')
+
+if [[ -n $REV ]]; then
+	echo "  On duty: revision $REV, $RULES rule lines standing guard, $QUAR host(s) in quarantine."
+else
+	echo "  The gatehouse is quiet: ngfwd is not answering (root: systemctl status ngfwd)."
+fi
+MGMT=$(ip -4 -o addr show dev mgmt 2>/dev/null | awk '{print $4}' | head -1)
+echo "  Web UI: https://${MGMT%/*}/    SJB-OS $(cat /etc/ngfw-version 2>/dev/null). Type help for CLI commands."
+echo
+echo "  $(grep -v '^#' /usr/share/sjb-os/sayings.txt | shuf -n 1)"
+echo

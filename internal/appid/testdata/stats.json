@@ -1,0 +1,5 @@
+{"updated": 1794590561, "active_flows": 3, "apps": [
+  {"id": 5, "name": "DNS", "category": "Network", "flows": 4, "bytes": 504, "last_seen": 1794590553},
+  {"id": 124, "name": "YouTube", "category": "Media", "flows": 2, "bytes": 3850, "last_seen": 1794590553},
+  {"id": 0, "name": "unknown", "category": "", "flows": 1, "bytes": 90, "last_seen": 1794590500}
+]}

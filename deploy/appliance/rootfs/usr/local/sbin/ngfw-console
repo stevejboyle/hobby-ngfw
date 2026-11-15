@@ -1,0 +1,58 @@
+#!/bin/bash
+# Print SJB-OS status to the VM console and keep the login banners current.
+set -uo pipefail
+
+ART=/usr/share/sjb-os/banner.txt
+VERSION=$(cat /etc/ngfw-version 2>/dev/null || echo dev)
+
+addr() { ip -4 -o addr show dev "$1" 2>/dev/null | awk '{print $4}' | head -1; }
+mac() { cat "/sys/class/net/$1/address" 2>/dev/null; }
+
+REV=$(fwctl status 2>/dev/null | awk -F': ' '/running_revision/ {gsub(/[ ,]/, "", $2); print $2}')
+MGMT=$(addr mgmt)
+
+# Show the generated password on the login screen until it is changed.
+PWLINE=""
+if [[ -f /var/lib/ngfw/initial-pw-hash ]]; then
+	if [[ "$(getent shadow admin | cut -d: -f2)" == "$(cat /var/lib/ngfw/initial-pw-hash)" ]]; then
+		PWLINE=$(grep '^initial password:' /root/sjb-credentials | sed 's/ (.*//')
+	else
+		rm -f /var/lib/ngfw/initial-pw-hash
+	fi
+fi
+
+# /etc/issue: agetty expands backslash escapes, so double any backslashes.
+{
+	echo
+	sed 's/\\/\\\\/g' "$ART"
+	echo
+	echo "  SJB-OS $VERSION on \\n"
+	echo "  mgmt     \\4{mgmt}   (web UI https://\\4{mgmt}/, SSH, tag API :8443)"
+	echo "  inside   \\4{inside}"
+	echo "  outside  \\4{outside}"
+	echo
+	echo "  login: admin (SJB-OS CLI)${PWLINE:+   $PWLINE  (SSH, console and web UI; change it with passwd)}"
+	echo "  tag API key: show api-keys (in the CLI)"
+	echo
+} >/etc/issue
+
+# Shown by sshd before the password prompt.
+{
+	cat "$ART"
+	echo
+	echo "  Authorised users only. Everyone else is turned back at the border."
+	echo
+} >/etc/issue.net
+
+{
+	echo
+	cat "$ART"
+	echo "=================================================="
+	printf '  %-8s %-18s %s\n' mgmt "$(mac mgmt)" "${MGMT:-no address}"
+	printf '  %-8s %-18s %s\n' inside "$(mac inside)" "$(addr inside)"
+	printf '  %-8s %-18s %s\n' outside "$(mac outside)" "$(addr outside)"
+	echo "  ruleset revision: ${REV:-unknown}"
+	echo "  web UI: https://${MGMT%/*}/"
+	echo "  SJB-OS ready: standing guard at the border."
+	echo "=================================================="
+} >/dev/console

@@ -1,0 +1,57 @@
+# Application policy (App Identification). Rules name applications from `show app
+# catalog` (any case), categories ("category:vpn"), or application groups;
+# "unknown" is what App Identification couldn't identify. A rule
+# with applications acts once App Identification has named the connection, from its
+# first few packets; until then, allowed traffic flows and is re-checked.
+system:
+  hostname: sjb-fw
+  mgmt_interface: mgmt
+
+zones:
+  - name: inside
+  - name: outside
+
+interfaces:
+  - name: mgmt
+  - name: inside
+    zone: inside
+    address: 10.10.1.1/24
+  - name: outside
+    zone: outside
+
+nat:
+  - name: out
+    from: [inside]
+    to: [outside]
+    type: masquerade
+
+# Application groups name sets of applications and categories
+# ("category:<name>", see show app categories).
+application_groups:
+  - name: streaming
+    members: [youtube, netflix, twitch, category:video]
+
+rules:
+  - name: no-streaming
+    from: [inside]
+    to: [outside]
+    application: [streaming]
+    action: deny
+    log: true
+  - name: no-vpns
+    from: [inside]
+    to: [outside]
+    application: [category:vpn]
+    action: deny
+    log: true
+  - name: no-p2p
+    from: [inside]
+    to: [outside]
+    application: [bittorrent]
+    action: reset
+    log: true
+  - name: inside-out
+    from: [inside]
+    to: [outside]
+    action: allow
+    log: true

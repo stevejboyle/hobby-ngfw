@@ -1,0 +1,277 @@
+#!/bin/bash
+# SJB-OS first-boot setup. Runs once, before networking and ngfwd.
+# (Opening the border post: NIC names, network, credentials, starter policy.)
+#
+# Settings come from, in order of precedence:
+#   1. VM advanced settings  guestinfo.ngfw.<key>   (works on standalone ESXi)
+#   2. OVF properties via the vApp environment       (vCenter deployments)
+#   3. QEMU firmware config  opt/sjb/<key>            (the boot test only)
+#   4. defaults below
+#
+# Keys: hostname, mgmt_ip, mgmt_gateway, mgmt_dns, inside_ip, outside_ip,
+#       outside_gateway, outside_dns, admin_password, admin_ssh_key,
+#       root_ssh_key, root_password
+# An empty *_ip means DHCP (except inside, which must be static).
+set -uo pipefail
+
+DONE=/var/lib/ngfw/firstboot.done
+log() { echo "ngfw-firstboot: $*"; }
+mkdir -p /var/lib/ngfw
+
+# --- settings ----------------------------------------------------------------
+declare -A CFG=(
+	[hostname]=sjb-fw
+	[mgmt_ip]=
+	[mgmt_gateway]=
+	[mgmt_dns]=
+	[inside_ip]=10.10.1.1/24
+	[outside_ip]=
+	[outside_gateway]=
+	[outside_dns]=
+	[admin_password]=
+	[admin_ssh_key]=
+	[root_ssh_key]=
+	[root_password]=
+)
+
+rpc() { vmware-rpctool "info-get $1" 2>/dev/null; }
+
+xml_unescape() {
+	sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&quot;/"/g' -e "s/&apos;/'/g" -e 's/&amp;/\&/g'
+}
+
+OVFENV=$(rpc guestinfo.ovfEnv || true)
+# QEMU (no VMware tools) passes settings as firmware config entries.
+FWCFG=/sys/firmware/qemu_fw_cfg/by_name/opt/sjb
+[[ -d /sys/firmware/qemu_fw_cfg ]] || modprobe -q qemu_fw_cfg 2>/dev/null || true
+for key in "${!CFG[@]}"; do
+	if [[ -r $FWCFG/$key/raw ]]; then
+		v=$(cat "$FWCFG/$key/raw")
+		[[ -n $v ]] && CFG[$key]=$v
+	fi
+	if [[ -n $OVFENV ]]; then
+		v=$(grep -o "oe:key=\"$key\" oe:value=\"[^\"]*\"" <<<"$OVFENV" | head -1 |
+			sed -e 's/.*oe:value="//' -e 's/"$//' | xml_unescape)
+		[[ -n $v ]] && CFG[$key]=$v
+	fi
+	v=$(rpc "guestinfo.ngfw.$key" || true)
+	[[ -n $v ]] && CFG[$key]=$v
+done
+[[ -n $OVFENV ]] && log "read OVF environment" || log "no OVF environment; using guestinfo/defaults"
+
+# --- grow the root filesystem if the disk was enlarged -------------------------
+ROOTDEV=$(findmnt -no SOURCE /)
+DISK=/dev/$(lsblk -no PKNAME "$ROOTDEV")
+PARTNUM=$(cat "/sys/class/block/$(basename "$ROOTDEV")/partition")
+growpart "$DISK" "$PARTNUM" >/dev/null 2>&1 && resize2fs "$ROOTDEV" >/dev/null 2>&1 && log "root filesystem grown"
+
+# --- NIC naming: first three NICs by PCI address -> mgmt, inside, outside ---------
+# VMware places Network adapter 1/2/3 on increasing PCI buses, so this order
+# matches the OVF's network mappings.
+for _ in $(seq 30); do
+	n=$(ls -d /sys/class/net/*/device 2>/dev/null | wc -l)
+	(( n >= 3 )) && break
+	sleep 1
+done
+mapfile -t NICS < <(
+	for dev in /sys/class/net/*/device; do
+		ifc=$(basename "$(dirname "$dev")")
+		echo "$(basename "$(readlink -f "$dev")") $ifc"
+	done | sort | awk '{print $2}'
+)
+ROLES=(mgmt inside outside)
+mkdir -p /etc/systemd/network
+for i in 0 1 2; do
+	ifc=${NICS[$i]:-}
+	role=${ROLES[$i]}
+	if [[ -z $ifc ]]; then
+		log "WARNING: no NIC for $role (found ${#NICS[@]} NICs)"
+		continue
+	fi
+	mac=$(cat "/sys/class/net/$ifc/address")
+	printf '[Match]\nMACAddress=%s\nType=ether\n\n[Link]\nName=%s\n' "$mac" "$role" \
+		>"/etc/systemd/network/10-$role.link"
+	if [[ $ifc != "$role" ]]; then
+		ip link set "$ifc" down 2>/dev/null
+		ip link set "$ifc" name "$role" && log "$ifc ($mac) -> $role"
+	fi
+done
+
+# --- network configuration ------------------------------------------------------
+rm -f /etc/systemd/network/20-*.network /etc/systemd/network/05-*.net*
+dns_lines() { for d in ${1//,/ }; do echo "DNS=$d"; done; }
+
+# Management lives in its own VRF so its default route never carries
+# forwarded traffic.
+cat >/etc/systemd/network/05-vrf-mgmt.netdev <<'EOF'
+[NetDev]
+Name=vrf-mgmt
+Kind=vrf
+
+[VRF]
+Table=100
+EOF
+printf '[Match]\nName=vrf-mgmt\n\n[Network]\n' >/etc/systemd/network/05-vrf-mgmt.network
+
+{
+	printf '[Match]\nName=mgmt\n\n[Network]\nVRF=vrf-mgmt\n'
+	if [[ -z ${CFG[mgmt_ip]} ]]; then
+		echo "DHCP=ipv4"
+	else
+		echo "Address=${CFG[mgmt_ip]}"
+		[[ -n ${CFG[mgmt_gateway]} ]] && echo "Gateway=${CFG[mgmt_gateway]}"
+	fi
+	dns_lines "${CFG[mgmt_dns]}"
+} >/etc/systemd/network/20-mgmt.network
+
+printf '[Match]\nName=inside\n\n[Network]\nAddress=%s\nConfigureWithoutCarrier=yes\n' \
+	"${CFG[inside_ip]}" >/etc/systemd/network/20-inside.network
+
+{
+	printf '[Match]\nName=outside\n\n[Network]\n'
+	if [[ -z ${CFG[outside_ip]} ]]; then
+		echo "DHCP=ipv4"
+	else
+		echo "Address=${CFG[outside_ip]}"
+		[[ -n ${CFG[outside_gateway]} ]] && echo "Gateway=${CFG[outside_gateway]}"
+	fi
+	dns_lines "${CFG[outside_dns]}"
+} >/etc/systemd/network/20-outside.network
+
+# --- hostname -------------------------------------------------------------------
+HN=${CFG[hostname]}
+echo "$HN" >/etc/hostname
+hostname "$HN"
+sed -i "/^127\.0\.1\.1/d" /etc/hosts
+echo "127.0.1.1 $HN" >>/etc/hosts
+
+# --- admin user and SSH -----------------------------------------------------------
+PW=${CFG[admin_password]}
+PW_SHOWN=no
+if [[ -n $PW && ${#PW} -lt 10 ]]; then
+	log "admin_password is shorter than 10 characters; generating one instead (shown on the console)"
+	PW=
+fi
+if [[ -z $PW ]]; then
+	PW=$(tr -dc 'A-HJ-NP-Za-km-z2-9' </dev/urandom | head -c 16)
+	PW_SHOWN=yes
+fi
+# One password for SSH, the console and the web UI: fwctl web-passwd sets the
+# account password (chpasswd) and the web UI's PBKDF2 hash together. Later
+# changes (web UI, CLI passwd) keep them in step.
+install -d -m 700 /etc/ngfw
+if ! printf '%s\n' "$PW" | /usr/local/sbin/fwctl web-passwd -user admin -file /etc/ngfw/web-users; then
+	# Never leave admin without a password: at least SSH and the console work.
+	log "could not set the web UI password; setting the SSH/console password only"
+	echo "admin:$PW" | chpasswd
+fi
+if [[ -n ${CFG[admin_ssh_key]} ]]; then
+	install -d -m 700 -o admin -g admin /home/admin/.ssh
+	echo "${CFG[admin_ssh_key]}" >/home/admin/.ssh/authorized_keys
+	chown admin:admin /home/admin/.ssh/authorized_keys
+	chmod 600 /home/admin/.ssh/authorized_keys
+fi
+ssh-keygen -A >/dev/null
+
+# --- root: recovery access only, and only what the deploy settings give -------------
+# No root key ships in SJB-OS. root_ssh_key allows root over SSH (key only);
+# root_password allows root on the VMware console. Without either, root can't
+# log in; recovery is then single-user mode from the VMware console.
+ROOT_KEYS=/etc/ngfw/root_authorized_keys
+if [[ -n ${CFG[root_ssh_key]} ]]; then
+	printf '%s\n' "${CFG[root_ssh_key]}" >"$ROOT_KEYS"
+	chmod 600 "$ROOT_KEYS"
+	log "root SSH key set from the deploy settings"
+elif [[ -s $ROOT_KEYS ]]; then
+	log "root SSH key: the image's own (development build)"
+else
+	log "no root SSH key: root has no SSH access"
+fi
+RPW=${CFG[root_password]}
+if [[ -n $RPW && ${#RPW} -ge 10 ]]; then
+	echo "root:$RPW" | chpasswd && log "root console password set from the deploy settings"
+else
+	[[ -n $RPW ]] && log "root_password is shorter than 10 characters; root console login stays locked"
+	passwd -l root >/dev/null 2>&1
+fi
+
+# --- tag API key and TLS certificate ------------------------------------------------
+install -d -m 700 /etc/ngfw
+KEY=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
+printf '# <name> <scopes> <key>\nadmin tags:read,tags:write %s\n' "$KEY" >/etc/ngfw/api-keys
+chmod 600 /etc/ngfw/api-keys
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 3650 \
+	-subj "/CN=$HN" -keyout /etc/ngfw/tls.key -out /etc/ngfw/tls.crt >/dev/null 2>&1
+chmod 600 /etc/ngfw/tls.key
+
+# --- initial firewall config ----------------------------------------------------------
+# Network address of inside_ip, e.g. 10.10.1.1/24 -> 10.10.1.0/24.
+ip2int() { local IFS=.; read -r a b c d <<<"$1"; echo $(((a << 24) | (b << 16) | (c << 8) | d)); }
+int2ip() { echo "$((($1 >> 24) & 255)).$((($1 >> 16) & 255)).$((($1 >> 8) & 255)).$(($1 & 255))"; }
+IN_ADDR=${CFG[inside_ip]%/*}
+IN_LEN=${CFG[inside_ip]#*/}
+IN_NET="$(int2ip $(($(ip2int "$IN_ADDR") & (0xffffffff << (32 - IN_LEN)) & 0xffffffff)))/$IN_LEN"
+
+cat >/etc/ngfw/initial.yaml <<EOF
+# Initial config committed by ngfwd on first start (revision 1).
+# Change it in the web UI, or in the CLI: load (paste a whole config), show diff, commit -confirm 5m
+system:
+  hostname: $HN
+  mgmt_interface: mgmt
+
+zones:
+  - name: inside
+  - name: outside
+
+interfaces:
+  - name: mgmt
+  - name: inside
+    zone: inside
+    address: ${CFG[inside_ip]}
+  - name: outside
+    zone: outside
+
+addresses:
+  - name: inside-net
+    cidr: $IN_NET
+
+address_groups:
+  # Members come from the tag API, e.g. a NAC or EDR quarantining a host.
+  - name: quarantine
+    tag: quarantine
+
+nat:
+  - name: inside-out
+    from: [inside]
+    to: [outside]
+    type: masquerade
+
+rules:
+  - name: block-quarantined
+    from: [inside]
+    source: [quarantine]
+    action: deny
+    log: true
+
+  - name: inside-to-internet
+    from: [inside]
+    to: [outside]
+    source: [inside-net]
+    action: allow
+EOF
+
+# --- credentials --------------------------------------------------------------------
+umask 077
+{
+	echo "SJB-OS first-boot credentials ($(date -u +%FT%TZ))"
+	echo "SSH/console/web UI user: admin"
+	[[ $PW_SHOWN == yes ]] && echo "initial password: $PW (SSH, console and web UI)"
+	echo "web UI: https://<mgmt-ip>/"
+	echo "tag API: https://<mgmt-ip>:8443  key: $KEY"
+} >/root/sjb-credentials
+if [[ $PW_SHOWN == yes ]]; then
+	getent shadow admin | cut -d: -f2 >/var/lib/ngfw/initial-pw-hash
+fi
+
+touch "$DONE"
+log "first boot finished: standing guard (mgmt=${CFG[mgmt_ip]:-dhcp} inside=${CFG[inside_ip]} outside=${CFG[outside_ip]:-dhcp})"

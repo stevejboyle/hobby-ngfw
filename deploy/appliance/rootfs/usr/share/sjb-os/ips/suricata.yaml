@@ -1,0 +1,390 @@
+%YAML 1.1
+---
+# SJB-OS IPS: Suricata inline on NFQUEUE 2-3 (see internal/ips).
+# Derived from Debian 13's suricata.yaml (7.0.10): capture methods other
+# than NFQ removed; outputs, logging, nfq, stream and rule paths are
+# SJB-OS's. ngfwd starts it as sjb-ips.service.
+
+runmode: workers
+
+suricata-version: "7.0"
+
+vars:
+  address-groups:
+    HOME_NET: "[192.168.0.0/16,10.0.0.0/8,172.16.0.0/12]"
+
+    EXTERNAL_NET: "!$HOME_NET"
+
+    HTTP_SERVERS: "$HOME_NET"
+    SMTP_SERVERS: "$HOME_NET"
+    SQL_SERVERS: "$HOME_NET"
+    DNS_SERVERS: "$HOME_NET"
+    TELNET_SERVERS: "$HOME_NET"
+    AIM_SERVERS: "$EXTERNAL_NET"
+    DC_SERVERS: "$HOME_NET"
+    DNP3_SERVER: "$HOME_NET"
+    DNP3_CLIENT: "$HOME_NET"
+    MODBUS_CLIENT: "$HOME_NET"
+    MODBUS_SERVER: "$HOME_NET"
+    ENIP_CLIENT: "$HOME_NET"
+    ENIP_SERVER: "$HOME_NET"
+
+  port-groups:
+    HTTP_PORTS: "80"
+    SHELLCODE_PORTS: "!80"
+    ORACLE_PORTS: 1521
+    SSH_PORTS: 22
+    DNP3_PORTS: 20000
+    MODBUS_PORTS: 502
+    FILE_DATA_PORTS: "[$HTTP_PORTS,110,143]"
+    FTP_PORTS: 21
+    GENEVE_PORTS: 6081
+    VXLAN_PORTS: 4789
+    TEREDO_PORTS: 3544
+
+default-log-dir: /var/log/suricata/
+
+stats:
+  enabled: no
+
+outputs:
+  # Alerts go to ngfwd, which writes them to the threat log with the rule
+  # and the action the rule's IPS profile took.
+  - eve-log:
+      enabled: yes
+      filetype: unix_dgram
+      filename: /run/ngfw/ips-eve.sock
+      types:
+        - alert:
+            tagged-packets: no
+            metadata: yes
+
+logging:
+  default-log-level: notice
+  outputs:
+    - console:
+        enabled: yes
+    - file:
+        enabled: no
+    - syslog:
+        enabled: no
+
+app-layer:
+  protocols:
+    telnet:
+      enabled: yes
+    rfb:
+      enabled: yes
+      detection-ports:
+        dp: 5900, 5901, 5902, 5903, 5904, 5905, 5906, 5907, 5908, 5909
+    mqtt:
+      enabled: yes
+    krb5:
+      enabled: yes
+    bittorrent-dht:
+      enabled: yes
+    snmp:
+      enabled: yes
+    ike:
+      enabled: yes
+    tls:
+      enabled: yes
+      detection-ports:
+        dp: 443
+
+
+
+    pgsql:
+      enabled: no
+      stream-depth: 0
+    dcerpc:
+      enabled: yes
+
+    ftp:
+      enabled: yes
+    rdp:
+    ssh:
+      enabled: yes
+    http2:
+      enabled: yes
+    smtp:
+      enabled: yes
+      raw-extraction: no
+      mime:
+        decode-mime: yes
+
+        decode-base64: yes
+        decode-quoted-printable: yes
+
+        header-value-depth: 2000
+
+        extract-urls: yes
+        body-md5: no
+      inspected-tracker:
+        content-limit: 100000
+        content-inspect-min-size: 32768
+        content-inspect-window: 4096
+    imap:
+      enabled: detection-only
+    smb:
+      enabled: yes
+      detection-ports:
+        dp: 139, 445
+
+
+    nfs:
+      enabled: yes
+    tftp:
+      enabled: yes
+    dns:
+      tcp:
+        enabled: yes
+        detection-ports:
+          dp: 53
+      udp:
+        enabled: yes
+        detection-ports:
+          dp: 53
+    http:
+      enabled: yes
+
+
+
+
+
+      libhtp:
+         default-config:
+           personality: IDS
+
+           request-body-limit: 100kb
+           response-body-limit: 100kb
+
+           request-body-minimal-inspect-size: 32kb
+           request-body-inspect-window: 4kb
+           response-body-minimal-inspect-size: 40kb
+           response-body-inspect-window: 16kb
+
+           response-body-decompress-layer-limit: 2
+
+           http-body-inline: auto
+
+           swf-decompression:
+             enabled: no
+             type: both
+             compress-depth: 100kb
+             decompress-depth: 100kb
+
+
+           double-decode-path: no
+           double-decode-query: no
+
+
+         server-config:
+
+
+
+    modbus:
+
+      enabled: no
+      detection-ports:
+        dp: 502
+
+      stream-depth: 0
+
+    dnp3:
+      enabled: no
+      detection-ports:
+        dp: 20000
+
+    enip:
+      enabled: no
+      detection-ports:
+        dp: 44818
+        sp: 44818
+
+    ntp:
+      enabled: yes
+
+    quic:
+      enabled: yes
+
+    dhcp:
+      enabled: yes
+
+    sip:
+
+asn1-max-frames: 256
+
+datasets:
+  defaults:
+
+  limits:
+
+  rules:
+
+security:
+  limit-noproc: true
+  landlock:
+    enabled: no
+    directories:
+      read:
+        - /usr/
+        - /etc/
+        - /etc/suricata/
+
+  lua:
+
+host-mode: router
+
+unix-command:
+  enabled: yes
+  filename: /run/sjb-ips/suricata-command.socket
+
+exception-policy: ignore
+
+pcre:
+  match-limit: 3500
+  match-limit-recursion: 1500
+
+host-os-policy:
+  windows: [0.0.0.0/0]
+  bsd: []
+  bsd-right: []
+  old-linux: []
+  linux: []
+  old-solaris: []
+  solaris: []
+  hpux10: []
+  hpux11: []
+  irix: []
+  macos: []
+  vista: []
+  windows2k3: []
+
+defrag:
+  memcap: 32mb
+  hash-size: 65536
+  trackers: 65535 # number of defragmented flows to follow
+  max-frags: 65535 # number of fragments to keep (higher than trackers)
+  prealloc: yes
+  timeout: 60
+
+flow:
+  memcap: 128mb
+  hash-size: 65536
+  prealloc: 10000
+  emergency-recovery: 30
+
+vlan:
+  use-for-tracking: true
+
+livedev:
+  use-for-tracking: true
+
+flow-timeouts:
+
+  default:
+    new: 30
+    established: 300
+    closed: 0
+    bypassed: 100
+    emergency-new: 10
+    emergency-established: 100
+    emergency-closed: 0
+    emergency-bypassed: 50
+  tcp:
+    new: 60
+    established: 600
+    closed: 60
+    bypassed: 100
+    emergency-new: 5
+    emergency-established: 100
+    emergency-closed: 10
+    emergency-bypassed: 50
+  udp:
+    new: 30
+    established: 300
+    bypassed: 100
+    emergency-new: 10
+    emergency-established: 100
+    emergency-bypassed: 50
+  icmp:
+    new: 30
+    established: 300
+    bypassed: 100
+    emergency-new: 10
+    emergency-established: 100
+    emergency-bypassed: 50
+
+stream:
+  memcap: 64mb
+  # Off: a VM's NIC offloads leave checksums unfinished, and Suricata
+  # would skip those packets.
+  checksum-validation: no
+  inline: auto
+  reassembly:
+    memcap: 256mb
+    depth: 1mb
+    toserver-chunk-size: 2560
+    toclient-chunk-size: 2560
+    randomize-chunk-size: yes
+
+host:
+  hash-size: 4096
+  prealloc: 1000
+  memcap: 32mb
+
+decoder:
+  teredo:
+    enabled: true
+    ports: $TEREDO_PORTS # syntax: '[3544, 1234]' or '3533' or 'any'.
+
+  vxlan:
+    enabled: true
+    ports: $VXLAN_PORTS # syntax: '[8472, 4789]' or '4789'.
+
+  geneve:
+    enabled: true
+    ports: $GENEVE_PORTS # syntax: '[6081, 1234]' or '6081'.
+
+detect:
+  profile: medium
+  custom-values:
+    toclient-groups: 3
+    toserver-groups: 25
+  sgh-mpm-context: auto
+
+  prefilter:
+    default: mpm
+
+  grouping:
+
+  profiling:
+    grouping:
+      dump-to-disk: false
+      include-rules: false      # very verbose
+      include-mpm-stats: false
+
+mpm-algo: auto
+
+spm-algo: auto
+
+threading:
+  set-cpu-affinity: no
+  detect-thread-ratio: 1.0
+
+nfq:
+  # Suricata only marks packets (nfq_set_mark, by signature severity);
+  # the firewall's ips_enforce chain decides. fail-open: a full queue
+  # lets packets through instead of dropping them.
+  mode: accept
+  fail-open: yes
+
+default-rule-path: /var/lib/sjb-os/ips/rules
+
+rule-files:
+  - sjb.rules
+
+classification-file: /var/lib/sjb-os/ips/rules/classification.config
+
+reference-config-file: /etc/suricata/reference.config

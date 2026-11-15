@@ -1,0 +1,749 @@
+// Package daemon is ngfwd's core: it owns the commit pipeline (candidate →
+// validate → compile → check → atomic apply → store) and the tag registry.
+// One mutex serialises every change to the kernel ruleset, so a commit and
+// a tag registration can never interleave.
+package daemon
+
+import (
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/netip"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/stevejboyle/hobby-ngfw/internal/appid"
+	"github.com/stevejboyle/hobby-ngfw/internal/compiler"
+	"github.com/stevejboyle/hobby-ngfw/internal/config"
+	"github.com/stevejboyle/hobby-ngfw/internal/conntrack"
+	"github.com/stevejboyle/hobby-ngfw/internal/dhcp"
+	"github.com/stevejboyle/hobby-ngfw/internal/diff"
+	"github.com/stevejboyle/hobby-ngfw/internal/frr"
+	"github.com/stevejboyle/hobby-ngfw/internal/netdev"
+	"github.com/stevejboyle/hobby-ngfw/internal/nft"
+	"github.com/stevejboyle/hobby-ngfw/internal/nicaddr"
+	"github.com/stevejboyle/hobby-ngfw/internal/routes"
+	"github.com/stevejboyle/hobby-ngfw/internal/stats"
+	"github.com/stevejboyle/hobby-ngfw/internal/store"
+	"github.com/stevejboyle/hobby-ngfw/internal/tags"
+)
+
+// ErrInvalid marks errors caused by bad input (HTTP 400), as opposed to
+// failures applying it.
+var ErrInvalid = errors.New("invalid")
+
+// Daemon is the commit and tag engine.
+type Daemon struct {
+	mu      sync.Mutex
+	store   *store.Store
+	tags    *tags.Registry
+	nft     nft.Runner
+	ct      conntrack.Flusher
+	log     *slog.Logger
+	Now     func() time.Time
+	sets    map[string]string // tag -> nft set name in the running ruleset
+	pending *pending          // commit awaiting confirmation
+
+	appid       appid.Source
+	dhcp        dhcp.Runner
+	running     *config.Config // the running config (DHCP servers, log zones)
+	dhcpApplied string         // Kea config last applied without error
+	dhcpSubnets map[int]string // Kea subnet ID -> interface
+	started     time.Time      // when Start ran
+	frr         frr.Runner
+	wantFRR     *frr.Result
+	frrApplied  string // frr.conf + daemons last applied without error
+	nics        nicaddr.Syncer
+	wantNICs    map[string]string // physical NIC -> configured address
+	nicStates   []nicaddr.State
+	netdev      netdev.Syncer
+	wantNet     netdev.Want
+	netStates   []netdev.State
+	router      routes.Syncer
+	wantRoutes  []routes.Route // static routes of the running config
+	routeStates []routes.State // result of the last sync
+	ips         ipsState
+	stats       *stats.Store
+	statsRoot   string
+}
+
+type pending struct {
+	timer    *time.Timer
+	prev     int // revision to restore if not confirmed (0 = no config)
+	rev      int
+	deadline time.Time
+}
+
+// CommitResult reports a successful commit.
+type CommitResult struct {
+	Revision  store.Revision `json:"revision"`
+	Warnings  []string       `json:"warnings,omitempty"`
+	ConfirmBy *time.Time     `json:"confirm_by,omitempty"`
+}
+
+// Status is a summary of the daemon's state.
+type Status struct {
+	Running   int        `json:"running_revision"`
+	ConfirmBy *time.Time `json:"confirm_by,omitempty"`
+	Pending   bool       `json:"uncommitted_changes"`
+}
+
+// New builds a daemon. Call Start before serving.
+func New(st *store.Store, reg *tags.Registry, runner nft.Runner, ct conntrack.Flusher, log *slog.Logger) *Daemon {
+	return &Daemon{store: st, tags: reg, nft: runner, ct: ct, log: log, Now: time.Now, sets: map[string]string{}, router: routes.Noop{}, nics: nicaddr.Noop{}, netdev: netdev.Noop{}, frr: frr.Noop{}, dhcp: dhcp.Noop{}}
+}
+
+// SetRouter sets how static routes reach the kernel. Call before Start.
+func (d *Daemon) SetRouter(r routes.Syncer) { d.router = r }
+
+// wantedRoutes turns the config's routes into kernel routes.
+func wantedRoutes(cfg *config.Config) []routes.Route {
+	var out []routes.Route
+	tables := cfg.VRFTables()
+	for _, r := range cfg.Routes {
+		vrf := r.VRFOf()
+		rt := routes.Route{Name: r.Name, Dest: r.Destination, Gateway: r.Gateway, Dev: r.Interface, Table: tables[vrf], VRF: vrf}
+		switch {
+		case vrf == config.VRFMgmt:
+			if rt.Dev == "" {
+				rt.Dev = cfg.System.MgmtInterface
+			}
+		case vrf != config.VRFDefault:
+			rt.VRFDev = config.VRFDevice(vrf)
+		}
+		if r.NextVRF != "" {
+			rt.Dev = config.VRFDevice(r.NextVRF) // leak: hand the packet to the other VRF
+		}
+		out = append(out, rt)
+	}
+	return out
+}
+
+// wantedNICs returns the addresses the config sets on physical NICs other
+// than the management interface (whose address stays with the deployment).
+func wantedNICs(cfg *config.Config) map[string]string {
+	out := map[string]string{}
+	for _, in := range cfg.Interfaces {
+		if _, _, vlan := config.ParseVLAN(in.Name); vlan || in.Address == "" || in.Name == cfg.System.MgmtInterface {
+			continue
+		}
+		out[in.Name] = in.Address
+	}
+	return out
+}
+
+// SetNICs sets how physical NIC addresses are applied. Call before Start.
+func (d *Daemon) SetNICs(n nicaddr.Syncer) { d.nics = n }
+
+// NICs reports the configured physical NIC addresses and whether each is applied.
+func (d *Daemon) NICs() []nicaddr.State {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return slices.Clone(d.nicStates)
+}
+
+// Neighbors reads the ARP table, when the netdev syncer can (not in
+// development).
+func (d *Daemon) Neighbors() ([]netdev.Neighbor, error) {
+	d.mu.Lock()
+	n := d.netdev
+	d.mu.Unlock()
+	r, ok := n.(interface {
+		Neighbors() ([]netdev.Neighbor, error)
+	})
+	if !ok {
+		return []netdev.Neighbor{}, nil
+	}
+	return r.Neighbors()
+}
+
+// wantedNet turns the config's VRFs and VLAN subinterfaces into devices.
+func wantedNet(cfg *config.Config) netdev.Want {
+	var w netdev.Want
+	tables := cfg.VRFTables()
+	for _, v := range cfg.VRFs {
+		w.VRFs = append(w.VRFs, netdev.VRF{Dev: config.VRFDevice(v.Name), Table: tables[v.Name]})
+	}
+	for _, in := range cfg.Interfaces {
+		parent, id, ok := config.ParseVLAN(in.Name)
+		if !ok {
+			continue
+		}
+		w.VLANs = append(w.VLANs, netdev.VLAN{Name: in.Name, Parent: parent, ID: id, VRF: config.VRFDevice(in.VRFOf()), Addr: in.Address})
+	}
+	return w
+}
+
+// syncNetLocked puts VRF devices and VLAN subinterfaces in place and returns
+// a warning per device that isn't yet. Callers hold d.mu.
+func (d *Daemon) syncNetLocked(mode nicaddr.Mode) []string {
+	var warn []string
+	// Physical NIC addresses first: VLANs sit on those NICs, and routes need
+	// their networks.
+	if ns, err := d.nics.Sync(d.wantNICs, mode); err != nil {
+		warn = append(warn, fmt.Sprintf("interface addresses not synced: %v (ngfwd keeps trying)", err))
+	} else {
+		for _, s := range ns {
+			if !s.Applied {
+				warn = append(warn, fmt.Sprintf("interface %s address %s not applied yet: %s", s.Name, s.Address, s.Error))
+			}
+		}
+		d.nicStates = ns
+	}
+	states, err := d.netdev.Sync(d.wantNet)
+	if err != nil {
+		return append(warn, fmt.Sprintf("VRFs and VLANs not synced: %v (ngfwd keeps trying)", err))
+	}
+	for _, s := range states {
+		if !s.OK {
+			warn = append(warn, fmt.Sprintf("%s %s not in place yet: %s; ngfwd keeps trying", s.Kind, s.Name, s.Error))
+		}
+	}
+	d.netStates = states
+	return warn
+}
+
+// NetDevices reports the wanted VRF devices and VLAN subinterfaces.
+func (d *Daemon) NetDevices() []netdev.State {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return slices.Clone(d.netStates)
+}
+
+// SetFRR sets how routing protocols are applied. Call before Start.
+func (d *Daemon) SetFRR(r frr.Runner) { d.frr = r }
+
+// FRR returns the runner, for read-only status (vtysh show commands).
+func (d *Daemon) FRR() frr.Runner { return d.frr }
+
+func frrKey(r *frr.Result) string {
+	return fmt.Sprintf("%s|bgpd=%v|ospfd=%v", r.Conf, r.Daemons["bgpd"], r.Daemons["ospfd"])
+}
+
+// syncFRRLocked applies the routing config to FRR if it changed or failed
+// last time, and returns a warning while routing can't run yet. Callers
+// hold d.mu.
+func (d *Daemon) syncFRRLocked() []string {
+	if d.wantFRR == nil {
+		return nil
+	}
+	if !d.frr.Available() {
+		if d.wantFRR.Enabled() {
+			return []string{"BGP/OSPF configured but FRR isn't installed yet (an upgrade installs it in the background); routing starts once it is"}
+		}
+		return nil
+	}
+	key := frrKey(d.wantFRR)
+	if key == d.frrApplied {
+		return nil
+	}
+	if err := d.frr.Apply(d.wantFRR); err != nil {
+		return []string{fmt.Sprintf("routing config not applied to FRR yet: %v; ngfwd keeps trying", err)}
+	}
+	d.frrApplied = key
+	return nil
+}
+
+// SetNetdev sets how VRFs and VLANs reach the kernel. Call before Start.
+func (d *Daemon) SetNetdev(n netdev.Syncer) { d.netdev = n }
+
+// syncRoutesLocked installs wantRoutes and returns a warning per route that
+// could not be installed yet. Callers hold d.mu.
+func (d *Daemon) syncRoutesLocked() []string {
+	states, err := d.router.Sync(d.wantRoutes)
+	if err != nil {
+		return []string{fmt.Sprintf("static routes not synced: %v (ngfwd keeps trying)", err)}
+	}
+	var warn []string
+	for _, s := range states {
+		if !s.Installed {
+			hop := "via " + s.Gateway
+			if s.Gateway == "" {
+				hop = "to " + strings.TrimPrefix(s.Dev, "vrf-")
+				if strings.HasPrefix(s.Dev, "vrf-") {
+					hop = "to vrf " + strings.TrimPrefix(s.Dev, "vrf-")
+				}
+			}
+			warn = append(warn, fmt.Sprintf("route %q (%s %s) not installed yet: %s; ngfwd keeps trying", s.Name, s.Dest, hop, s.Error))
+		}
+	}
+	d.routeStates = states
+	return warn
+}
+
+// ReconcileRoutes re-installs static routes that went missing (for example
+// after an interface came up or networkd reconfigured it). ngfwd calls it
+// periodically.
+func (d *Daemon) ReconcileRoutes() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	before := installedCount(d.routeStates)
+	d.syncNetLocked(nicaddr.Background)
+	warn := d.syncRoutesLocked()
+	if w := d.syncFRRLocked(); len(w) > 0 && d.frr.Available() {
+		d.log.Warn(w[0])
+	}
+	d.syncDHCPLocked(false)
+	d.syncIPSLocked()
+	if after := installedCount(d.routeStates); after != before {
+		d.log.Info("static routes", "installed", after, "configured", len(d.wantRoutes), "problems", warn)
+	}
+}
+
+func installedCount(s []routes.State) int {
+	n := 0
+	for _, st := range s {
+		if st.Installed {
+			n++
+		}
+	}
+	return n
+}
+
+// Routes reports the running config's static routes and whether each is
+// in the kernel.
+func (d *Daemon) Routes() []routes.State {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make([]routes.State, len(d.routeStates))
+	copy(out, d.routeStates)
+	return out
+}
+
+// Start applies the running revision, or a forward default-deny ruleset if
+// nothing has been committed, together with all live tag registrations.
+func (d *Daemon) Start() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	n, data, err := d.store.Running()
+	if err != nil {
+		return err
+	}
+	cfg := &config.Config{}
+	if n > 0 {
+		if cfg, err = parse(data); err != nil {
+			return fmt.Errorf("running revision %d: %w", n, err)
+		}
+	}
+	res, err := compiler.Compile(cfg, d.snapshot())
+	if err != nil {
+		return err
+	}
+	if err := d.nft.Apply(res.Ruleset); err != nil {
+		return err
+	}
+	d.sets = res.Sets
+	d.wantNICs = wantedNICs(cfg)
+	d.wantNet = wantedNet(cfg)
+	d.wantRoutes = wantedRoutes(cfg)
+	d.wantFRR = frr.Compile(cfg)
+	// DHCP: Kea starts at boot from the file the last run wrote; the
+	// periodic pass applies any change once networking (and the firewall's
+	// DNS servers) are up.
+	d.running = cfg
+	d.started = d.Now()
+	warns := append(d.syncNetLocked(nicaddr.Deferred), d.syncRoutesLocked()...)
+	// IPS: rebuild the rules file once per start (a new SJB-OS version
+	// may prepare signatures differently), then start or stop the engine.
+	d.ips.built = "\x00"
+	warns = append(warns, d.syncFRRLocked()...)
+	for _, w := range append(warns, d.syncIPSLocked()...) {
+		d.log.Warn(w)
+	}
+	// Flows set up while ngfwd was down (possibly with no ruleset) must be
+	// re-evaluated against the restored policy.
+	if err := d.ct.FlushAll(); err != nil {
+		d.log.Warn("could not flush conntrack; existing flows keep old verdicts", "err", err)
+	}
+	d.log.Info("ruleset applied at start", "revision", n, "warnings", len(res.Warnings))
+	d.restorePendingLocked(n)
+	d.log.Info("standing guard at the border", "revision", n)
+	return nil
+}
+
+// restorePendingLocked picks up a commit that was waiting for confirmation
+// when ngfwd stopped: the timer runs on for the time that was left, or the
+// rollback happens now if the deadline has passed.
+func (d *Daemon) restorePendingLocked(running int) {
+	sp, err := d.store.LoadPending()
+	if err != nil {
+		d.log.Error("cannot read the pending confirmation; it is ignored", "err", err)
+		return
+	}
+	if sp == nil {
+		return
+	}
+	if sp.Revision != running {
+		d.log.Warn("stale pending confirmation dropped", "pending", sp.Revision, "running", running)
+		d.store.ClearPending()
+		return
+	}
+	p := &pending{prev: sp.Previous, rev: sp.Revision, deadline: sp.Deadline}
+	left := sp.Deadline.Sub(d.Now())
+	if left <= 0 {
+		d.log.Warn("commit was not confirmed before its deadline passed while ngfwd was stopped; rolling back", "revision", sp.Revision)
+		d.rollbackUnconfirmedLocked(p, fmt.Sprintf("auto-rollback: revision %d not confirmed (deadline passed while ngfwd was stopped)", p.rev))
+		return
+	}
+	p.timer = time.AfterFunc(left, func() { d.autoRollback(p) })
+	d.pending = p
+	d.log.Warn("commit still waiting for confirmation after restart", "revision", sp.Revision, "rolls_back_in", left.Round(time.Second))
+}
+
+// persistPendingLocked keeps the on-disk pending confirmation in step with
+// d.pending. Callers hold d.mu.
+func (d *Daemon) persistPendingLocked() {
+	var err error
+	if d.pending == nil {
+		err = d.store.ClearPending()
+	} else {
+		err = d.store.SavePending(store.Pending{Revision: d.pending.rev, Previous: d.pending.prev, Deadline: d.pending.deadline})
+	}
+	if err != nil {
+		d.log.Error("cannot record the pending confirmation; a restart would forget it", "err", err)
+	}
+}
+
+func parse(data []byte) (*config.Config, error) {
+	cfg, err := config.Parse(data)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	return cfg, nil
+}
+
+func (d *Daemon) snapshot() map[string][]compiler.TagEntry {
+	now := d.Now()
+	out := map[string][]compiler.TagEntry{}
+	for _, e := range d.tags.List("", now) {
+		out[e.Tag] = append(out[e.Tag], compiler.TagEntry{IP: e.IP, Remaining: e.Remaining(now)})
+	}
+	return out
+}
+
+// Candidate returns the candidate config.
+func (d *Daemon) Candidate() ([]byte, error) { return d.store.Candidate() }
+
+// Running returns the running revision number and config.
+func (d *Daemon) Running() (int, []byte, error) { return d.store.Running() }
+
+// Revisions lists commits, oldest first.
+func (d *Daemon) Revisions() ([]store.Revision, error) { return d.store.List() }
+
+// Revision returns the config committed as revision n.
+func (d *Daemon) Revision(n int) ([]byte, error) { return d.store.Get(n) }
+
+// RevertCandidate discards uncommitted changes.
+func (d *Daemon) RevertCandidate() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	_, run, err := d.store.Running()
+	if err != nil {
+		return err
+	}
+	return d.store.SetCandidate(run)
+}
+
+// SetCandidate replaces the candidate after checking it parses and validates.
+func (d *Daemon) SetCandidate(data []byte) error {
+	if _, err := parse(data); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.store.SetCandidate(data)
+}
+
+// Diff compares running (a) to candidate (b).
+func (d *Daemon) Diff() (string, error) {
+	_, run, err := d.store.Running()
+	if err != nil {
+		return "", err
+	}
+	cand, err := d.store.Candidate()
+	if err != nil {
+		return "", err
+	}
+	return diff.Lines(string(run), string(cand)), nil
+}
+
+// Preview compiles the candidate without applying it.
+func (d *Daemon) Preview() (*compiler.Result, error) {
+	cand, err := d.store.Candidate()
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := parse(cand)
+	if err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return compiler.Compile(cfg, d.snapshot())
+}
+
+// Status reports the running revision and any pending confirmation.
+func (d *Daemon) Status() (Status, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	n, run, err := d.store.Running()
+	if err != nil {
+		return Status{}, err
+	}
+	cand, err := d.store.Candidate()
+	if err != nil {
+		return Status{}, err
+	}
+	s := Status{Running: n, Pending: string(cand) != string(run)}
+	if d.pending != nil {
+		t := d.pending.deadline
+		s.ConfirmBy = &t
+	}
+	return s, nil
+}
+
+// Commit applies the candidate. With confirm > 0, the commit is rolled back
+// automatically unless Confirm is called before the deadline.
+func (d *Daemon) Commit(author, message string, confirm time.Duration) (*CommitResult, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	cand, err := d.store.Candidate()
+	if err != nil {
+		return nil, err
+	}
+	if len(strings.TrimSpace(string(cand))) == 0 {
+		return nil, fmt.Errorf("%w: candidate config is empty", ErrInvalid)
+	}
+	return d.commitLocked(cand, author, message, confirm)
+}
+
+func (d *Daemon) commitLocked(data []byte, author, message string, confirm time.Duration) (*CommitResult, error) {
+	cfg, err := parse(data)
+	if err != nil {
+		return nil, err
+	}
+	res, err := compiler.Compile(cfg, d.snapshot())
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	frrRes := frr.Compile(cfg)
+	if d.frr.Available() {
+		if err := d.frr.Check(frrRes.Conf); err != nil {
+			return nil, fmt.Errorf("%w: routing config rejected by FRR, nothing applied: %v", ErrInvalid, err)
+		}
+	}
+	if err := d.checkDHCP(cfg); err != nil {
+		return nil, err
+	}
+	if err := d.nft.Check(res.Ruleset); err != nil {
+		return nil, fmt.Errorf("ruleset check failed, nothing applied: %w", err)
+	}
+	prev, _, err := d.store.Running()
+	if err != nil {
+		return nil, err
+	}
+	// nft -f is atomic: on failure the previous ruleset stays in place.
+	if err := d.nft.Apply(res.Ruleset); err != nil {
+		return nil, fmt.Errorf("apply failed, previous ruleset still active: %w", err)
+	}
+	rev, err := d.store.Save(data, author, message, d.Now())
+	if err != nil {
+		return nil, fmt.Errorf("applied but not recorded: %w", err)
+	}
+	d.sets = res.Sets
+	d.wantNICs = wantedNICs(cfg)
+	d.wantNet = wantedNet(cfg)
+	d.wantRoutes = wantedRoutes(cfg)
+	d.wantFRR = frrRes
+	d.running = cfg
+	routeWarnings := append(d.syncNetLocked(nicaddr.Commit), d.syncRoutesLocked()...)
+	routeWarnings = append(routeWarnings, d.syncFRRLocked()...)
+	routeWarnings = append(routeWarnings, d.syncDHCPLocked(true)...)
+	routeWarnings = append(routeWarnings, d.syncIPSLocked()...)
+
+	// A new commit supersedes a pending confirmation; the rollback target
+	// stays the last confirmed revision.
+	if d.pending != nil {
+		d.pending.timer.Stop()
+		prev = d.pending.prev
+		d.pending = nil
+	}
+	out := &CommitResult{Revision: rev, Warnings: append(res.Warnings, routeWarnings...)}
+	if confirm > 0 {
+		p := &pending{prev: prev, rev: rev.N, deadline: d.Now().Add(confirm)}
+		p.timer = time.AfterFunc(confirm, func() { d.autoRollback(p) })
+		d.pending = p
+		out.ConfirmBy = &p.deadline
+	}
+	d.persistPendingLocked()
+	d.log.Info("commit", "revision", rev.N, "author", author, "message", message, "confirm", confirm)
+	return out, nil
+}
+
+// Confirm accepts a pending commit.
+func (d *Daemon) Confirm() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.pending == nil {
+		return fmt.Errorf("%w: no commit is waiting for confirmation", ErrInvalid)
+	}
+	d.pending.timer.Stop()
+	d.log.Info("commit confirmed", "revision", d.pending.rev)
+	d.pending = nil
+	d.persistPendingLocked()
+	return nil
+}
+
+func (d *Daemon) autoRollback(p *pending) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.pending != p {
+		return // confirmed or superseded meanwhile
+	}
+	d.pending = nil
+	d.rollbackUnconfirmedLocked(p, fmt.Sprintf("auto-rollback: revision %d not confirmed", p.rev))
+}
+
+// rollbackUnconfirmedLocked restores what was running before the
+// unconfirmed revision p.rev. d.pending must already be cleared.
+func (d *Daemon) rollbackUnconfirmedLocked(p *pending, msg string) {
+	if p.prev == 0 {
+		res, err := compiler.Compile(&config.Config{}, d.snapshot())
+		if err == nil {
+			err = d.nft.Apply(res.Ruleset)
+		}
+		if err == nil {
+			err = d.store.SetRunning(0)
+		}
+		if err != nil {
+			d.log.Error("auto-rollback failed", "err", err)
+			return
+		}
+		d.sets = res.Sets
+		d.wantNICs = nil
+		d.wantNet = netdev.Want{}
+		d.wantRoutes = nil
+		d.wantFRR = frr.Compile(&config.Config{})
+		d.running = &config.Config{}
+		d.syncNetLocked(nicaddr.Commit)
+		d.syncRoutesLocked()
+		d.syncFRRLocked()
+		d.syncDHCPLocked(true)
+		d.syncIPSLocked()
+		d.persistPendingLocked()
+		d.log.Warn(msg+"; no earlier revision, forward default-deny applied", "revision", p.rev)
+		return
+	}
+	data, err := d.store.Get(p.prev)
+	if err == nil {
+		_, err = d.commitLocked(data, "system", fmt.Sprintf("%s; restored %d", msg, p.prev), 0)
+	}
+	if err != nil {
+		d.log.Error("auto-rollback failed", "err", err)
+		return
+	}
+	d.log.Warn(msg, "restored", p.prev)
+}
+
+// Rollback re-commits revision n as a new revision.
+func (d *Daemon) Rollback(n int, author string) (*CommitResult, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	data, err := d.store.Get(n)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	return d.commitLocked(data, author, fmt.Sprintf("rollback to %d", n), 0)
+}
+
+// RegisterTags adds ip to each tag, and to the matching nft sets at once.
+// ttl 0 means no expiry.
+func (d *Daemon) RegisterTags(ip netip.Addr, tagList []string, ttl time.Duration) error {
+	for _, t := range tagList {
+		if err := tags.Validate(ip, t); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalid, err)
+		}
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if err := d.tags.Register(ip, tagList, ttl, d.Now()); err != nil {
+		return err
+	}
+	var b strings.Builder
+	for _, t := range tagList {
+		set, ok := d.sets[t]
+		if !ok {
+			continue // no group uses this tag yet; applied when one does
+		}
+		el := ip.String()
+		if ttl > 0 {
+			el = fmt.Sprintf("%s timeout %ds", ip, int(ttl.Seconds()+0.999))
+		}
+		// add/delete/add in one transaction: refreshes the timeout whether
+		// or not the element already exists.
+		fmt.Fprintf(&b, "add element %s %s { %s }\n", compiler.Table, set, ip)
+		fmt.Fprintf(&b, "delete element %s %s { %s }\n", compiler.Table, set, ip)
+		fmt.Fprintf(&b, "add element %s %s { %s }\n", compiler.Table, set, el)
+	}
+	if b.Len() == 0 {
+		return nil
+	}
+	if err := d.nft.Apply(b.String()); err != nil {
+		return fmt.Errorf("registered but not applied: %w", err)
+	}
+	// Re-evaluate the host's existing sessions under its new tags.
+	if err := d.ct.FlushIP(ip); err != nil {
+		d.log.Warn("could not flush conntrack; existing sessions keep old verdicts", "ip", ip, "err", err)
+	}
+	return nil
+}
+
+// UnregisterTags removes ip from each tag and its nft set.
+func (d *Daemon) UnregisterTags(ip netip.Addr, tagList []string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if err := d.tags.Unregister(ip, tagList, d.Now()); err != nil {
+		return err
+	}
+	var b strings.Builder
+	for _, t := range tagList {
+		if set, ok := d.sets[t]; ok {
+			fmt.Fprintf(&b, "add element %s %s { %s }\n", compiler.Table, set, ip)
+			fmt.Fprintf(&b, "delete element %s %s { %s }\n", compiler.Table, set, ip)
+		}
+	}
+	if b.Len() == 0 {
+		return nil
+	}
+	if err := d.nft.Apply(b.String()); err != nil {
+		return fmt.Errorf("unregistered but not applied: %w", err)
+	}
+	return nil
+}
+
+// ListTags returns live registrations, optionally for one tag.
+func (d *Daemon) ListTags(tag string) []tags.Entry {
+	return d.tags.List(tag, d.Now())
+}
+
+// RoutingStatus answers "bgp", "ospf" or "routes" (optionally for one VRF)
+// from FRR. It doesn't take d.mu: vtysh reads FRR, not ngfwd state.
+func (d *Daemon) RoutingStatus(what, vrf string) (any, error) {
+	if !d.frr.Available() {
+		return nil, fmt.Errorf("%w: FRR is not installed on this appliance yet", ErrInvalid)
+	}
+	switch what {
+	case "bgp":
+		return frr.BGPSummary(d.frr)
+	case "ospf":
+		return frr.OSPFNeighbors(d.frr)
+	case "routes":
+		return frr.Routes(d.frr, vrf)
+	}
+	return nil, fmt.Errorf("%w: routing status is bgp, ospf or routes", ErrInvalid)
+}

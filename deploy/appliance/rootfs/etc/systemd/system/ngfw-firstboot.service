@@ -1,0 +1,17 @@
+[Unit]
+Description=hobby-ngfw first-boot setup (NIC names, network, credentials, initial config)
+DefaultDependencies=no
+After=local-fs.target systemd-udev-trigger.service systemd-udevd.service
+Before=network-pre.target systemd-networkd.service ngfwd.service ssh.service getty.target sysinit.target
+Wants=network-pre.target
+ConditionPathExists=!/var/lib/ngfw/firstboot.done
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/ngfw-firstboot
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=sysinit.target

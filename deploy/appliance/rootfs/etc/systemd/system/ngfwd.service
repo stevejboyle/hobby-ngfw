@@ -1,0 +1,28 @@
+[Unit]
+Description=hobby-ngfw firewall daemon
+Documentation=https://github.com/stevejboyle/hobby-ngfw
+# Load the ruleset before any interface comes up: no unfiltered window.
+After=ngfw-firstboot.service
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+ExecStart=/usr/local/sbin/ngfwd \
+    -state /var/lib/ngfw \
+    -socket /run/ngfw/ngfwd.sock \
+    -socket-group sjbadm \
+    -api-listen :8443 \
+    -api-keys /etc/ngfw/api-keys \
+    -tls-cert /etc/ngfw/tls.crt \
+    -tls-key /etc/ngfw/tls.key \
+    -ui-listen :443 \
+    -web-users /etc/ngfw/web-users \
+    -bootstrap /etc/ngfw/initial.yaml
+ExecStartPost=/bin/sh -c 'for i in $(seq 50); do [ -S /run/ngfw/ngfwd.sock ] && exit 0; sleep 0.1; done; exit 1'
+# Accounts and shells for the captive CLI (idempotent; see sjb-migrate).
+ExecStartPost=-/usr/local/sbin/sjb-migrate
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

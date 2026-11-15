@@ -1,0 +1,106 @@
+package daemon
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/stevejboyle/hobby-ngfw/internal/compiler"
+	"github.com/stevejboyle/hobby-ngfw/internal/ips"
+	"github.com/stevejboyle/hobby-ngfw/internal/logs"
+)
+
+type fakeSuricata struct {
+	running       bool
+	starts, stops int
+	mem           uint64
+	mark          uint32
+	src, dst      string
+}
+
+func (f *fakeSuricata) Available() bool          { return true }
+func (f *fakeSuricata) Start() error             { f.starts++; f.running = true; return nil }
+func (f *fakeSuricata) Stop() error              { f.stops++; f.running = false; return nil }
+func (f *fakeSuricata) Running() bool            { return f.running }
+func (f *fakeSuricata) Reload() error            { return nil }
+func (f *fakeSuricata) MemTotal() uint64         { return f.mem }
+func (f *fakeSuricata) LoadedRules() (int, bool) { return 4, f.running }
+func (f *fakeSuricata) ConnMark(proto, src string, sport int, dst string, dport int) (uint32, bool) {
+	f.src, f.dst = src, dst
+	return f.mark, f.mark != 0
+}
+
+func TestIPSLifecycleAndAlerts(t *testing.T) {
+	d, nf := setup(t)
+	fs := &fakeSuricata{mem: 2 << 30}
+	e := &ips.Engine{Dir: t.TempDir(), URL: "http://127.0.0.1:1/none"}
+	d.SetIPS(fs, e)
+	var lines []string
+	d.ips.emit = func(s string) { lines = append(lines, s) }
+
+	cfg := strings.Replace(string(lab(t)), "    service: [web]\n    action: allow\n    log: true", "    service: [web]\n    action: allow\n    log: true\n    ips_profile: strict", 1) +
+		"ips_profiles:\n  - name: strict\n    minor: block\n    informational: alert\n"
+	if err := d.SetCandidate([]byte(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	res, err := d.Commit("t", "ips", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := strings.Join(res.Warnings, "\n")
+	if !strings.Contains(w, "give it 4 GB") || !strings.Contains(w, "being downloaded") {
+		t.Errorf("warnings: %s", w)
+	}
+	if fs.starts != 1 || !e.Installed() || !strings.Contains(nf.Last(), "chain ips_enforce") {
+		t.Fatalf("starts=%d installed=%v\n%s", fs.starts, e.Installed(), nf.Last())
+	}
+	if st := d.IPS(); !st.Running || st.Loaded != 4 || st.Loading {
+		t.Fatalf("status %+v", st)
+	}
+	// The periodic pass leaves a running engine alone.
+	d.ReconcileRoutes()
+	if fs.starts != 1 {
+		t.Fatalf("restarted: %d", fs.starts)
+	}
+
+	idx := -1
+	for i, r := range d.running.Rules {
+		if r.Name == "allow-web" {
+			idx = i
+		}
+	}
+	fs.mark = uint32(idx+1)<<compiler.RuleShift | compiler.SessionBit | compiler.AppDoneBit | 124 // YouTube
+	d.IPSAlert(ips.Alert{SID: 2001219, Message: "ET SCAN x", Severity: "minor", Proto: "tcp", Src: "93.184.216.34", SPort: 80, Dst: "10.10.1.50", DPort: 40000})
+	d.IPSAlert(ips.Alert{SID: 9900004, Severity: "informational", Proto: "tcp"})
+	if len(lines) != 2 {
+		t.Fatalf("lines: %v", lines)
+	}
+	th, ok := logs.ParseThreat(lines[0])
+	if !ok || th.Rule != "allow-web" || th.Profile != "strict" || th.Action != "block" || th.App != "YouTube" || th.Src != "93.184.216.34" {
+		t.Fatalf("threat: %+v (%s)", th, lines[0])
+	}
+	if th, _ := logs.ParseThreat(lines[1]); th.Action != "alert" {
+		t.Fatalf("informational under strict alerts: %+v", th)
+	}
+	// Default profile ignores informational: nothing logged.
+	d.mu.Lock()
+	d.running.Rules[idx].IPSProfile = "default"
+	d.mu.Unlock()
+	d.IPSAlert(ips.Alert{SID: 9900004, Severity: "informational", Proto: "tcp"})
+	if len(lines) != 2 {
+		t.Fatalf("ignored severity logged: %v", lines[2:])
+	}
+
+	// No IPS rules any more: the engine stops, the chains go.
+	if err := d.SetCandidate(lab(t)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Commit("t", "no ips", 0); err != nil {
+		t.Fatal(err)
+	}
+	if fs.stops != 1 || fs.running || strings.Contains(nf.Last(), "chain ips") {
+		t.Fatalf("stops=%d", fs.stops)
+	}
+	if st := d.IPS(); st.InUse || len(st.Rules) != 0 || st.Engine.Source != "test signatures only" {
+		t.Fatalf("status %+v", st)
+	}
+}

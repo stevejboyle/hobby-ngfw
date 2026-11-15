@@ -1,0 +1,168 @@
+package ips
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Runner is what ngfwd needs from the appliance to run the IPS. Tests and
+// development builds use Noop.
+type Runner interface {
+	// Available reports whether Suricata is installed.
+	Available() bool
+	// Start enables and starts the engine; Stop stops and disables it.
+	// Neither blocks on systemd.
+	Start() error
+	Stop() error
+	Running() bool
+	// Reload makes a running engine load the rules file again.
+	Reload() error
+	// MemTotal is the appliance's RAM in bytes (0 if unknown).
+	MemTotal() uint64
+	// ConnMark is the ct mark of the connection a packet with this
+	// 5-tuple belongs to, in either direction.
+	ConnMark(proto, src string, sport int, dst string, dport int) (uint32, bool)
+	// LoadedRules is how many signatures the running engine has active
+	// (false when it can't tell: not running, or still starting).
+	LoadedRules() (int, bool)
+}
+
+// Noop runs nothing.
+type Noop struct{}
+
+func (Noop) Available() bool                                          { return false }
+func (Noop) Start() error                                             { return nil }
+func (Noop) Stop() error                                              { return nil }
+func (Noop) Running() bool                                            { return false }
+func (Noop) Reload() error                                            { return nil }
+func (Noop) MemTotal() uint64                                         { return 0 }
+func (Noop) ConnMark(string, string, int, string, int) (uint32, bool) { return 0, false }
+func (Noop) LoadedRules() (int, bool)                                 { return 0, false }
+
+// CommandSocket is Suricata's unix-command socket (suricata.yaml).
+const CommandSocket = "/run/sjb-ips/suricata-command.socket"
+
+// Exec runs Suricata under systemd.
+type Exec struct {
+	Suricata  string // default /usr/bin/suricata
+	Conntrack string // default conntrack
+	Socket    string // default CommandSocket
+}
+
+// LoadedRules asks the engine over its command socket (ruleset-stats).
+func (e Exec) LoadedRules() (int, bool) {
+	path := e.Socket
+	if path == "" {
+		path = CommandSocket
+	}
+	c, err := net.DialTimeout("unix", path, time.Second)
+	if err != nil {
+		return 0, false
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(3 * time.Second))
+	dec := json.NewDecoder(c)
+	var hello struct{ Return string }
+	if _, err := c.Write([]byte(`{"version": "0.2"}` + "\n")); err != nil || dec.Decode(&hello) != nil || hello.Return != "OK" {
+		return 0, false
+	}
+	var resp struct {
+		Return  string
+		Message []struct {
+			Loaded int `json:"rules_loaded"`
+		}
+	}
+	if _, err := c.Write([]byte(`{"command": "ruleset-stats"}` + "\n")); err != nil || dec.Decode(&resp) != nil || resp.Return != "OK" || len(resp.Message) == 0 {
+		return 0, false
+	}
+	return resp.Message[0].Loaded, true
+}
+
+func (e Exec) Available() bool {
+	p := e.Suricata
+	if p == "" {
+		p = "/usr/bin/suricata"
+	}
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+func systemctl(args ...string) error {
+	out, err := exec.Command("systemctl", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("systemctl %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (Exec) Start() error {
+	return systemctl("enable", "--now", "--no-block", Unit)
+}
+
+func (Exec) Stop() error {
+	return systemctl("disable", "--now", "--no-block", Unit)
+}
+
+func (Exec) Running() bool {
+	return exec.Command("systemctl", "is-active", "--quiet", Unit).Run() == nil
+}
+
+// Reload sends Suricata the live rule-reload signal (its unit's
+// ExecReload); a stopped engine is left alone.
+func (Exec) Reload() error {
+	return systemctl("--no-block", "try-reload-or-restart", Unit)
+}
+
+func (Exec) MemTotal() uint64 {
+	f, err := os.Open("/proc/meminfo")
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		if v, ok := strings.CutPrefix(sc.Text(), "MemTotal:"); ok {
+			kb, _ := strconv.ParseUint(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(v), "kB")), 10, 64)
+			return kb * 1024
+		}
+	}
+	return 0
+}
+
+var markRE = regexp.MustCompile(`\bmark=(\d+)`)
+
+func (e Exec) ConnMark(proto, src string, sport int, dst string, dport int) (uint32, bool) {
+	path := e.Conntrack
+	if path == "" {
+		path = "conntrack"
+	}
+	try := func(s string, sp int, d string, dp int) (uint32, bool) {
+		args := []string{"-G", "-p", proto, "-s", s, "-d", d}
+		if proto == "tcp" || proto == "udp" {
+			args = append(args, "--sport", strconv.Itoa(sp), "--dport", strconv.Itoa(dp))
+		}
+		out, err := exec.Command(path, args...).Output()
+		if err != nil {
+			return 0, false
+		}
+		m := markRE.FindSubmatch(bytes.TrimSpace(out))
+		if m == nil {
+			return 0, false
+		}
+		n, err := strconv.ParseUint(string(m[1]), 10, 32)
+		return uint32(n), err == nil
+	}
+	if m, ok := try(src, sport, dst, dport); ok {
+		return m, true
+	}
+	return try(dst, dport, src, sport) // a reply-direction packet
+}

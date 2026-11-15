@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SJB-OS</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="app.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<div id="login" class="login hidden">
+  <form id="login-form" class="login-card" autocomplete="on">
+    <img class="login-logo" src="favicon.svg" alt="SJB">
+    <h1>SJB-OS</h1>
+    <p class="muted">Stops Junk at the Border</p>
+    <label>User <input name="user" autocomplete="username" value="admin" required></label>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required autofocus></label>
+    <p id="login-error" class="error hidden" role="alert"></p>
+    <button type="submit" class="primary">Log in</button>
+    <p class="muted small">Authorised users only. Everyone else is turned back at the border.</p>
+  </form>
+</div>
+
+<div id="app" class="hidden">
+  <header class="top">
+    <a href="#dashboard" class="brand" aria-label="SJB-OS dashboard">
+      <img src="favicon.svg" alt=""> SJB-OS <span id="version" class="muted small"></span>
+    </a>
+    <nav id="nav" aria-label="Sections">
+      <a href="#dashboard">Dashboard</a>
+      <div class="menu">
+        <button type="button" class="menu-btn" aria-expanded="false" aria-controls="menu-security">Security</button>
+        <div class="menu-list hidden" id="menu-security">
+          <a href="#policy">Policy</a>
+          <a href="#nat">NAT</a>
+          <a href="#objects">Objects</a>
+          <a href="#apps">Applications</a>
+          <a href="#ips">IPS</a>
+          <a href="#tags">Tags</a>
+        </div>
+      </div>
+      <div class="menu">
+        <button type="button" class="menu-btn" aria-expanded="false" aria-controls="menu-networking">Networking</button>
+        <div class="menu-list hidden" id="menu-networking">
+          <a href="#network">Interfaces</a>
+          <a href="#routing">Routing</a>
+          <a href="#dhcp">DHCP</a>
+        </div>
+      </div>
+      <div class="menu">
+        <button type="button" class="menu-btn" aria-expanded="false" aria-controls="menu-system">System</button>
+        <div class="menu-list hidden" id="menu-system">
+          <a href="#logs">Logs</a>
+          <a href="#revisions">Revisions</a>
+          <a href="#system">Administration</a>
+        </div>
+      </div>
+    </nav>
+    <div class="who"><span id="host" class="muted small"></span> <button id="logout" class="link">Log out</button></div>
+  </header>
+  <div id="confirm-bar" class="bar warn hidden" role="status"></div>
+  <div id="pending-bar" class="bar info hidden" role="status"></div>
+  <main id="main"></main>
+</div>
+
+<div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+<dialog id="dialog"><form method="dialog" id="dialog-form"></form></dialog>
+</body>
+</html>

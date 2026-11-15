@@ -1,0 +1,38 @@
+#!/bin/bash
+# Install the Debian packages an upgrade bundle carries in
+# /usr/share/sjb-os/packages (for example FRR for BGP and OSPF). A package
+# is installed only if it is missing or older than the bundled one, so this
+# never downgrades anything, even after `apt upgrade`. Safe to run often:
+# sjb-migrate starts it in the background whenever ngfwd starts.
+set -uo pipefail
+DIR=/usr/share/sjb-os/packages
+log() { echo "sjb-packages: $*"; }
+shopt -s nullglob
+debs=()
+for f in "$DIR"/*.deb; do
+	pkg=$(dpkg-deb -f "$f" Package) || continue
+	ver=$(dpkg-deb -f "$f" Version)
+	cur=$(dpkg-query -W -f='${db:Status-Status} ${Version}' "$pkg" 2>/dev/null)
+	if [[ $cur == "installed "* ]] && dpkg --compare-versions "${cur#installed }" ge "$ver"; then
+		continue
+	fi
+	debs+=("$f")
+done
+(( ${#debs[@]} == 0 )) && exit 0
+log "installing ${#debs[@]} package(s): $(for f in "${debs[@]}"; do basename "$f" .deb; done | xargs)"
+# Suricata's package must not start Debian's suricata.service (af-packet
+# on eth0); SJB-OS runs it as sjb-ips. sjb-migrate masks that unit;
+# this keeps the postinst from trying (policy-rc.d 101 = "not allowed").
+POLICY=/usr/sbin/policy-rc.d
+if [[ ! -e $POLICY ]]; then
+	printf '#!/bin/sh\ncase "$1" in suricata|suricata.service) exit 101 ;; esac\nexit 0\n' >"$POLICY" && chmod 755 "$POLICY"
+	trap 'rm -f "$POLICY"' EXIT
+fi
+# dpkg -i takes the whole set at once so they can satisfy each other.
+if DEBIAN_FRONTEND=noninteractive dpkg -i --force-confold "${debs[@]}"; then
+	log "done: new packages on duty."
+else
+	log "dpkg failed; the packages these need may be missing from this appliance"
+	dpkg --configure -a || true
+	exit 1
+fi

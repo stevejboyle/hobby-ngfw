@@ -1,0 +1,13 @@
+SJB-OS
+Copyright 2026 Steve Boyle / SJB Consulting
+
+This product is licensed under the Apache License, Version 2.0 (see
+LICENSE). It was written largely with Claude Code (Anthropic) under the
+direction of its author.
+
+The appliance images (OVA) and upgrade bundles built from this repository
+also contain third-party software under its own licenses; see
+THIRD_PARTY_NOTICES.md.
+
+"SJB-OS", "SJB Consulting" and the SJB logo are marks of SJB Consulting.
+The Apache License does not grant permission to use them (section 6).

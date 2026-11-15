@@ -75,6 +75,13 @@ func (f *Fake) FlushAll() error {
 	return nil
 }
 
+// Count reports how many times FlushAll ran.
+func (f *Fake) Count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.All
+}
+
 // FlushIP implements Flusher.
 func (f *Fake) FlushIP(ip netip.Addr) error {
 	f.mu.Lock()

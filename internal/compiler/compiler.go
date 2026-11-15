@@ -186,6 +186,14 @@ const (
 	IPSMinor         = 0x04000000
 	IPSInformational = 0x08000000
 	IPSMarkMask      = 0x0f000000
+
+	// AppPendingPackets caps how many packets (both directions) a rule that
+	// names applications lets through while the application isn't known yet.
+	// appidd settles every connection within its first 32 packets (MAX_PKTS
+	// in appidd.c); past this cap the connection counts as unidentified, so
+	// when appidd is stopped or overloaded (its queue bypassed) an
+	// application-restricted allow can't turn into an unrestricted one.
+	AppPendingPackets = 40
 )
 
 // IPSSeverityMark is the packet mark bit for a severity.
@@ -593,12 +601,15 @@ func appTerms(apps []string) ([]string, error) {
 // application rules (connections are re-evaluated until their application
 // is settled). match holds the rule's zone/address/service terms.
 //
-//   - allow: logs once (the logged bit), tags logged connections with the
-//     rule for appidd's end log, and accepts: at once and final when no
+//   - allow: logs once (the logged bit), writes the rule into the ct mark
+//     (its tag: appidd's end log and the IPS profile; zero clears what an
+//     earlier evaluation wrote), and accepts: at once and final when no
 //     application rule comes before it (nothing can shift), otherwise via
 //     the allowed chain, final only when the application is settled. An
 //     application rule also lets a connection through while its
-//     application isn't known yet, unfinalised, so the handshake passes.
+//     application isn't known yet, unfinalised, so the handshake passes:
+//     for at most AppPendingPackets packets, and tagged with the rule, so
+//     the rule's IPS profile inspects those packets too.
 //   - deny/reset: drops (or resets) and marks the connection denied, so
 //     the rest of it is dropped at the top of the chain without logging
 //     again. An application rule only matches once the application is known.
@@ -642,17 +653,21 @@ func (c *compiler) appModeLines(r config.Rule, match []string, v verdict, appMat
 		case c.ruleIdx < c.firstApp:
 			// Above every application rule: nothing can shift; final now.
 			stmts = append(stmts, fmt.Sprintf("ct mark set ct mark and 0x%08x or 0x%08x", keepLow, tag|FinalBit), "accept")
-		case tag != 0:
-			stmts = append(stmts, fmt.Sprintf("ct mark set ct mark and 0x%08x or 0x%08x", keepLow, tag), "jump allowed")
 		default:
-			stmts = append(stmts, "jump allowed")
+			// Always rewrite the rule bits: a connection re-evaluated here may
+			// carry another rule's tag from an earlier packet.
+			stmts = append(stmts, fmt.Sprintf("ct mark set ct mark and 0x%08x or 0x%08x", keepLow, tag), "jump allowed")
 		}
 		lines = append(lines, join(match, t, append(stmts, comment)))
 	}
 	if len(appMatches) > 0 {
 		// Application not known yet: let it through, not final, so the
 		// rule base sees the connection again once App Identification has named it.
-		lines = append(lines, join(match, []string{fmt.Sprintf("ct mark and 0x%x == 0", AppMask|AppDoneBit), "counter", "accept",
+		// Bounded (AppPendingPackets) and tagged with the rule, so its IPS
+		// profile sees these packets.
+		lines = append(lines, join(match, []string{fmt.Sprintf("ct mark and 0x%x == 0", AppMask|AppDoneBit),
+			fmt.Sprintf("ct packets < %d", AppPendingPackets), "counter",
+			fmt.Sprintf("ct mark set ct mark and 0x%08x or 0x%08x", keepLow, tag), "accept",
 			fmt.Sprintf("comment \"rule:%s (application pending)\"", r.Name)}))
 	}
 	return lines

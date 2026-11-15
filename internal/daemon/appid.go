@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/stevejboyle/hobby-ngfw/internal/appid"
+	"github.com/stevejboyle/hobby-ngfw/internal/compiler"
 )
 
 // SetAppID sets where App Identification's catalog and statistics are read. Call before
@@ -15,7 +16,17 @@ func (d *Daemon) Apps() appid.Status {
 	d.mu.Lock()
 	on := d.running == nil || d.running.System.AppIDOn()
 	d.mu.Unlock()
-	return d.appid.Seen(on)
+	st := d.appid.Seen(on)
+	switch q := d.Queues(0, 1); {
+	case !on:
+		st.State, st.Detail = "off", "App Identification is off: rules that name applications are skipped"
+	case !q.Bound:
+		st.State, st.Detail = "unavailable", fmt.Sprintf("appidd isn't receiving traffic, so connections go unclassified (fail-open for traffic, not for policy): "+
+			"a rule that names applications lets an unidentified connection through for at most %d packets, then the rules below decide", compiler.AppPendingPackets)
+	default:
+		st.State, st.Detail = "classifying", fmt.Sprintf("classifying new connections from their first packets (at most %d per connection before it counts as unidentified)", compiler.AppPendingPackets)
+	}
+	return st
 }
 
 // AppCatalog lists the applications App Identification can identify, filtered by q.

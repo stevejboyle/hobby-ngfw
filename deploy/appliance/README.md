@@ -1,5 +1,14 @@
 # SJB-OS appliance guide
 
+**An experimental demonstration of AI-generated software for isolated lab
+use. Not a commercial, supported, or production-ready security product. Do
+not rely on it to protect production systems. Working code does not
+establish security effectiveness, resilience, or operational readiness.**
+Its project-specific code was generated with Claude Code under Steve Boyle's
+direction and reviewed with ChatGPT's help; it relies on Linux netfilter,
+nDPI, Suricata, FRRouting, Kea and Debian for the real work (see the repo's
+README).
+
 SJB-OS (Stops Junk at the Border) is the hobby-ngfw
 firewall packaged as a VMware OVA, and that is the only supported way to run
 it. The VM is Debian 13 with ngfwd, nftables and open-vm-tools: 3 vmxnet3
@@ -157,7 +166,7 @@ prefixes) is unchanged, so integrations and scripts never see a joke.
 
 ## The CLI
 
-Like most enterprise firewalls, SJB-OS gives operators a CLI rather than a Unix shell. SSH to
+SJB-OS gives operators a CLI rather than a Unix shell. SSH to
 the mgmt address as `admin` (or log in on the VMware console) and you get the
 `admin@<hostname>>` prompt. There is no bash, no sudo, no file transfer and
 no port forwarding. `help` lists the commands:
@@ -241,6 +250,40 @@ ssh admin@<mgmt-ip> confirm          # within 5 minutes, or it rolls back
 
 The config format is the one `show running` prints; see
 `examples/basic.yaml` in the repo for every object type.
+
+### What a commit does
+
+A commit validates the candidate, compiles it and checks the result with
+`nft -c` and (when used) FRR and Kea, so a config they reject changes
+nothing. Then, in this order:
+
+1. The new revision, and for `-confirm` its rollback target and deadline,
+   are written to disk. If that fails, nothing changes.
+2. The firewall policy is applied in **one atomic nftables transaction**:
+   either the whole new ruleset is in force or the old one still is.
+3. The revision becomes the running one. If that can't be recorded, the
+   previous ruleset is put back and the commit fails. If even that fails,
+   `show status` (and a bar in the web UI) reports a **recovery** state:
+   enforcement may not match the running revision until the next good
+   commit or a restart of ngfwd.
+4. If the policy changed, **every existing connection is re-evaluated**:
+   ngfwd clears the connection-tracking table, so on its next packet each
+   connection meets the new rules as if new. Connections the new policy
+   allows carry on (TCP is picked up mid-stream; NATed and long-idle
+   connections may need to reconnect); connections it denies stop. A
+   connection that a rule allows only by application is identified again
+   from mid-stream and may be cut off, so expect to reconnect those.
+   Management (mgmt) is never filtered and isn't affected. A commit whose
+   compiled firewall ruleset is unchanged leaves connections alone.
+
+Only step 2 is atomic. Routing (FRR), DHCP (Kea), the IPS, interface
+addresses and VLANs **converge afterwards**: the commit reports problems
+there as warnings, and ngfwd keeps retrying (routes and interfaces every
+10 seconds); they are not rolled back with the policy. A rollback (manual,
+or automatic when a `-confirm` commit isn't confirmed) is a new commit of
+the old revision and goes through the same steps; if an automatic rollback
+fails, the unconfirmed revision stays in force, `show status` says so, and
+ngfwd retries every minute (and at its next start).
 
 **Tag hosts** from anything that can reach mgmt, with the key from
 `show api-keys`:
@@ -606,8 +649,23 @@ with a warning.
   known, and are the only entries for denied connections.
 - On by default. `set system app-identification off` (and commit) stops classification;
   `delete system app-identification` turns it back on.
-- If the classifier (`appidd`) isn't running, traffic is unaffected: the
-  ruleset hands packets to it with bypass, so they go straight on.
+- **Before identification**, a rule that names applications lets a
+  connection through for at most **40 packets** (both directions together)
+  while its application isn't known. App Identification settles every
+  connection within its first 32 packets, so normally the rule's
+  application match decides well before the limit. Those packets carry the
+  rule's IPS profile: the IPS inspects them, so a signature in the first
+  request is caught. Past the limit, an unidentified connection is treated
+  like any other unidentified traffic: the rules below decide (often the
+  default deny).
+- **If App Identification isn't working** (`appidd` stopped, starting, or
+  overloaded), traffic isn't classified: the ruleset hands packets to it
+  with bypass, so they go straight on. Rules that don't name applications
+  are unaffected. A rule that does still allows an unidentified connection
+  only for its first 40 packets, so an application-restricted allow never
+  becomes an unrestricted one; short connections (a small web request) can
+  complete within that window. `show app` and the Applications page say
+  **classifying**, **unavailable** or **off**.
 - It ships in the upgrade bundle: `appidd` plus nDPI 6.0 (built for
   SJB-OS; Debian's is from 2021) and libnetfilter-queue, installed in the
   background a minute or so after the upgrade.
@@ -681,11 +739,18 @@ Suricata as not installed.
   each. `-l` lists them without sending anything.
 - **Off:** `set system ips off` skips every rule's profile (with a warning)
   and stops the engine; so does removing the last profile from the rules.
-- If the engine isn't running (starting, loading new signatures, stopped),
-  traffic flows uninspected: the ruleset hands packets to it with bypass.
-  Loading the full set takes a minute or so after boot or an update
-  (`show ips` and the IPS page say "loading" until it's active; an update
-  that brings nothing new doesn't reload).
+- **Inspection state:** `show ips` and the IPS page say what the IPS is
+  doing to traffic right now, from the kernel's queue table rather than
+  from whether a process runs: **inspecting**, **loading** (inspecting with
+  the signatures loaded so far), **starting** or **unavailable** (traffic of
+  rules with a profile passes uninspected), or **off**.
+- **Fail-open, deliberately:** when the engine isn't receiving traffic
+  (starting, stopped, not installed), packets of rules with a profile pass
+  uninspected: the ruleset hands them to it with bypass. When its queue is
+  full, they also pass uninspected (Suricata's fail-open); the state then
+  reports how many. Loading the full set takes a minute or so after boot or
+  an update. A lab appliance that must block rather than pass uninspected
+  traffic would need fail-closed queues; SJB-OS doesn't offer that.
 - It ships in the upgrade bundle: Debian 13's Suricata 7.0.10 (kept patched
   by `apt upgrade`), installed in the background after the upgrade, run as
   `sjb-ips.service`.

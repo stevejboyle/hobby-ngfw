@@ -35,12 +35,8 @@ jobs:
           for f in internal/compiler/testdata/*.nft; do
             sudo nft -c -f "$f"
           done
-      - name: Check generated FRR configs parse
-        run: |
-          sudo apt-get install -y -qq --no-install-recommends frr
-          for f in internal/frr/testdata/*.conf; do
-            vtysh -C -f "$f"
-          done
+      - name: Check generated FRR configs (the appliance's FRR, Debian 13, as root; a malformed one must fail)
+        run: docker run --rm -v "$PWD":/src:ro -w /src debian:trixie lab/check-frr.sh
       - name: Check generated Kea DHCP configs (the appliance's Kea, Debian 13)
         run: |
           docker run --rm -v "$PWD/internal/dhcp/testdata":/t:ro debian:trixie bash -c '
@@ -50,3 +46,5 @@ jobs:
         run: sudo make lab-up lab-smoke lab-down
       - name: Phase 1 gate
         run: sudo make lab-gate1
+      - name: Sessions gate (connections across policy commits)
+        run: sudo make lab-gate-sessions

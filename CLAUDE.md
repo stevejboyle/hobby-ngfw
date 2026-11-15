@@ -5,8 +5,11 @@ the full design.
 
 ## What this is
 
-A hobbyist next-gen firewall (the feature set of an enterprise NGFW) on Debian + nftables,
-built mostly by Claude Code to demonstrate how far AI compresses the build.
+An experimental firewall appliance on Debian + nftables, built without manual
+coding (Claude Code under Steve's direction, reviewed with ChatGPT's help) to
+demonstrate how far AI-assisted development goes. For isolated lab use; not a
+commercial, supported or production-ready security product, and docs must
+never imply otherwise or compare it to commercial products.
 Single owner, public repo (Apache-2.0), not a supported product. History
 before 0.9.9 lives in a private archive repo; don't reference old commits.
 
@@ -112,8 +115,11 @@ newer.
 ## Architecture in one paragraph
 
 `ngfwd` holds candidate/running config, validates, compiles it into one
-nftables ruleset (later also Suricata and App Identification config), and applies it
-atomically (`nft -f`) with rollback and commit-confirmed. Its tag registry
+nftables ruleset, and applies it atomically (`nft -f`) with rollback and
+commit-confirmed. Only the nftables step is atomic: a commit records the
+revision (and any confirmation deadline) first, applies, then sets running,
+undoing earlier steps on failure (recovery state in Status if it can't);
+FRR, Kea, the IPS and interfaces converge afterwards with warnings. Its tag registry
 maps tags to IPs by writing nftables set elements with timeouts; tag and EDL
 changes never touch the ruleset, so they need no commit. One mutex in
 `internal/daemon` serialises every kernel change. Later: `appidd` (C, nDPI,
@@ -206,8 +212,13 @@ drops what the rule's profile blocks and sets the denied bit; ngfwd turns
 Suricata's EVE alerts into "ngfw-threat" journal lines (rule and action from
 the connection's ct mark via conntrack -G). Traffic to the firewall itself is fixed policy, not configurable:
 zoned interfaces may ping it and nothing else; unzoned interfaces (mgmt) are
-unfiltered. NAT is masquerade only. Commits re-use established sessions (only
-tag registration and daemon start flush conntrack). Config is edited as YAML
+unfiltered. NAT is masquerade only. A commit (or rollback) that changes the compiled
+policy flushes conntrack, so established sessions are re-evaluated against
+it; tag registration flushes the host's entries, daemon start flushes all.
+lab/gate-sessions.sh checks this. Rules naming applications allow at most
+compiler.AppPendingPackets (40) packets of a connection before its app is
+known, tagged with the rule so its IPS profile inspects them. Inspection
+state (internal/nfqueue: is the queue bound?) is reported in show ips/app. Config is edited as YAML
 (`fwctl load`), not with `set`-style commands yet. The appliance's tag API
 certificate is self-signed. Upgrades (signed bundles, `fwctl upgrade`) cover
 SJB-OS files only, not the kernel or Debian packages; 0.2.0 and earlier

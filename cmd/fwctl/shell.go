@@ -1091,6 +1091,8 @@ func showApps() error {
 		Enabled, Running bool
 		ActiveFlows      int `json:"active_flows"`
 		Note             string
+		State            string
+		Detail           string `json:"state_detail"`
 		Apps             []struct {
 			Name, Category string
 			Flows, Bytes   int64
@@ -1107,6 +1109,9 @@ func showApps() error {
 		fmt.Printf("App Identification: running, %d connections being identified\n", st.ActiveFlows)
 	default:
 		fmt.Println("App Identification: NOT RUNNING")
+	}
+	if st.State != "" {
+		fmt.Printf("Traffic: %s: %s\n", strings.ToUpper(st.State), st.Detail)
 	}
 	if st.Note != "" {
 		fmt.Println(st.Note)
@@ -1190,6 +1195,8 @@ func showIPS() error {
 	var st struct {
 		Enabled, InUse, Installed, Running, Loading bool
 		Loaded                                      int
+		State                                       string
+		Detail                                      string `json:"state_detail"`
 		MemTotal                                    uint64 `json:"mem_total"`
 		Rules                                       []string
 		Signatures                                  struct {
@@ -1220,6 +1227,7 @@ func showIPS() error {
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintf(tw, "IPS\t%s (system ips)\n", onoff[st.Enabled])
 	fmt.Fprintf(tw, "engine\tSuricata, %s\n", engine)
+	fmt.Fprintf(tw, "inspection\t%s: %s\n", strings.ToUpper(st.State), st.Detail)
 	if st.MemTotal > 0 {
 		fmt.Fprintf(tw, "memory\t%.1f GB (4 GB recommended)\n", float64(st.MemTotal)/(1<<30))
 	}

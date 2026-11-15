@@ -48,6 +48,9 @@ type Fake struct {
 	Applied []string
 	// FailOn makes Check and Apply fail when the script contains it.
 	FailOn string
+	// ApplyErr, when set, is called by Apply (after Check passes) and fails
+	// it when it returns an error: a ruleset that checks but won't load.
+	ApplyErr func(script string) error
 }
 
 // Check implements Runner.
@@ -62,6 +65,11 @@ func (f *Fake) Check(script string) error {
 func (f *Fake) Apply(script string) error {
 	if err := f.Check(script); err != nil {
 		return err
+	}
+	if f.ApplyErr != nil {
+		if err := f.ApplyErr(script); err != nil {
+			return err
+		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -143,6 +143,11 @@ type Status struct {
 	ActiveFlows int       `json:"active_flows"`      // flows being classified now
 	Apps        []Seen    `json:"apps"`              // by bytes, most first
 	Note        string    `json:"note,omitempty"`    // why the list may be empty
+	// State is what App Identification does to traffic now: "off",
+	// "unavailable" (appidd isn't receiving packets: connections go
+	// unclassified) or "classifying"; Detail says what that means.
+	State  string `json:"state"`
+	Detail string `json:"state_detail"`
 }
 
 // Source reads the catalog and stats files.

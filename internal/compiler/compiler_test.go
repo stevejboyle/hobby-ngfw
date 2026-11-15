@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"flag"
+	"fmt"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -260,10 +261,12 @@ func TestAppPolicy(t *testing.T) {
 		`ct mark and 0x7ff == 92 counter ct mark set ct mark and 0x0000f7ff or 0x00030800 jump allowed comment "rule:ssh-only"`,
 		// unknown: app 0, classification done.
 		`ct mark and 0x17ff == 0x1000 counter ct mark set ct mark and 0x0000f7ff or 0x00030800 jump allowed`,
-		// Not known yet: through, not final.
-		`ct mark and 0x17ff == 0 counter accept comment "rule:ssh-only (application pending)"`,
-		// Below an app rule: final only via allowed.
-		`counter jump allowed comment "rule:rest"`,
+		// Not known yet: through, not final, at most AppPendingPackets packets,
+		// tagged with the rule.
+		`ct mark and 0x17ff == 0 ct packets < 40 counter ct mark set ct mark and 0x0000f7ff or 0x00030800 accept comment "rule:ssh-only (application pending)"`,
+		// Below an app rule: final only via allowed, and its (empty) tag
+		// replaces whatever an earlier evaluation wrote.
+		`counter ct mark set ct mark and 0x0000f7ff or 0x00000000 jump allowed comment "rule:rest"`,
 	} {
 		if !strings.Contains(rs, want) {
 			t.Errorf("missing %q in:\n%s", want, rs)
@@ -275,6 +278,36 @@ func TestAppPolicy(t *testing.T) {
 	// The pending line must come after the app-matched lines of its rule.
 	if strings.Index(rs, "rule:ssh-only (application pending)") < strings.Index(rs, `jump allowed comment "rule:ssh-only"`) {
 		t.Error("pending line before the app lines")
+	}
+}
+
+// Application rule with an IPS profile: the packets that pass while the
+// application is still unknown carry the rule's tag, so the IPS chain
+// queues them under the rule's profile (a signature in the first request is
+// inspected), and the pending allowance is bounded, so a stopped or
+// overloaded appidd can't make the rule allow unidentified traffic for good.
+func TestAppPolicyWithIPS(t *testing.T) {
+	c := base()
+	c.Rules = []config.Rule{
+		{Name: "web-apps", From: []string{"a"}, To: []string{"b"}, Application: []string{"http"}, Action: "allow", IPSProfile: "default"},
+		{Name: "rest", From: []string{"a"}, To: []string{"b"}, Action: "allow"},
+	}
+	rs := compile(t, c).Ruleset
+	tag := fmt.Sprintf("0x%08x", 1<<RuleShift)
+	pending := fmt.Sprintf(`ct mark and 0x17ff == 0 ct packets < %d counter ct mark set ct mark and 0x0000f7ff or %s accept comment "rule:web-apps (application pending)"`, AppPendingPackets, tag)
+	for _, want := range []string{
+		pending,
+		// Identified as http: same tag, then allowed.
+		"ct mark set ct mark and 0x0000f7ff or " + tag + " jump allowed comment \"rule:web-apps\"",
+		// The IPS queue selects exactly that tag; the profile enforces it.
+		"ct mark and 0xffff0000 == " + tag + " queue flags bypass,fanout to 2-3",
+		tag + " : jump ips_p0",
+		// The rule below clears the tag if the connection ends up there.
+		`ct mark set ct mark and 0x0000f7ff or 0x00000000 jump allowed comment "rule:rest"`,
+	} {
+		if !strings.Contains(rs, want) {
+			t.Errorf("missing %q in:\n%s", want, rs)
+		}
 	}
 }
 

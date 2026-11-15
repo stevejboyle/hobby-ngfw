@@ -197,8 +197,8 @@ code=$(curl -sk -o /dev/null -w '%{http_code}' "https://127.0.0.1:$API_PORT/api/
 hdr=$(curl -skI -H "X-API-Key: $KEY" "https://127.0.0.1:$API_PORT/api/v1/tags" | tr -d '\r' | grep -i '^x-sjb-os:')
 [[ $hdr == *"Stops Junk at the Border"* ]] && pass "API answers with $hdr" || fail "no X-SJB-OS header"
 root_run "grep -q '^PRETTY_NAME=\"SJB-OS' /etc/os-release" && pass "os-release says SJB-OS" || fail "os-release not branded"
-root_run "grep -q 'Apache License' /usr/share/sjb-os/licenses/LICENSE && grep -q 'marks of SJB Consulting' /usr/share/sjb-os/licenses/NOTICE && grep -q LGPL /usr/share/sjb-os/licenses/THIRD_PARTY_NOTICES.md" &&
-	pass "license, notice and third-party notices in /usr/share/sjb-os/licenses" || fail "license files missing: $(root_run 'ls /usr/share/sjb-os/licenses' 2>&1)"
+root_run "grep -q 'Apache License' /usr/share/sjb-os/licenses/LICENSE && grep -q 'marks of SJB Consulting' /usr/share/sjb-os/licenses/NOTICE && grep -q LGPL /usr/share/sjb-os/licenses/THIRD_PARTY_NOTICES.md && grep -q '^ndpi ' /usr/share/sjb-os/licenses/SOURCES*.txt" &&
+	pass "license, notice, third-party notices and the corresponding-source manifest in /usr/share/sjb-os/licenses" || fail "license files missing: $(root_run 'ls /usr/share/sjb-os/licenses' 2>&1)"
 root_run "grep -q 'Stops Junk at the Border' /etc/issue && grep -q 'login: admin' /etc/issue" && pass "console login banner has the SJB-OS mark" || fail "/etc/issue not branded: $(root_run cat /etc/issue)"
 # The client only prints the server's banner at LogLevel INFO or above.
 banner=$(sshpass -p "$PW" ssh -p "$SSH_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -756,7 +756,7 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 	root_run 'set -e
 		ip link add ip1 type veth peer name ipc0; ip addr add 10.83.0.1/24 dev ip1; ip link set ip1 up
 		ip link add ip2 type veth peer name ips0; ip addr add 10.84.0.1/24 dev ip2; ip link set ip2 up
-		ip netns add ipc; ip link set ipc0 netns ipc; ip -n ipc addr add 10.83.0.2/24 dev ipc0; ip -n ipc addr add 10.83.0.3/24 dev ipc0
+		ip netns add ipc; ip link set ipc0 netns ipc; ip -n ipc addr add 10.83.0.2/24 dev ipc0; ip -n ipc addr add 10.83.0.3/24 dev ipc0; ip -n ipc addr add 10.83.0.4/24 dev ipc0
 		ip -n ipc link set ipc0 up; ip -n ipc link set lo up; ip -n ipc route add default via 10.83.0.1
 		ip netns add ipsrv; ip link set ips0 netns ipsrv; ip -n ipsrv addr add 10.84.0.2/24 dev ips0
 		ip -n ipsrv link set ips0 up; ip -n ipsrv link set lo up; ip -n ipsrv route add default via 10.84.0.1
@@ -802,6 +802,42 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 		pass "threat log: rule, action and severity per match; the default profile's informational matches not logged" || fail "threat log: $lt"
 	ut=$(ui "$UI/ui/api/logs/threat?q=$(python3 -c 'import urllib.parse;print(urllib.parse.quote("severity = critical"))')")
 	[[ $ut == *'"sid":9900001'* && $ut != *'"severity":"major"'* ]] && pass "web UI threat log with a query" || fail "ui threat log: ${ut:0:300}"
+	si=$(cli_run show ips)
+	[[ $si == *"inspection"*"INSPECTING"* ]] && pass "show ips: inspection state INSPECTING (the engine is bound to its queue)" || fail "inspection state: $si"
+
+	# App Identification and the IPS together: 10.83.0.4 may only use HTTP
+	# (application rule with the default profile); anything else from it is
+	# denied. Packets that pass before App Identification names the
+	# connection carry the rule's tag, so the IPS inspects them too, and the
+	# pending allowance is bounded.
+	script=$'configure\nset address app-host cidr 10.83.0.4\nset rule app-ips from ipscli to ipssrv source app-host application [ http ] action allow ips-profile default\nset rule app-host-rest from ipscli to ipssrv source app-host action deny\nmove rule app-ips top\nmove rule app-host-rest after app-ips\ncommit -m "boot test: app + ips"\nexit\nexit\n'
+	out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
+	[[ $out == *"committed revision"* ]] || fail "app + ips commit: $out"
+	sleep 2
+	raw() { root_run "ip netns exec ipc python3 /root/ips-traffic.py raw 10.84.0.2 10.83.0.4 $1"; }
+	stream() { root_run "ip netns exec ipc python3 /root/ips-traffic.py stream 10.84.0.2 10.83.0.4 $1"; }
+	r=$(printf '%s ' "$(get 10.83.0.4 plain)" "$(get 10.83.0.4 SJB-IPS-TEST-CRITICAL)" "$(raw hello)" "$(raw SJB-IPS-TEST-CRITICAL)")
+	[[ $r == "200 blocked passed blocked " ]] &&
+		pass "application rule + IPS: HTTP allowed, a signature in the first request blocked, and a signature in the first bytes, before the application is known, blocked too" ||
+		fail "app + ips: $r (want: 200 blocked passed blocked)"
+	# Classifier failure: with appidd stopped nothing is classified (its
+	# queue is bypassed). The application rule still lets an unidentified
+	# connection through for at most 40 packets, then the deny below it decides.
+	root_run systemctl stop appidd
+	sleep 2
+	sa=$(cli_run show app)
+	[[ $sa == *"Traffic: UNAVAILABLE"*"at most 40 packets"* ]] && pass "appidd stopped: show app says App Identification is unavailable and what that means" || fail "show app with appidd stopped: $sa"
+	n=$(stream 100)
+	[[ $n =~ ^[0-9]+$ && $n -gt 0 && $n -lt 40 ]] &&
+		pass "appidd stopped: an unidentified connection on the application rule is cut after $n echoes (bounded, not unrestricted)" ||
+		fail "appidd stopped: $n of 100 echoes came back (want a bounded cut-off)"
+	r=$(raw SJB-IPS-TEST-CRITICAL)
+	[[ $r == blocked ]] && pass "appidd stopped: the IPS still inspects the application rule's pending traffic" || fail "appidd stopped, signature: $r"
+	root_run systemctl start appidd
+	for _ in $(seq 15); do [[ $(cli_run show app) == *"Traffic: CLASSIFYING"* ]] && break; sleep 2; done
+	[[ $(cli_run show app) == *"Traffic: CLASSIFYING"* ]] && pass "appidd back: show app says CLASSIFYING" || fail "appidd restart: $(cli_run show app | head -3)"
+	script=$'configure\ndelete rule app-ips\ndelete rule app-host-rest\ndelete address app-host\ncommit -m "boot test: app + ips cleanup"\nexit\nexit\n'
+	retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
 	# (The test VM's emulated network sometimes times out DNS lookups.)
 	for _ in 1 2 3 4 5 6; do
 		up=$(cli_run request ips update 2>&1)
@@ -819,8 +855,13 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 	# (While Suricata shuts down it still holds the queue; bypass applies once
 	# it has exited.)
 	root_run systemctl stop sjb-ips
-	r=$(get 10.83.0.2 SJB-IPS-TEST-CRITICAL)
-	[[ $r == 200 ]] || { sleep 3; r=$(get 10.83.0.2 SJB-IPS-TEST-CRITICAL); }
+	# A stop during a rule reload waits for the reload to finish, and the
+	# engine holds its queue until it exits: keep trying for up to 30 s.
+	for _ in $(seq 10); do
+		r=$(get 10.83.0.2 SJB-IPS-TEST-CRITICAL)
+		[[ $r == 200 ]] && break
+		sleep 3
+	done
 	for _ in $(seq 20); do [[ $(root_run systemctl is-active sjb-ips) == active ]] && break; sleep 2; done
 	[[ $r == 200 && $(root_run systemctl is-active sjb-ips) == active ]] &&
 		pass "traffic flows with Suricata stopped (queue bypass); ngfwd restarts it" ||
@@ -845,7 +886,10 @@ sj=$(ui "$UI/ui/api/stats?window=1h")
 [[ $sj == *'"samples":'[1-9]* && $sj == *'"name":"YouTube"'* && $sj == *'"name":"10.81.0.2"'* && $sj == *'"sid":9900001'* &&
 	$sj == *'"in_bytes":'[1-9]* ]] &&
 	pass "dashboard statistics: throughput, applications (YouTube), hosts and IPS matches in the last hour" ||
-	fail "stats: ${sj:0:400}"
+	fail "stats: $(python3 -c 'import json,sys
+j=json.load(sys.stdin)
+print("samples", j.get("samples"), "| apps", [a.get("name") for a in j.get("apps") or []], "| hosts", [h.get("name") for h in j.get("hosts") or []],
+      "| sids", [x.get("sid") for x in (j.get("threats") or {}).get("top") or []], "| keys", sorted(j))' <<<"$sj" 2>&1) / samples on disk: $(root_run 'wc -l < /var/lib/ngfw/stats/samples.jsonl; head -c 120 /var/lib/ngfw/stats/samples.jsonl; echo; date +%s')"
 ss=$(cli_run show statistics 1h)
 [[ $ss == *YouTube* && $ss == *"10.81.0.2"* && $ss == *9900001* ]] && pass "show statistics prints the same" || fail "show statistics: ${ss:0:300}"
 n1=$(grep -o '"samples":[0-9]*' <<<"$sj" | grep -o '[0-9]*$')

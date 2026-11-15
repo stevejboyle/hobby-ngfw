@@ -13,6 +13,9 @@ RestartSec=15
 SyslogIdentifier=appidd
 RuntimeDirectory=appidd
 RuntimeDirectoryMode=0755
+# Keep /run/appidd (its stats.json) across restarts, so appidd carries on from
+# its totals; a reboot still clears it.
+RuntimeDirectoryPreserve=yes
 CapabilityBoundingSet=CAP_NET_ADMIN
 NoNewPrivileges=yes
 ProtectSystem=strict

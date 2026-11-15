@@ -31,7 +31,20 @@ type Revision struct {
 }
 
 // Store is a directory of config revisions.
-type Store struct{ dir string }
+type Store struct {
+	dir string
+	// Fail, when set, is called before each write with its kind ("revision",
+	// "running", "candidate", "pending") and fails the write when it returns
+	// an error. For failure-injection tests.
+	Fail func(op string) error
+}
+
+func (s *Store) fail(op string) error {
+	if s.Fail == nil {
+		return nil
+	}
+	return s.Fail(op)
+}
 
 // Open creates the directory layout if needed.
 func Open(dir string) (*Store, error) {
@@ -58,6 +71,9 @@ func (s *Store) Candidate() ([]byte, error) {
 
 // SetCandidate replaces the candidate config.
 func (s *Store) SetCandidate(data []byte) error {
+	if err := s.fail("candidate"); err != nil {
+		return err
+	}
 	return writeAtomic(s.path("candidate.yaml"), data)
 }
 
@@ -84,6 +100,9 @@ func (s *Store) Running() (int, []byte, error) {
 
 // SetRunning points "running" at revision n (0 = nothing running).
 func (s *Store) SetRunning(n int) error {
+	if err := s.fail("running"); err != nil {
+		return err
+	}
 	return writeAtomic(s.path("running"), []byte(strconv.Itoa(n)+"\n"))
 }
 
@@ -99,6 +118,23 @@ func (s *Store) Get(n int) ([]byte, error) {
 // Save writes data as the next revision and makes it running. The
 // candidate becomes identical to running.
 func (s *Store) Save(data []byte, author, message string, now time.Time) (Revision, error) {
+	r, err := s.SaveRevision(data, author, message, now)
+	if err != nil {
+		return Revision{}, err
+	}
+	if err := s.SetRunning(r.N); err != nil {
+		s.DeleteRevision(r.N)
+		return Revision{}, err
+	}
+	return r, s.SetCandidate(data)
+}
+
+// SaveRevision writes data as the next revision without making it running.
+// The metadata file goes last: List shows a revision only once both exist.
+func (s *Store) SaveRevision(data []byte, author, message string, now time.Time) (Revision, error) {
+	if err := s.fail("revision"); err != nil {
+		return Revision{}, err
+	}
 	revs, err := s.List()
 	if err != nil {
 		return Revision{}, err
@@ -112,12 +148,17 @@ func (s *Store) Save(data []byte, author, message string, now time.Time) (Revisi
 		return Revision{}, err
 	}
 	if err := writeAtomic(s.path("revisions", fmt.Sprintf("%06d.json", r.N)), meta); err != nil {
+		os.Remove(s.path("revisions", fmt.Sprintf("%06d.yaml", r.N)))
 		return Revision{}, err
 	}
-	if err := s.SetRunning(r.N); err != nil {
-		return Revision{}, err
-	}
-	return r, s.SetCandidate(data)
+	return r, nil
+}
+
+// DeleteRevision removes revision n: a commit that saved it and then
+// failed. Best effort; the metadata goes first so List never shows half of one.
+func (s *Store) DeleteRevision(n int) {
+	os.Remove(s.path("revisions", fmt.Sprintf("%06d.json", n)))
+	os.Remove(s.path("revisions", fmt.Sprintf("%06d.yaml", n)))
 }
 
 // List returns all revisions, oldest first.
@@ -172,6 +213,9 @@ type Pending struct {
 
 // SavePending records the pending confirmation.
 func (s *Store) SavePending(p Pending) error {
+	if err := s.fail("pending"); err != nil {
+		return err
+	}
 	b, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
 		return err
@@ -197,6 +241,9 @@ func (s *Store) LoadPending() (*Pending, error) {
 
 // ClearPending forgets the pending confirmation.
 func (s *Store) ClearPending() error {
+	if err := s.fail("pending"); err != nil {
+		return err
+	}
 	err := os.Remove(s.path("pending.json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

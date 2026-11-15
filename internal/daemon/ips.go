@@ -171,6 +171,16 @@ type IPSStatus struct {
 	MemTotal uint64     `json:"mem_total"`
 	Rules    []string   `json:"rules"` // rules with a profile: "name (profile)"
 	Engine   ips.Status `json:"signatures"`
+	// Queue says whether the engine is bound to its queues (2-3), i.e.
+	// actually receiving the traffic of rules with a profile, and how many
+	// packets passed uninspected or were dropped because a queue was full.
+	QueueBound   bool   `json:"queue_bound"`
+	QueueDropped uint64 `json:"queue_dropped"`
+	// State is what the IPS does to traffic now: "off", "unavailable"
+	// (passes uninspected), "starting" (passes uninspected), "loading"
+	// (inspecting with the signatures loaded so far) or "inspecting".
+	State  string `json:"state"`
+	Detail string `json:"state_detail"`
 }
 
 // IPS reports the IPS state.
@@ -199,8 +209,39 @@ func (d *Daemon) IPS() IPSStatus {
 		// Starting (no answer yet), or loading a new set: some rules may
 		// fail to load, so "loading" means well short of the file's count.
 		st.Loading = !ok || n < st.Engine.Signatures*9/10
+		q := d.Queues(2, 3)
+		st.QueueBound, st.QueueDropped = q.Bound, q.Dropped
 	}
+	st.State, st.Detail = inspectionState(st)
 	return st
+}
+
+// inspectionState says plainly what the IPS does to traffic. When it isn't
+// inspecting, traffic of rules with a profile still flows (fail-open): the
+// ruleset hands it to the engine with bypass.
+func inspectionState(st IPSStatus) (string, string) {
+	const open = "traffic of rules with an IPS profile passes uninspected"
+	var state, detail string
+	switch {
+	case !st.Enabled:
+		return "off", "the IPS is off (set system ips off): rules' IPS profiles are skipped"
+	case !st.InUse:
+		return "off", "no allow rule has an IPS profile"
+	case !st.Installed:
+		state, detail = "unavailable", "Suricata isn't installed yet: "+open
+	case !st.Running:
+		state, detail = "unavailable", "the IPS engine isn't running: "+open
+	case !st.QueueBound || st.Loaded == 0:
+		state, detail = "starting", "the engine is starting and not yet receiving traffic: "+open+" until it is"
+	case st.Loading:
+		state, detail = "loading", fmt.Sprintf("inspecting with the %d signatures loaded so far while the full set loads", st.Loaded)
+	default:
+		state, detail = "inspecting", fmt.Sprintf("inspecting the traffic of %d rule(s) with %d signatures", len(st.Rules), st.Loaded)
+	}
+	if st.QueueDropped > 0 {
+		detail += fmt.Sprintf("; %d packets passed uninspected or were dropped because the engine's queue was full", st.QueueDropped)
+	}
+	return state, detail
 }
 
 // IPSAlert turns a Suricata alert into a threat log entry: the rule whose

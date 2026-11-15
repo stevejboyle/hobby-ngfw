@@ -16,16 +16,11 @@ func (d *Daemon) SampleStats() error {
 	if d.stats == nil {
 		return nil
 	}
-	d.mu.Lock()
+	// No d.mu here: a long commit must not make the sampler skip minutes.
 	var names []string
-	if d.running != nil {
-		for _, i := range d.running.Interfaces {
-			if i.Zone != "" {
-				names = append(names, i.Name)
-			}
-		}
+	if p := d.statsIfaces.Load(); p != nil {
+		names = *p
 	}
-	d.mu.Unlock()
 	in := stats.Input{If: stats.ReadInterfaces(d.statsRoot, names)}
 	apps, hosts := d.appid.Counters()
 	for _, a := range apps {

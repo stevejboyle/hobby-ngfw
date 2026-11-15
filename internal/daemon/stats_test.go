@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stevejboyle/hobby-ngfw/internal/appid"
 	"github.com/stevejboyle/hobby-ngfw/internal/compiler"
@@ -68,5 +69,33 @@ func TestDashboardStats(t *testing.T) {
 	}
 	if _, err := d.Stats("1y"); err == nil {
 		t.Fatal("bad window accepted")
+	}
+}
+
+// The sampler doesn't wait for the daemon lock: a commit that holds it for
+// minutes (rebuilding the IPS signatures) must not make it skip samples.
+func TestSamplerDoesNotWaitForCommits(t *testing.T) {
+	d, _ := setup(t)
+	st, err := stats.Open(filepath.Join(t.TempDir(), "samples.jsonl"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.SetStats(st, t.TempDir())
+	d.SetCandidate(lab(t))
+	if _, err := d.Commit("t", "lab", 0); err != nil {
+		t.Fatal(err)
+	}
+	d.mu.Lock() // a long commit in progress
+	done := make(chan error, 1)
+	go func() { done <- d.SampleStats() }()
+	select {
+	case err := <-done:
+		d.mu.Unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		d.mu.Unlock()
+		t.Fatal("SampleStats waited for the daemon lock")
 	}
 }

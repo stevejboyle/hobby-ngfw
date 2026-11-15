@@ -214,8 +214,8 @@ func TestTagsFollowSets(t *testing.T) {
 	if len(ct.Flushed) != 1 || ct.Flushed[0] != other {
 		t.Fatalf("register should flush the host's sessions, flushed %v", ct.Flushed)
 	}
-	if ct.All != 1 {
-		t.Fatalf("start should flush all sessions once, got %d", ct.All)
+	if ct.All != 2 {
+		t.Fatalf("start and the commit (a policy change) should each flush all sessions, got %d", ct.All)
 	}
 	if err := d.UnregisterTags(other, []string{"quarantine"}); err != nil {
 		t.Fatal(err)

@@ -1,17 +1,29 @@
 # hobby-ngfw (SJB-OS)
 
-A next-generation firewall built by one person with Claude Code, as a
-demonstration: App Identification, tag-driven dynamic address groups via API, inline IPS,
-and a commit/rollback config model. It ships as a VMware appliance called
-**SJB-OS**: Stops Junk at the Border.
+**An experimental demonstration of AI-generated software for isolated lab
+use. Not a commercial, supported, or production-ready security product. Do
+not rely on it to protect production systems. Working code does not
+establish security effectiveness, resilience, or operational readiness.**
 
-**This is not a product.** The point is to measure how far AI-assisted
-development compresses the *build* of a system that once took large vendor
-teams years. Day-2 work (signature content, support, certification, long-term
-maintenance) is explicitly out of scope. See
-[docs/architecture.md](docs/architecture.md) for the design and
-[docs/effort-log.md](docs/effort-log.md) for how it was built, release by
-release, with the human hours behind each.
+SJB-OS ("Stops Junk at the Border") is a firewall appliance for VMware built
+without manually writing code: zone-based policy compiled to nftables,
+application identification with nDPI, inline intrusion prevention with
+Suricata, host tagging through an API, routing and DHCP, managed with a
+commit/rollback configuration model from a web UI and a CLI. The point is to
+see how far AI-assisted development goes in building such a system, not to
+offer one. Everything that makes a security product trustworthy beyond
+working code (independent testing, threat research and signature content,
+performance engineering, support, certification, long-term maintenance) is
+out of scope. See [docs/architecture.md](docs/architecture.md) for the
+design and [docs/effort-log.md](docs/effort-log.md) for how it was built,
+release by release, with the human hours behind each.
+
+Steve Boyle used Claude Code to generate the project-specific implementation,
+tests, and documentation under his direction. He also used ChatGPT to review
+the code and help optimize and finalize the solution, including identifying
+correctness gaps and defining release-readiness fixes. Steve supplied the
+architecture, requirements and decisions, and tested the results on his own
+appliances.
 
 > I intentionally did not write, or even look at, a single line of code
 > during this whole process. That isn't a good idea, and it isn't how a real
@@ -20,9 +32,14 @@ release, with the human hours behind each.
 >
 > Steve Boyle, SJB Consulting
 
-Steve set the direction, made the design calls and tested the results;
-[Claude Code](https://claude.com/claude-code) wrote the code, the tests and
-the documentation.
+That statement is about Steve's own work: the code was still reviewed, by
+AI (ChatGPT) and by the automated tests and boot tests described below.
+
+The heavy lifting happens in established open-source software that SJB-OS
+configures and ties together: the Linux kernel's netfilter (nftables,
+conntrack, NFQUEUE), nDPI, Suricata with the Emerging Threats Open
+signatures, FRRouting, ISC Kea, OpenSSH and Debian. Their authors deserve
+the credit for what they do; see [Built on](#built-on).
 
 ## Deploying
 
@@ -39,8 +56,7 @@ vSphere 8.0 U1 or later with three networks: **mgmt**, **inside** and **outside*
 5. Open the web UI at `https://<mgmt-ip>/` and log in as `admin` with the
    password from the console, or `ssh admin@<mgmt-ip>` for the CLI.
 
-As on most enterprise firewalls, operators get a CLI, never a Unix shell: `admin` has no bash and
-no sudo. Root logs in only with the SSH key or console password you set at
+Operators get a CLI, never a Unix shell: `admin` has no bash and no sudo. Root logs in only with the SSH key or console password you set at
 deploy time, for recovery; no root key or password ships with SJB-OS.
 
 Later releases install in place: upload the signed `.upgrade` file on the web
@@ -59,27 +75,37 @@ curl -k -H "X-API-Key: $KEY" -d '{"ip":"10.10.1.50","tags":["quarantine"],"ttl":
 
 ## Status
 
-Phase 1 gate passing: commit/rollback/commit-confirmed, zones and rules
-compiled to nftables, masquerade NAT, tag → IP API (REST, plus XML user-ID
-`uid-message` for existing integrations) applying in about 20 ms, restart recovery, packaged as an OVA.
-Pulled forward from phase 3: a web UI with form-based policy editing, signed
-in-place upgrades with automatic restore, a captive CLI in place of shell
-access with a configure-and-commit mode and Tab completion, and routing as
-part of the commit: static routes, VRFs with VLAN subinterfaces, BGP and
-OSPF (FRR). It runs in real use on ESXi, and every release is also tested
-in QEMU with VMware's device models. Phase 2 so far: traffic and system
-logs with queries, a DHCP server, and App Identification with application policy,
-groups and categories, and IPS (Suricata with Emerging Threats Open,
-per-rule profiles, a threat log).
+**Implemented and tested** (unit tests, the namespace-lab gates in CI, and
+a QEMU boot test of every release with VMware's device models; it also runs
+on Steve's own ESXi lab):
 
-| Phase | Weeks | Gate |
-| --- | --- | --- |
-| 0 · Lab, skeleton | 1–2 | One command builds and tests the lab |
-| 1 · Stateful core | 3–6 | Tag API blocks a host in under 1 s; rollback restores |
-| 2 · NGFW features | 7–11 | PCAP suite passes: apps denied by name, test signatures drop |
-| 3 · Polish and HA | 12–16 | Failover keeps sessions; 1 Gbps with IPS on |
+- Commit, rollback and commit-confirmed; zones and rules compiled to
+  nftables; masquerade NAT; a policy change re-evaluates existing
+  connections.
+- Host tags through a REST API (and XML user-ID messages for existing
+  integrations), applied in about 20 ms, no commit needed.
+- App Identification (nDPI) with application, category and group rules.
+- IPS (Suricata, Emerging Threats Open) on chosen allow rules, with
+  per-rule profiles and a threat log.
+- Static routes, VRFs and VLAN subinterfaces, BGP and OSPF (FRR); a DHCP
+  server (Kea).
+- A web UI and a captive configure-and-commit CLI; traffic, threat and
+  system logs with queries; dashboard statistics.
+- Signed in-place upgrades with automatic restore and rollback.
 
-Effort is tracked in [docs/effort-log.md](docs/effort-log.md).
+**Not implemented** (from the original plan, and not claimed): high
+availability, a packet-capture test suite, performance testing or tuning,
+external log storage, IPv6, TLS decryption. Nothing has been independently
+security-tested.
+
+The original build plan, for reference:
+
+| Phase | Weeks | Gate | State |
+| --- | --- | --- | --- |
+| 0 · Lab, skeleton | 1–2 | One command builds and tests the lab | done |
+| 1 · Stateful core | 3–6 | Tag API blocks a host in under 1 s; rollback restores | done |
+| 2 · Features | 7–11 | PCAP suite passes: apps denied by name, test signatures drop | features built; the PCAP suite isn't |
+| 3 · Polish and HA | 12–16 | Failover keeps sessions; 1 Gbps with IPS on | web UI and upgrades only; no HA, no performance work |
 
 ## Building the OVA
 
@@ -106,9 +132,21 @@ from a Mac.
 
 ## Built on
 
-nftables and conntrack (Linux), Debian 13, [nDPI](https://github.com/ntop/nDPI)
-and [Suricata](https://suricata.io) (phase 2), ClickHouse, keepalived and
-conntrackd (phase 3).
+SJB-OS's own code (Go, one small C program, shell and a plain JavaScript web
+UI) configures and connects these projects, which do the real work:
+
+- **Linux** netfilter: nftables (the firewall), conntrack (connection
+  tracking), NFQUEUE (handing packets to inspection)
+- **[nDPI](https://github.com/ntop/nDPI)** (ntop): application identification
+- **[Suricata](https://suricata.io)** (OISF) with the
+  **[Emerging Threats Open](https://rules.emergingthreats.net/)** signatures
+  (Proofpoint): intrusion prevention
+- **[FRRouting](https://frrouting.org)**: BGP and OSPF
+- **[ISC Kea](https://www.isc.org/kea/)**: DHCP
+- **[Debian](https://www.debian.org)** 13, OpenSSH, OpenSSL, open-vm-tools
+- **[Go](https://go.dev)** and gopkg.in/yaml.v3
+
+Licenses and source locations: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Contributing and security
 
@@ -122,5 +160,6 @@ Apache License 2.0: see [LICENSE](LICENSE) and [NOTICE](NOTICE). The
 appliance image and upgrade bundles also contain third-party software under
 its own licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-SJB-OS is a demonstration, not a supported product, and comes with no
-warranty.
+SJB-OS is an experimental demonstration, not a supported product, and comes
+with no warranty (see the license). SJB-OS is not affiliated with or endorsed
+by any security vendor.

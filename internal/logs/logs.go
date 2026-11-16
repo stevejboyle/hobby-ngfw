@@ -224,6 +224,7 @@ type Reader interface {
 	Traffic(n int, q string) ([]Traffic, error)
 	System(n int, q string) ([]System, error)
 	Threat(n int, q string) ([]Threat, error)
+	Decryption(n int, q string) ([]Decryption, error)
 }
 
 // Journal reads with journalctl.

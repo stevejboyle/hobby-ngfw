@@ -34,9 +34,10 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 ## The evidence
 
 - **Time:** about a week of calendar time (2026-11-08 to 2026-11-15) and
-  22.9 hours of Steve's own time, measured from the session transcripts
-  release by release (all but a 0.5-hour estimate for his ChatGPT review):
-  [docs/effort-log.md](docs/effort-log.md).
+  22.9 hours of Steve's own time to the 0.9.9-r03 release (23.7 including
+  getting the repository ready to go public), measured from the session
+  transcripts release by release (all but a 0.5-hour estimate for his
+  ChatGPT review): [docs/effort-log.md](docs/effort-log.md).
 - **AI cost:** a $20/month Claude Pro plan. The 1.2 billion tokens it
   used (nearly all cached context, counted from the session transcript)
   would cost about $380 at Claude API list prices. ChatGPT's review isn't

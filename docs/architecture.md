@@ -380,6 +380,11 @@ flowchart LR
   application from the plaintext Host header, and Suricata's HTTP parser
   sees whole requests. h2-only clients keep HTTP/2. Server sessions are
   resumed from a 4096-entry cache.
+- **Load:** at 4096 connections (`-max-conns`) tlsd reports itself busy;
+  ngfwd empties `decrypt_ready` until it has room, so overload fails open
+  rather than exhausting memory. An imported subordinate CA's
+  intermediates (`chain.crt`) follow it in every issued chain.
+  `tools/decrypt-perf.sh` measures throughput in the namespace lab.
 - Limits: default VRF only, outbound only, IPv4, no revocation checking;
   upstream connections come from the firewall's own address.
 

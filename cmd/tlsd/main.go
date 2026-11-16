@@ -43,6 +43,7 @@ func main() {
 	caDir := flag.String("ca", decrypt.CADir, "decryption CA directory")
 	builtin := flag.String("builtin", decrypt.BuiltinExclusionsFile, "SJB-OS's built-in exclusion list")
 	learnedPath := flag.String("learned", "/var/lib/sjb-tlsd/learned.json", "learned (pinned) servers")
+	maxActive := flag.Int64("max-conns", 4096, "connections held at once before tlsd reports itself busy (new ones then pass undecrypted)")
 	statusSock := flag.String("status", "/run/sjb-tlsd/tlsd.sock", "status socket for ngfwd")
 	flag.Parse()
 
@@ -104,7 +105,8 @@ func main() {
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		st := p.st.Load()
 		s := decrypt.Status{Mode: st.policy.Mode, Started: started, Rules: len(st.policy.Rules), Exclusions: st.match.Len(), Builtin: st.policy.Builtin,
-			Counts: p.Counts(), Active: p.active.Load(), Learned: len(p.learned.List(p.now())), LoadError: st.err}
+			Counts: p.Counts(), Active: p.active.Load(), Learned: len(p.learned.List(p.now())), LoadError: st.err,
+			MaxActive: *maxActive, Busy: p.active.Load() >= *maxActive}
 		if st.cas != nil {
 			s.CA = decrypt.InfoOf(*st.cas)
 			s.CA.PEM = ""

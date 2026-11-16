@@ -139,3 +139,64 @@ func TestImport(t *testing.T) {
 		}
 	}
 }
+
+// A subordinate CA imported with its intermediate: issued certificates
+// carry the chain, so a client trusting only the root verifies them.
+func TestImportSubordinateChain(t *testing.T) {
+	rootKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	mk := func(cn string, parent *x509.Certificate, parentKey *ecdsa.PrivateKey, pub *ecdsa.PublicKey) *x509.Certificate {
+		tmpl := &x509.Certificate{SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: cn},
+			NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(1, 0, 0), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+		if parent == nil {
+			parent = tmpl
+		}
+		der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, pub, parentKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, _ := x509.ParseCertificate(der)
+		return c
+	}
+	root := mk("Lab Root", nil, rootKey, &rootKey.PublicKey)
+	interKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	inter := mk("Lab Intermediate", root, rootKey, &interKey.PublicKey)
+	subKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	sub := mk("Lab Firewall Sub CA", inter, interKey, &subKey.PublicKey)
+	k, _ := x509.MarshalPKCS8PrivateKey(subKey)
+	dir := t.TempDir()
+	bundle := append(pemOf("CERTIFICATE", sub.Raw), pemOf("CERTIFICATE", inter.Raw)...)
+	if _, err := ImportCA(dir, bundle, pemOf("PRIVATE KEY", k), now, NoOwner); err != nil {
+		t.Fatal(err)
+	}
+	cas, err := LoadCAs(dir)
+	if err != nil || len(cas.Trusted.Chain) != 1 {
+		t.Fatalf("chain not kept: %v %d", err, len(cas.Trusted.Chain))
+	}
+	leaf, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tc, err := Forge(cas.Trusted, leaf, []string{"x.example"}, now.AddDate(0, 0, 3), now)
+	if err != nil || len(tc.Certificate) != 3 {
+		t.Fatalf("forged chain: %v %d", err, len(tc.Certificate))
+	}
+	c, _ := x509.ParseCertificate(tc.Certificate[0])
+	inters := x509.NewCertPool()
+	for _, der := range tc.Certificate[1:] {
+		ic, _ := x509.ParseCertificate(der)
+		inters.AddCert(ic)
+	}
+	if _, err := c.Verify(x509.VerifyOptions{Roots: roots(root), Intermediates: inters, DNSName: "x.example", CurrentTime: now}); err != nil {
+		t.Fatalf("a client trusting only the root should verify: %v", err)
+	}
+	// Out of order: refused with a plain explanation.
+	wrong := append(pemOf("CERTIFICATE", inter.Raw), pemOf("CERTIFICATE", sub.Raw)...)
+	if _, err := ImportCA(t.TempDir(), wrong, pemOf("PRIVATE KEY", k), now, NoOwner); err == nil || !strings.Contains(err.Error(), "in order") && !strings.Contains(err.Error(), "does not belong") {
+		t.Fatalf("out-of-order chain: %v", err)
+	}
+}
+
+func roots(cs ...*x509.Certificate) *x509.CertPool {
+	p := x509.NewCertPool()
+	for _, c := range cs {
+		p.AddCert(c)
+	}
+	return p
+}

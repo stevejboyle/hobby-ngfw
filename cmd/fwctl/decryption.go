@@ -36,6 +36,7 @@ func showDecryption() error {
 		Rules                              []string
 		Counts                             map[string]int64
 		Active                             int64
+		Max                                int64 `json:"max_active"`
 		Learned                            int
 		Builtin                            bool `json:"builtin_exclusions"`
 		CPUs                               int
@@ -69,7 +70,7 @@ func showDecryption() error {
 		for _, k := range keys {
 			parts = append(parts, fmt.Sprintf("%s %d", k, st.Counts[k]))
 		}
-		fmt.Fprintf(tw, "connections\t%d now; since tlsd started: %s\n", st.Active, strings.Join(parts, ", "))
+		fmt.Fprintf(tw, "connections\t%d now (limit %d); since tlsd started: %s\n", st.Active, st.Max, strings.Join(parts, ", "))
 	}
 	fmt.Fprintf(tw, "learned\t%d pinned server(s) passed through (show decryption learned)\n", st.Learned)
 	cpu := ""
@@ -164,8 +165,9 @@ func requestDecryptionCAGenerate(in io.Reader) error {
 }
 
 // readPEMBlock reads pasted lines up to and including the END line of a
-// PEM block (or a line "end").
-func readPEMBlock(r *bufio.Reader) (string, error) {
+// PEM block (or a line "end"). With several, it reads blocks until a line
+// "end" (or the input ends).
+func readPEMBlock(r *bufio.Reader, several bool) (string, error) {
 	var b strings.Builder
 	for {
 		line, err := r.ReadString('\n')
@@ -176,7 +178,7 @@ func readPEMBlock(r *bufio.Reader) (string, error) {
 		if t != "" {
 			b.WriteString(t + "\n")
 		}
-		if strings.HasPrefix(t, "-----END ") || err != nil {
+		if (strings.HasPrefix(t, "-----END ") && !several) || err != nil {
 			if err != nil && b.Len() == 0 {
 				return "", fmt.Errorf("nothing pasted")
 			}
@@ -188,13 +190,14 @@ func readPEMBlock(r *bufio.Reader) (string, error) {
 
 func requestDecryptionCAImport(in io.Reader) error {
 	r := buffered(in)
-	fmt.Println("Paste the CA certificate (PEM, -----BEGIN CERTIFICATE----- ... -----END CERTIFICATE-----):")
-	cert, err := readPEMBlock(r)
+	fmt.Println("Paste the CA certificate (PEM), then any intermediates above it, in order;")
+	fmt.Println("finish with a line containing only \"end\":")
+	cert, err := readPEMBlock(r, true)
 	if err != nil {
 		return err
 	}
 	fmt.Println("Paste its private key (PEM, unencrypted; it stays on the firewall):")
-	key, err := readPEMBlock(r)
+	key, err := readPEMBlock(r, false)
 	if err != nil {
 		return err
 	}

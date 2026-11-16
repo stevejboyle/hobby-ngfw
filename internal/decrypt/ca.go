@@ -31,13 +31,17 @@ const (
 	caKey         = "ca.key"
 	untrustedCert = "untrusted.crt"
 	untrustedKey  = "untrusted.key"
-	caSource      = "source" // "generated" or "imported"
+	caSource      = "source"    // "generated" or "imported"
+	caChain       = "chain.crt" // intermediates above an imported CA
 )
 
 // CA is a certificate authority tlsd signs with.
 type CA struct {
 	Cert *x509.Certificate
 	Key  crypto.Signer
+	// Chain holds the intermediates above an imported subordinate CA, sent
+	// after it so clients that trust only the root can build the path.
+	Chain []*x509.Certificate
 }
 
 // CAs are the decryption CA (clients trust it) and the untrusted CA (no
@@ -134,10 +138,22 @@ func GenerateCA(dir, hostname string, now time.Time, o Owner) (CAInfo, error) {
 
 // ImportCA installs an operator's CA (PEM certificate and key, e.g. a
 // subordinate CA from their own PKI) in dir, with a fresh untrusted CA.
+// Certificates after the first in certPEM are its chain (intermediates up
+// to, not including, the root).
 func ImportCA(dir string, certPEM, keyPEM []byte, now time.Time, o Owner) (CAInfo, error) {
-	cert, err := parseCert(certPEM)
+	certs, err := parseCerts(certPEM)
 	if err != nil {
 		return CAInfo{}, err
+	}
+	cert, chain := certs[0], certs[1:]
+	for i, c := range chain {
+		parent := cert
+		if i > 0 {
+			parent = chain[i-1]
+		}
+		if err := parent.CheckSignatureFrom(c); err != nil {
+			return CAInfo{}, fmt.Errorf("certificate %d of the chain didn't sign the one before it (%v): give the CA first, then its intermediates in order", i+2, err)
+		}
 	}
 	switch {
 	case !cert.IsCA || !cert.BasicConstraintsValid:
@@ -160,7 +176,7 @@ func ImportCA(dir string, certPEM, keyPEM []byte, now time.Time, o Owner) (CAInf
 	if err != nil {
 		return CAInfo{}, err
 	}
-	tr := CA{Cert: cert, Key: key}
+	tr := CA{Cert: cert, Key: key, Chain: chain}
 	if err := writeCAs(dir, tr, un, "imported", o); err != nil {
 		return CAInfo{}, err
 	}
@@ -171,6 +187,30 @@ func samePublic(a, b crypto.PublicKey) bool {
 	type eq interface{ Equal(crypto.PublicKey) bool }
 	x, ok := a.(eq)
 	return ok && x.Equal(b)
+}
+
+// parseCerts reads every PEM certificate in p, in order.
+func parseCerts(p []byte) ([]*x509.Certificate, error) {
+	var out []*x509.Certificate
+	for {
+		var blk *pem.Block
+		blk, p = pem.Decode(p)
+		if blk == nil {
+			break
+		}
+		if blk.Type != "CERTIFICATE" {
+			continue
+		}
+		c, err := x509.ParseCertificate(blk.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("certificate %d: %v", len(out)+1, err)
+		}
+		out = append(out, c)
+	}
+	if len(out) == 0 {
+		return nil, errors.New("no PEM certificate found (-----BEGIN CERTIFICATE-----)")
+	}
+	return out, nil
 }
 
 func parseCert(p []byte) (*x509.Certificate, error) {
@@ -232,6 +272,14 @@ func certPEM(c *x509.Certificate) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: c.Raw})
 }
 
+func chainPEM(cs []*x509.Certificate) []byte {
+	var b []byte
+	for _, c := range cs {
+		b = append(b, certPEM(c)...)
+	}
+	return b
+}
+
 func keyPEM(k crypto.Signer) ([]byte, error) {
 	der, err := x509.MarshalPKCS8PrivateKey(k)
 	if err != nil {
@@ -267,6 +315,7 @@ func writeCAs(dir string, tr, un CA, source string, o Owner) error {
 		{caKey, trKey, 0o600}, {untrustedKey, unKey, 0o600},
 		{caCert, certPEM(tr.Cert), 0o644}, {untrustedCert, certPEM(un.Cert), 0o644},
 		{caSource, []byte(source + "\n"), 0o644},
+		{caChain, chainPEM(tr.Chain), 0o644},
 	} {
 		if err := writeFile(filepath.Join(dir, f.name), f.data, f.mode, o); err != nil {
 			return err
@@ -332,6 +381,13 @@ func LoadCAs(dir string) (CAs, error) {
 	if err != nil {
 		return CAs{}, err
 	}
+	if cp, err := os.ReadFile(filepath.Join(dir, caChain)); err == nil && len(cp) > 0 {
+		chain, err := parseCerts(cp)
+		if err != nil {
+			return CAs{}, fmt.Errorf("%s: %v", caChain, err)
+		}
+		tr.Chain = chain
+	}
 	src, _ := os.ReadFile(filepath.Join(dir, caSource))
 	return CAs{Trusted: tr, Untrusted: un, Source: strings.TrimSpace(string(src))}, nil
 }
@@ -390,5 +446,9 @@ func Forge(ca CA, leaf crypto.Signer, names []string, notAfter, now time.Time) (
 	if err != nil {
 		return nil, err
 	}
-	return &tls.Certificate{Certificate: [][]byte{der, ca.Cert.Raw}, PrivateKey: leaf}, nil
+	chain := [][]byte{der, ca.Cert.Raw}
+	for _, c := range ca.Chain {
+		chain = append(chain, c.Raw)
+	}
+	return &tls.Certificate{Certificate: chain, PrivateKey: leaf}, nil
 }

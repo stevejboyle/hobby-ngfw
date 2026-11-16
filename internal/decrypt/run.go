@@ -27,6 +27,10 @@ type Status struct {
 	Active     int64            `json:"active"`
 	Learned    int              `json:"learned"`
 	LoadError  string           `json:"load_error,omitempty"`
+	// Busy: tlsd holds MaxActive connections; ngfwd stops handing it new
+	// ones until it has room (they pass undecrypted meanwhile).
+	Busy      bool  `json:"busy"`
+	MaxActive int64 `json:"max_active"`
 }
 
 // Runner is how ngfwd runs tlsd. Tests fake it.

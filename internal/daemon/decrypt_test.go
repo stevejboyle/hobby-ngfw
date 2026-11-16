@@ -12,6 +12,7 @@ import (
 type fakeTLSD struct {
 	running       bool
 	answering     bool
+	busy          bool
 	starts, stops int
 	reloads       int
 	cleared       int
@@ -25,7 +26,7 @@ func (f *fakeTLSD) Status() (decrypt.Status, error) {
 	if !f.answering {
 		return decrypt.Status{}, errors.New("not answering")
 	}
-	return decrypt.Status{Mode: decrypt.ModeObserve, Counts: map[string]int64{"would-decrypt": 3}, Active: 1, Learned: 2}, nil
+	return decrypt.Status{Mode: decrypt.ModeObserve, Counts: map[string]int64{"would-decrypt": 3}, Active: 1, Learned: 2, Busy: f.busy, MaxActive: 4096}, nil
 }
 func (f *fakeTLSD) Reload() error { f.reloads++; return nil }
 func (f *fakeTLSD) Learned() ([]decrypt.LearnedEntry, error) {
@@ -104,6 +105,17 @@ func TestDecryptionLifecycle(t *testing.T) {
 	d.checkDecryptLocked()
 	if !strings.Contains(nf.Last(), "add element") {
 		t.Fatal("set refilled once tlsd answers")
+	}
+	// At its connection limit: new connections pass undecrypted.
+	ft.busy = true
+	d.checkDecryptLocked()
+	if !strings.Contains(nf.Last(), "flush set") || d.Decryption().State != "busy" {
+		t.Fatalf("busy: %s / %+v", nf.Last(), d.Decryption())
+	}
+	ft.busy = false
+	d.checkDecryptLocked()
+	if !strings.Contains(nf.Last(), "add element") {
+		t.Fatal("set refilled once tlsd has room")
 	}
 
 	// The periodic pass doesn't rewrite or reload an unchanged policy.

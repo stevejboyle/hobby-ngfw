@@ -111,18 +111,30 @@ func (d *Daemon) syncDecryptLocked(loaded bool) []string {
 		}
 		d.dec.policy = data
 	}
-	if !d.dec.on || !d.dec.run.Running() {
+	switch {
+	case !d.tlsdUp():
 		if err := d.dec.run.Start(); err != nil {
 			return append(warns, fmt.Sprintf("tlsd not started: %v; traffic passes undecrypted", err))
 		}
-		d.dec.on = true
-	} else if changed {
+	case changed:
+		// A running tlsd (also one an earlier ngfwd started) takes the
+		// policy now; a starting one reads it when it starts.
 		if err := d.dec.run.Reload(); err != nil {
 			warns = append(warns, fmt.Sprintf("tlsd didn't take the new policy yet: %v", err))
 		}
 	}
+	d.dec.on = true
 	d.checkDecryptLocked()
 	return warns
+}
+
+// tlsdUp: systemd runs tlsd, or it answers on its socket.
+func (d *Daemon) tlsdUp() bool {
+	if d.dec.run.Running() {
+		return true
+	}
+	_, err := d.dec.run.Status()
+	return err == nil
 }
 
 // checkDecryptLocked puts decrypt_ready in step with tlsd: filled while it
@@ -130,10 +142,10 @@ func (d *Daemon) syncDecryptLocked(loaded bool) []string {
 // the normal path: fail open). Callers hold d.mu.
 func (d *Daemon) checkDecryptLocked() {
 	active := d.running != nil && d.running.DecryptionActive() && d.dec.run != nil
-	healthy := false
+	healthy, busy := false, false
 	if active {
-		_, err := d.dec.run.Status()
-		healthy = err == nil
+		s, err := d.dec.run.Status()
+		healthy, busy = err == nil && !s.Busy, err == nil && s.Busy
 	}
 	set := compiler.Table + " " + compiler.DecryptReadySet
 	switch {
@@ -147,6 +159,13 @@ func (d *Daemon) checkDecryptLocked() {
 			d.log.Info("tlsd is up: connections are handed to it")
 		}
 		d.dec.ready = true
+	case d.dec.ready && busy:
+		if err := d.nft.Apply(fmt.Sprintf("flush set %s\n", set)); err != nil {
+			d.log.Warn("could not stop handing connections to tlsd", "err", err)
+			return
+		}
+		d.log.Warn("tlsd is at its connection limit: new connections take the normal path, undecrypted, until it has room")
+		d.dec.ready = false
 	case d.dec.ready:
 		if active {
 			if err := d.nft.Apply(fmt.Sprintf("flush set %s\n", set)); err != nil {
@@ -188,6 +207,8 @@ type DecryptionStatus struct {
 	Counts    map[string]int64 `json:"counts"`
 	Active    int64            `json:"active"`
 	Learned   int              `json:"learned"`
+	Busy      bool             `json:"busy"`
+	MaxActive int64            `json:"max_active"`
 	Builtin   bool             `json:"builtin_exclusions"`
 	CPUs      int              `json:"cpus"`
 	// State is what decryption does to traffic now: "off", "no-ca"
@@ -216,7 +237,7 @@ func (d *Daemon) Decryption() DecryptionStatus {
 		st.Installed, st.Running = d.dec.run.Available(), d.dec.run.Running()
 		if s, err := d.dec.run.Status(); err == nil {
 			st.Running = true // it answers, whatever systemd says
-			st.Counts, st.Active, st.Learned = s.Counts, s.Active, s.Learned
+			st.Counts, st.Active, st.Learned, st.Busy, st.MaxActive = s.Counts, s.Active, s.Learned, s.Busy, s.MaxActive
 			if s.Counts == nil {
 				st.Counts = map[string]int64{}
 			}
@@ -237,6 +258,8 @@ func decryptionState(st DecryptionStatus) (string, string) {
 		return "unavailable", "tlsd isn't installed: " + open
 	case !st.CA.Present:
 		return "no-ca", "no decryption CA: request decryption ca generate (or import one); until then " + open
+	case st.Running && st.Busy:
+		return "busy", fmt.Sprintf("tlsd holds its limit of %d connections: new ones pass through undecrypted until it has room", st.MaxActive)
 	case !st.Running || !st.Ready:
 		return "unavailable", "tlsd isn't running or not answering: " + open + " (fail-open)"
 	case st.Mode == decrypt.ModeObserve:
@@ -298,11 +321,14 @@ func (d *Daemon) ImportDecryptionCA(author string, cert, key []byte) (decrypt.CA
 	return info, nil
 }
 
+// reloadTLSD has a running tlsd load the new CA. Asked directly rather
+// than only when systemd says tlsd runs; a tlsd that isn't running loads
+// the CA when it starts.
 func (d *Daemon) reloadTLSD() {
-	if d.dec.run == nil || !d.dec.run.Running() {
+	if d.dec.run == nil {
 		return
 	}
-	if err := d.dec.run.Reload(); err != nil {
+	if err := d.dec.run.Reload(); err != nil && d.tlsdUp() {
 		d.log.Warn("tlsd didn't reload the CA", "err", err)
 	}
 }

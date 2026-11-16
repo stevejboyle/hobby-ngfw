@@ -833,8 +833,9 @@ rule, the decision and its reason, the server name, addresses and ports.
 1. **Make a CA.** `request decryption ca generate` (or **Generate CA** on
    Security → **Decryption**) makes a CA on the firewall; its key never
    leaves it. To use your own PKI instead, import a CA certificate and its
-   unencrypted key (a subordinate CA is best): `request decryption ca
-   import` (paste both) or **Import a CA**.
+   unencrypted key (a subordinate CA is best; paste its intermediates after
+   it, in order, and SJB-OS sends them with every certificate it issues):
+   `request decryption ca import` or **Import a CA**.
 2. **Install the CA certificate on the clients** you will decrypt, as a
    trusted root: download it from the Decryption page, or copy it from
    `show decryption ca`, and check the SHA-256 fingerprint on each client.
@@ -882,8 +883,10 @@ CA and its fingerprint, counts by decision, and learned servers;
 `show log decryption where decision = learned`.
 
 - **States:** **decrypting**; **observing** (`set system decryption
-  observe`: log only, pass everything through); **no-ca** (no CA yet:
-  everything passes through); **unavailable** (tlsd not running); **off**.
+  observe`: log only, pass everything through); **busy** (tlsd holds its
+  limit of 4096 connections: new ones pass through undecrypted until it has
+  room); **no-ca** (no CA yet: everything passes through); **unavailable**
+  (tlsd not running); **off**.
 - **Fail-open:** the firewall hands connections to tlsd only while it
   answers (checked every 2 seconds). If tlsd stops, new connections take
   the normal path, undecrypted, and are still filtered by the security
@@ -896,7 +899,13 @@ CA and its fingerprint, counts by decision, and learned servers;
   needs the new certificate.
 - **Sizing:** each decrypted byte is decrypted, encrypted again and
   inspected. Give the VM **4 vCPU** (a commit warns on fewer) and 4 GB of
-  RAM.
+  RAM. tlsd itself is light: in the development lab (a container on an
+  Apple-silicon Mac, IPS off) it decrypted single HTTPS downloads at over
+  10 Gbit/s and peaked at about 15 MB of memory with 8 downloads at once.
+  That says little about a VMware VM with the IPS inspecting; on a VM the
+  IPS and the vCPU count set the pace.
+  [`tools/decrypt-perf.sh`](../../tools/decrypt-perf.sh) measures straight
+  through, observe and decrypted on any Linux machine.
 - **Not yet:** decryption in VRFs other than the default, inbound (server)
   decryption, client certificates (passed through), revocation checking,
   IPv6. Without a NAT rule, servers see the firewall's address, not the

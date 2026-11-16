@@ -999,7 +999,7 @@ async function pageDecryption() {
     async () => { const r = await api("POST", "decryption/ca/generate", {}); toast(`New CA, fingerprint ${r.fingerprint.slice(0, 23)}…`); route(); },
     ca.present ? "Replace" : "Generate", ca.present) }, ca.present ? "Generate a new CA" : "Generate CA");
   const imp = h("button", { onclick: () => {
-    const cert = textArea("CA certificate (PEM)", "", { placeholder: "-----BEGIN CERTIFICATE-----" });
+    const cert = textArea("CA certificate (PEM), then any intermediates above it, in order", "", { placeholder: "-----BEGIN CERTIFICATE-----", rows: 6 });
     const key = textArea("Private key (PEM, unencrypted)", "", { placeholder: "-----BEGIN PRIVATE KEY-----" });
     modal("Import a CA", h("div", {},
       h("p", { class: "muted small" }, "Your own CA (a subordinate CA of your PKI is best). The key stays on the firewall and is never shown again."),
@@ -1017,7 +1017,7 @@ async function pageDecryption() {
       card("State", stateBadge(st.state), st.state_detail || ""),
       card("CA", ca.present ? (ca.source === "imported" ? "imported" : "generated") : h("span", { class: "muted" }, "none"),
         ca.present ? `valid until ${when(ca.not_after)}` : "generate or import one"),
-      card("Connections", String(st.active || 0), "being handled now"),
+      card("Connections", String(st.active || 0), `being handled now${st.max_active ? ` (limit ${st.max_active})` : ""}`),
       card("Learned", String(st.learned || 0), "pinned servers passed through"),
       card("vCPU", String(st.cpus || "?"), st.cpus < 4 ? "give the VM 4 for decryption" : "4 recommended"),
     ),
@@ -1407,7 +1407,7 @@ state.apps = { q: "" };
 
 // stateBadge shows what an inspection engine does to traffic now.
 function stateBadge(state) {
-  const cls = { inspecting: "action-allow", classifying: "action-allow", decrypting: "action-allow", observing: "action-reset", loading: "action-reset", starting: "action-deny", unavailable: "action-deny", "no-ca": "action-deny" }[state] || "muted";
+  const cls = { inspecting: "action-allow", classifying: "action-allow", decrypting: "action-allow", observing: "action-reset", busy: "action-reset", loading: "action-reset", starting: "action-deny", unavailable: "action-deny", "no-ca": "action-deny" }[state] || "muted";
   return h("span", { class: cls }, state ? state[0].toUpperCase() + state.slice(1) : "?");
 }
 

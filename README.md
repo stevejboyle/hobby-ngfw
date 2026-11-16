@@ -37,9 +37,10 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
   22.9 hours of Steve's own time, measured from the session transcripts
   release by release (all but a 0.5-hour estimate for his ChatGPT review):
   [docs/effort-log.md](docs/effort-log.md).
-- **AI cost:** about $380 of AI tokens at Claude API list prices: 1.2
-  billion tokens, nearly all of them cached context, counted from the
-  session transcript. ChatGPT's review isn't included.
+- **AI cost:** a $20/month Claude Pro plan. The 1.2 billion tokens it
+  used (nearly all cached context, counted from the session transcript)
+  would cost about $380 at Claude API list prices. ChatGPT's review isn't
+  included.
 - **Size:** about 23,100 lines of Go, C, JavaScript, shell and Python,
   not counting comments and blank lines: 17,600 product, 5,500 tests.
 - **Testing:** unit tests, network-namespace gates in CI (including
@@ -58,7 +59,7 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 | Time to release | About a year | 8 days |
 | People | One specialist, or about five engineers | One person directing AI |
 | Human hours | 2,000 to 10,000 engineering hours | 22.9 hours |
-| Cost | $300,000 to $900,000 in salary and benefits | About $380 of AI tokens |
+| Cost | $300,000 to $900,000 in salary and benefits | A $20/month Claude Pro plan ($380 of tokens at API list prices) |
 
 The left column is an estimate, not a measurement:
 
@@ -84,7 +85,7 @@ Sources: [BLS Occupational Outlook Handbook, software
 developers](https://www.bls.gov/ooh/computer-and-information-technology/software-developers.htm)
 (May 2025 wages); [BLS Employer Costs for Employee
 Compensation](https://www.bls.gov/news.release/ecec.nr0.htm); Claude API
-list prices for the token cost.
+list prices for the token figure.
 
 What this does *not* show: that the result is secure, robust under real
 traffic, fast, or maintainable over years. Everything that makes a security

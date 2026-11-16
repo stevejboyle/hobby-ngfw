@@ -182,7 +182,7 @@ func TestConfigCandidates(t *testing.T) {
 		{"set rule allow-web log", "", "yes no"},
 		{"set route r1 destination", "", "<prefix>"},
 		{"delete rule allow-web service", "", "web ["},
-		{"set system", "", "hostname mgmt-interface app-identification ips ips-disabled-signatures"},
+		{"set system", "", "hostname mgmt-interface app-identification ips ips-disabled-signatures decryption decryption-builtin-exclusions"},
 		{"move rule allow-web", "", "top bottom before after"},
 		{"move rule allow-web before", "", "block-quarantined block-p2p allow-dns"},
 		{"run show", "ro", "routes"},
@@ -246,5 +246,35 @@ func TestRoutingInConfigureMode(t *testing.T) {
 	}
 	if got := words(Filter(ConfigCandidates(m, []string{"set", "ospf-interface"}), "")); got != "veth-users mgmt0 veth-inet <name>" {
 		t.Fatalf("ospf-interface names: %q", got)
+	}
+}
+
+func TestDecryptionInConfigureMode(t *testing.T) {
+	m := lab(t)
+	run(t, m,
+		"set service tls protocol tcp ports 443",
+		"set decryption-profile strict bad-certificate block unsupported block pinned block allow-quic no",
+		"set decryption-exclusion banks domain [ bank.example *.pay.example ]",
+		"set decryption-rule users-out from users to internet service tls action decrypt profile strict",
+		"set decryption-rule skip-web source dns-quad9 action no-decrypt",
+		"move decryption-rule skip-web top",
+		"set system decryption on decryption-builtin-exclusions off",
+	)
+	valid(t, m)
+	c, _ := m.Config()
+	if len(c.DecryptionRules) != 2 || c.DecryptionRules[0].Name != "skip-web" || c.DecryptionRules[1].Profile != "strict" {
+		t.Fatalf("decryption rules: %+v", c.DecryptionRules)
+	}
+	if p := c.DecryptionProfiles[0]; p.BadCertificate != "block" || p.Pinned != "block" || p.AllowQUIC {
+		t.Fatalf("profile: %+v", p)
+	}
+	if strings.Join(c.DecryptionExclusions[0].Domains, ",") != "bank.example,*.pay.example" || c.System.DecryptionBuiltinExclusions != "off" {
+		t.Fatalf("exclusions/system: %+v %+v", c.DecryptionExclusions, c.System)
+	}
+	if got := words(Filter(ConfigCandidates(m, []string{"set", "decryption-rule", "users-out", "action"}), "")); got != "decrypt no-decrypt" {
+		t.Fatalf("action completion: %q", got)
+	}
+	if got := words(Filter(ConfigCandidates(m, []string{"set", "decryption-rule", "users-out", "profile"}), "")); got != "default strict" {
+		t.Fatalf("profile completion: %q", got)
 	}
 }

@@ -65,6 +65,8 @@ var (
 
 	ipsProfiles = []string{"ips_profiles"}
 	ipsActions  = []string{"block", "alert", "ignore"}
+
+	decryptProfiles = []string{"decryption_profiles"}
 )
 
 // appValues are what an application list may name besides groups: every
@@ -85,6 +87,26 @@ var Kinds = []*Kind{
 		{Name: "app-identification", Field: "app_id", Kind: vEnum, Enum: []string{"on", "off"}, Help: "App Identification: name the application in each connection (on unless set off)"},
 		{Name: "ips", Field: "ips", Kind: vEnum, Enum: []string{"on", "off"}, Help: "IPS: inspect traffic of rules with an ips-profile (on unless set off)"},
 		{Name: "ips-disabled-signatures", Field: "ips_disabled_signatures", Kind: vList, Hint: "<sid>", Help: "signature IDs to leave out of the IPS (false positives; the threat log shows SIDs)"},
+		{Name: "decryption", Field: "decryption", Kind: vEnum, Enum: []string{"on", "off"}, Help: "TLS decryption for connections a decryption-rule decrypts (on unless set off)"},
+		{Name: "decryption-builtin-exclusions", Field: "decryption_builtin_exclusions", Kind: vEnum, Enum: []string{"on", "off"}, Help: "never decrypt SJB-OS's built-in list of banking, payment, health and government sites (on unless set off)"},
+	}},
+	{Name: "decryption-rule", Key: "decryption_rules", Ordered: true, Help: "which TLS connections to decrypt, first match wins (unmatched: not decrypted)", Attrs: []Attr{
+		{Name: "from", Field: "from", Kind: vList, Refs: zones, Any: true, Help: "source zones"},
+		{Name: "to", Field: "to", Kind: vList, Refs: zones, Any: true, Help: "destination zones"},
+		{Name: "source", Field: "source", Kind: vList, Refs: addrGrps, Any: true, Help: "source addresses and groups"},
+		{Name: "destination", Field: "destination", Kind: vList, Refs: addrGrps, Any: true, Help: "destination addresses and groups"},
+		{Name: "service", Field: "service", Kind: vList, Refs: services, Any: true, Help: "TCP services (any: port 443)"},
+		{Name: "action", Field: "action", Kind: vEnum, Enum: []string{"decrypt", "no-decrypt"}, Help: "decrypt, or no-decrypt to exempt the traffic from rules below"},
+		{Name: "profile", Field: "profile", Kind: vRef, Refs: decryptProfiles, Fixed: []string{"default"}, Help: "what to do with traffic that can't be decrypted as usual (default is built in)"},
+	}},
+	{Name: "decryption-profile", Key: "decryption_profiles", Help: "decryption profiles: bad certificates, undecryptable and pinned traffic, QUIC (built-in: default)", NameFixed: []string{"default"}, Attrs: []Attr{
+		{Name: "bad-certificate", Field: "bad_certificate", Kind: vEnum, Enum: []string{"warn", "block"}, Help: "the server's certificate fails the checks: warn (the browser shows its warning; default) or block"},
+		{Name: "unsupported", Field: "unsupported", Kind: vEnum, Enum: []string{"pass", "block"}, Help: "old TLS, client certificates, not TLS: pass through undecrypted (default) or block"},
+		{Name: "pinned", Field: "pinned", Kind: vEnum, Enum: []string{"exclude", "block"}, Help: "the client rejects the firewall's certificate: exclude the server from then on (default) or block"},
+		{Name: "allow-quic", Field: "allow_quic", Kind: vBool, Help: "let QUIC (UDP 443, can't be decrypted) through (yes or no; default no, so browsers use TLS)"},
+	}},
+	{Name: "decryption-exclusion", Key: "decryption_exclusions", Help: "server names never decrypted, on top of the built-in list", Attrs: []Attr{
+		{Name: "domain", Field: "domains", Kind: vList, Hint: "<name>", Help: "bank.example, or *.bank.example for everything under it"},
 	}},
 	{Name: "ips-profile", Key: "ips_profiles", Help: "IPS profiles: block, alert or ignore per signature severity (built-in: default)", NameFixed: []string{"default"}, Attrs: []Attr{
 		{Name: "critical", Field: "critical", Kind: vEnum, Enum: ipsActions, Help: "critical signatures (default: block)"},

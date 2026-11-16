@@ -32,6 +32,11 @@ type Config struct {
 
 	// IPS (Suricata).
 	IPSProfiles []IPSProfile `yaml:"ips_profiles,omitempty" json:"ips_profiles"`
+
+	// TLS decryption (tlsd).
+	DecryptionRules      []DecryptionRule      `yaml:"decryption_rules,omitempty" json:"decryption_rules"`
+	DecryptionProfiles   []DecryptionProfile   `yaml:"decryption_profiles,omitempty" json:"decryption_profiles"`
+	DecryptionExclusions []DecryptionExclusion `yaml:"decryption_exclusions,omitempty" json:"decryption_exclusions"`
 }
 
 // Routing turns on BGP and/or OSPF in one VRF. Name is the VRF.
@@ -144,6 +149,12 @@ type System struct {
 	// IPSDisabledSignatures are signature IDs left out of the IPS rules
 	// (false positives).
 	IPSDisabledSignatures []string `yaml:"ips_disabled_signatures,omitempty" json:"ips_disabled_signatures"`
+	// Decryption turns TLS decryption on or off: "on" (also when unset) or
+	// "off". It runs for connections a decryption rule decrypts.
+	Decryption string `yaml:"decryption,omitempty" json:"decryption"`
+	// DecryptionBuiltinExclusions: "off" stops using SJB-OS's built-in list
+	// of server names never decrypted (banking, payment, health, government).
+	DecryptionBuiltinExclusions string `yaml:"decryption_builtin_exclusions,omitempty" json:"decryption_builtin_exclusions"`
 }
 
 // AppIDOn reports whether App Identification classifies traffic.

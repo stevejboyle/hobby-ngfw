@@ -115,7 +115,8 @@ commit. Tab completes, ? shows what can come next.
   run COMMAND                       an operational command, e.g. run show routes
   exit                              back to operational mode
 
-Objects: system, zone, interface, address, address-group, service, rule, nat, route.
+Objects: system, zone, interface, address, address-group, service, rule, nat, route,
+decryption-rule, decryption-profile, decryption-exclusion (and the others Tab lists).
 Lists (from, to, source, destination, service, application, static): set
 adds members, "any" replaces the list.
 `

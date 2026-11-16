@@ -363,3 +363,17 @@ func TestCertCache(t *testing.T) {
 		t.Fatal("an expiring certificate is reissued")
 	}
 }
+
+func TestInspectableALPN(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"h2,http/1.1", "http/1.1"}, {"http/1.1", "http/1.1"}, {"h2", "h2"}, {"", ""}, {"acme-tls/1", "acme-tls/1"},
+	} {
+		var in []string
+		if c.in != "" {
+			in = strings.Split(c.in, ",")
+		}
+		if got := strings.Join(inspectableALPN(in), ","); got != c.want {
+			t.Errorf("%q: got %q, want %q", c.in, got, c.want)
+		}
+	}
+}

@@ -48,5 +48,7 @@ jobs:
         run: sudo make lab-gate1
       - name: Sessions gate (connections across policy commits)
         run: sudo make lab-gate-sessions
-      - name: TLS decryption gate, observe mode (what this release does)
+      - name: TLS decryption gate (decrypting)
+        run: sudo make lab-gate-decrypt
+      - name: TLS decryption gate (observe mode)
         run: sudo MODE=observe make lab-gate-decrypt

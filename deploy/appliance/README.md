@@ -783,10 +783,11 @@ encrypted connections. It is a powerful and intrusive feature:
   no revocation checking. tlsd is new, AI-written security code in an
   experimental lab appliance.
 
-**In this release (0.9.9-r04) decryption observes only:** it reads each
-connection's TLS hello, decides what it would do, logs that (`show log
-decryption`), and passes every connection through unchanged. Use it to see
-what your rules and exclusions would cover before decryption arrives.
+**Try it in observe mode first:** `set system decryption observe` reads
+each connection's TLS hello, decides what it would do, logs that (`show log
+decryption`) and passes every connection through unchanged, so you can see
+what your rules and exclusions cover before anything is decrypted.
+(0.9.9-r04 always observed; decryption itself arrived in 0.9.9-r05.)
 
 ### How it works
 
@@ -805,7 +806,8 @@ decides:
   TLS 1.2 or later with the firewall. The rule's profile passes these
   through (default) or blocks them.
 - **Decrypted**: tlsd connects to the real server and checks its
-  certificate, then completes the client's connection with a certificate it
+  certificate (offering HTTP/1.1 when the client offers it, which App
+  Identification and the IPS read best; HTTP/2-only clients keep HTTP/2), then completes the client's connection with a certificate it
   issues for that server name, signed by the decryption CA (valid at most a
   week, made in memory). When the server's own certificate fails the
   checks (expired, self-signed, wrong name), tlsd issues one from a
@@ -1068,9 +1070,9 @@ unchanged. The full history lives in `/var/lib/ngfw/revisions/`.
   settings.
 - App Identification rules can't use nDPI's risk scores yet. The IPS has no per-profile
   exceptions yet, and blocks by dropping (no reset).
-- TLS decryption observes only in 0.9.9-r04 (logs what it would decrypt);
-  it covers outbound connections in the default VRF, with no revocation
-  checking.
+- TLS decryption covers outbound connections in the default VRF, with no
+  revocation checking; decrypted web traffic uses HTTP/1.1 where the client
+  allows it.
 - The web UI and tag API certificate is self-signed (`curl -k`).
 - One web UI user (`admin`); no roles yet.
 - Upgrades cover SJB-OS itself and the packages it ships (FRR, Kea,

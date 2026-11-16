@@ -222,7 +222,8 @@ lab/gate-sessions.sh checks this. Rules naming applications allow at most
 compiler.AppPendingPackets (40) packets of a connection before its app is
 known, tagged with the rule so its IPS profile inspects them. Inspection
 state (internal/nfqueue: is the queue bound?) is reported in show ips/app. TLS
-decryption (0.9.9-r04, observe only in that release): decryption rules
+decryption (0.9.9-r04 observed only; decrypts from r05, or observes with
+system decryption observe): decryption rules
 compile to chain decrypt (prerouting) that tproxies new TCP to tlsd only
 while decrypt_ready holds an element (ngfwd fills it while tlsd answers:
 fail-open); tlsd sends the bytes through the cleartext loop (veth sjbd-c ->

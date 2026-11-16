@@ -316,7 +316,7 @@ arrive on a unix datagram socket; ngfwd looks up the connection's ct mark
 works out the action, and writes an `ngfw-threat {json}` journal line, the
 threat log. Alerts a profile ignores aren't logged.
 
-### TLS decryption as built (0.9.9-r04)
+### TLS decryption as built (0.9.9-r04 to r06)
 
 Outbound TLS forward-proxy decryption (optional phase 4), so App
 Identification and the IPS see inside HTTPS. `tlsd` (Go, standard library
@@ -373,8 +373,13 @@ flowchart LR
   imports it and serves only the certificate.
 - **Policy:** ngfwd writes `/var/lib/sjb-os/tlsd-policy.json` (rules with
   their resolved profiles, exclusions, mode) at each commit and has tlsd
-  reload it; `system decryption observe` (and every 0.9.9-r04 commit) sets
-  observe mode.
+  reload it; `system decryption observe` sets observe mode (0.9.9-r04
+  observed only; r05 decrypts).
+- **Inspectability:** when the client offers HTTP/1.1, tlsd offers only that
+  to the server (and so to the client): App Identification names the
+  application from the plaintext Host header, and Suricata's HTTP parser
+  sees whole requests. h2-only clients keep HTTP/2. Server sessions are
+  resumed from a 4096-entry cache.
 - Limits: default VRF only, outbound only, IPv4, no revocation checking;
   upstream connections come from the firewall's own address.
 
@@ -466,6 +471,6 @@ flowchart LR
   class p2 main
 ```
 
-Optional phase 4, open-ended: TLS forward-proxy decryption (started in
-0.9.9-r04: see [TLS decryption as built](#tls-decryption-as-built-099-r04))
+Optional phase 4, open-ended: TLS forward-proxy decryption (0.9.9-r04
+to r06: see [TLS decryption as built](#tls-decryption-as-built-099-r04-to-r06))
 and custom App Identification signatures.

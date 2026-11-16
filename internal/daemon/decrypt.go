@@ -12,10 +12,10 @@ import (
 	"github.com/stevejboyle/hobby-ngfw/internal/decrypt"
 )
 
-// ObserveOnly makes every release of decryption observe (log what it would
-// decrypt, pass everything through), whatever system decryption says. The
-// first release with decryption (0.9.9-r04) ships observe only.
-var ObserveOnly = true
+// ObserveOnly makes decryption observe (log what it would decrypt, pass
+// everything through), whatever system decryption says. 0.9.9-r04 shipped
+// with it on; from 0.9.9-r05 decryption decrypts.
+var ObserveOnly = false
 
 // modeOf is tlsd's mode for a config.
 func modeOf(cfg *config.Config) string {

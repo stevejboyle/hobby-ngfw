@@ -39,6 +39,8 @@ type proxy struct {
 	roots   *x509.CertPool
 	learned *decrypt.Learned
 	certs   certCache
+	// sessions resumes TLS sessions with servers (fewer full handshakes).
+	sessions tls.ClientSessionCache
 
 	// dialLoop opens the loop leg (client half); dialUp reaches the server.
 	dialLoop func(ctx context.Context, client, server netip.AddrPort, dscp int) (net.Conn, error)
@@ -258,7 +260,8 @@ func (p *proxy) decrypt(ctx context.Context, st *state, c net.Conn, raw []byte, 
 		return
 	}
 	up := tls.Client(rawUp, &tls.Config{
-		ServerName: hello.ServerName, NextProtos: hello.ALPN, MinVersion: tls.VersionTLS12,
+		ServerName: hello.ServerName, NextProtos: inspectableALPN(hello.ALPN), MinVersion: tls.VersionTLS12,
+		ClientSessionCache: p.sessions,
 		// Checked below, so a bad certificate can be warned about
 		// (re-signed with the untrusted CA) rather than only refused.
 		InsecureSkipVerify: true,
@@ -319,6 +322,20 @@ func (p *proxy) decrypt(ctx context.Context, st *state, c net.Conn, raw []byte, 
 	ev.ALPN = cs.NegotiatedProtocol
 	p.log(ev)
 	join(ct, lc, ls, up)
+}
+
+// inspectableALPN picks the application protocols to offer the server:
+// HTTP/1.1 alone when the client offers it (App Identification and the IPS
+// read HTTP/1.1 best; HTTP/2's compressed headers hide the host name from
+// App Identification), otherwise what the client offered (e.g. h2-only
+// gRPC).
+func inspectableALPN(offered []string) []string {
+	for _, p := range offered {
+		if p == "http/1.1" {
+			return []string{"http/1.1"}
+		}
+	}
+	return offered
 }
 
 // verify checks the server's certificate chain against the roots, for the

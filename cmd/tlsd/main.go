@@ -14,6 +14,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -62,7 +63,8 @@ func main() {
 		now:  time.Now,
 		emit: func(d logs.Decryption) { fmt.Println(d.Line()) },
 		leaf: leaf, roots: roots,
-		learned: decrypt.OpenLearned(*learnedPath, decrypt.LearnedTTL),
+		learned:  decrypt.OpenLearned(*learnedPath, decrypt.LearnedTTL),
+		sessions: tls.NewLRUClientSessionCache(4096),
 		dialLoop: func(ctx context.Context, client, server netip.AddrPort, dscp int) (net.Conn, error) {
 			return dialLoop(ctx, *nsClient, client, server, dscp)
 		},

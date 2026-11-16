@@ -63,7 +63,7 @@ func TestDecryptionLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := strings.Join(res.Warnings, "\n")
-	for _, want := range []string{"with 2 vCPU: give it 4", "no decryption CA yet", "observes only"} {
+	for _, want := range []string{"with 2 vCPU: give it 4", "no decryption CA yet"} {
 		if !strings.Contains(w, want) {
 			t.Errorf("warnings lack %q:\n%s", want, w)
 		}
@@ -72,7 +72,7 @@ func TestDecryptionLifecycle(t *testing.T) {
 		t.Fatalf("tlsd started %d times; last nft: %s", ft.starts, nf.Last())
 	}
 	p, err := decrypt.ReadPolicy(policy)
-	if err != nil || p.Mode != decrypt.ModeObserve || len(p.Rules) != 1 || p.Rules[0].BadCertificate != "warn" || !p.Builtin || p.Exclusions[0].Domains[0] != "bank.example" {
+	if err != nil || p.Mode != decrypt.ModeDecrypt || len(p.Rules) != 1 || p.Rules[0].BadCertificate != "warn" || !p.Builtin || p.Exclusions[0].Domains[0] != "bank.example" {
 		t.Fatalf("policy %+v %v", p, err)
 	}
 	st := d.Decryption()
@@ -84,7 +84,7 @@ func TestDecryptionLifecycle(t *testing.T) {
 	if err != nil || !info.Present || ft.reloads != 1 {
 		t.Fatalf("generate: %+v %v reloads=%d", info, err, ft.reloads)
 	}
-	if st := d.Decryption(); st.State != "observing" || st.CA.Fingerprint != info.Fingerprint || st.CA.PEM != "" {
+	if st := d.Decryption(); st.State != "decrypting" || st.CA.Fingerprint != info.Fingerprint || st.CA.PEM != "" {
 		t.Fatalf("status after CA: %+v", st)
 	}
 	if ca := d.DecryptionCA(); !strings.HasPrefix(ca.PEM, "-----BEGIN CERTIFICATE") {
@@ -113,6 +113,21 @@ func TestDecryptionLifecycle(t *testing.T) {
 	}
 	if n, err := d.ClearDecryptionLearned("t"); err != nil || n != 1 || ft.cleared != 1 {
 		t.Fatalf("clear learned: %d %v", n, err)
+	}
+
+	// Observe: tlsd only logs.
+	if err := d.SetCandidate([]byte(strings.Replace(cfg, "hostname: ", "decryption: observe\n  hostname: ", 1))); err != nil {
+		t.Fatal(err)
+	}
+	res, err = d.Commit("t", "observe", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := decrypt.ReadPolicy(policy); p.Mode != decrypt.ModeObserve || !strings.Contains(strings.Join(res.Warnings, "\n"), "set to observe") {
+		t.Fatalf("observe: mode %q, warnings %q", p.Mode, res.Warnings)
+	}
+	if st := d.Decryption(); st.State != "observing" {
+		t.Fatalf("status observing: %+v", st)
 	}
 
 	// Decryption off: tlsd stops.

@@ -12,8 +12,10 @@
 #                      0.8.0)
 #   BUNDLE_ONLY=1      build only the .upgrade bundle, not the OVA (fast; test it
 #                      with boot-test.sh LAST.raw NEW.upgrade)
+#   NO_BUNDLE=1        build the OVA without a bundle when there's no signing
+#                      key (otherwise a missing key stops the build)
 #   BASE_RAW=path      image the bundle's Debian packages are worked out against
-#                      (default build/appliance/sjb-os-0.9.9-r01.raw)
+#                      (default build/appliance/sjb-os-0.9.9-r03.raw)
 #   PACKAGES="..."     Debian packages bundles carry (default: frr frr-pythontools kea-dhcp4-server libnetfilter-queue1 suricata)
 #   ROOT_KEY_FILE=path SSH public key the OVA lets root log in with (your own lab
 #                      builds only; never for a published release: release images
@@ -24,6 +26,15 @@ cd "$(dirname "$0")/../.."
 VERSION=${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}
 OUT=build/appliance
 mkdir -p "$OUT/bin" build/cache
+
+# A release needs its bundle: without the signing key, stop now rather than
+# after the slow image build.
+SIGNING_KEY=${SIGNING_KEY:-$HOME/.config/sjb-os/upgrade-signing.key}
+if [[ ! -f $SIGNING_KEY && ${NO_BUNDLE:-} != 1 ]]; then
+	echo "no signing key at $SIGNING_KEY: can't build the .upgrade bundle"
+	echo "(set SIGNING_KEY, or NO_BUNDLE=1 to build just the OVA)"
+	exit 1
+fi
 
 echo "==> building amd64 binaries ($VERSION)"
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$OUT/bin/" ./cmd/...
@@ -66,7 +77,6 @@ else
 fi
 
 echo "==> upgrade bundle"
-SIGNING_KEY=${SIGNING_KEY:-$HOME/.config/sjb-os/upgrade-signing.key}
 MIN_FROM=${MIN_FROM:-0.8.0}
 if [[ -f $SIGNING_KEY ]]; then
 	# The bundle carries what the image build installs from this repo: the
@@ -86,7 +96,7 @@ if [[ -f $SIGNING_KEY ]]; then
 	echo "$VERSION" >"$STAGE/etc/ngfw-version"
 	# Debian packages the base image lacks (FRR, Kea and their dependencies), as
 	# signed bundle files; sjb-packages installs them on the appliance.
-	BASE_RAW=${BASE_RAW:-build/appliance/sjb-os-0.9.9-r01.raw}
+	BASE_RAW=${BASE_RAW:-build/appliance/sjb-os-0.9.9-r03.raw}
 	PACKAGES=${PACKAGES:-frr frr-pythontools kea-dhcp4-server libnetfilter-queue1 suricata}
 	[[ -f $BASE_RAW ]] || { echo "need the base image $BASE_RAW to work out which packages to bundle"; exit 1; }
 	mkdir -p "$STAGE/usr/share/sjb-os/packages"
@@ -103,8 +113,8 @@ if [[ -f $SIGNING_KEY ]]; then
 		"$OUT/sjb-os-$VERSION.upgrade" >/dev/null
 	rm -rf "$STAGE"
 else
-	echo "no signing key at $SIGNING_KEY; skipping the .upgrade bundle"
-	[[ ${BUNDLE_ONLY:-} == 1 ]] && exit 1
+	echo "NO_BUNDLE=1: no signing key, so no .upgrade bundle"
+	[[ ${BUNDLE_ONLY:-} != 1 ]] || exit 1
 fi
 
 ls -lh "$OUT"/*.ova "$OUT"/*.upgrade 2>/dev/null

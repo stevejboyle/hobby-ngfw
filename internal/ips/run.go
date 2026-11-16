@@ -165,9 +165,11 @@ func (e Exec) connMark(zone int, proto, src string, sport int, dst string, dport
 		path = "conntrack"
 	}
 	try := func(s string, sp int, d string, dp int) (uint32, bool) {
+		// conntrack -G takes no zone (conntrack-tools 1.4.8): list the zone,
+		// filtered to the original-direction tuple, instead.
 		args := []string{"-G", "-p", proto, "-s", s, "-d", d}
 		if zone != 0 {
-			args = append(args, "--zone", strconv.Itoa(zone))
+			args = []string{"-L", "-w", strconv.Itoa(zone), "-p", proto, "-s", s, "-d", d}
 		}
 		if proto == "tcp" || proto == "udp" {
 			args = append(args, "--sport", strconv.Itoa(sp), "--dport", strconv.Itoa(dp))

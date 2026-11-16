@@ -112,8 +112,13 @@ type DecryptionExclusion struct {
 	Domains []string `yaml:"domains" json:"domains"`
 }
 
-// DecryptionOn reports whether decryption runs (on unless set off).
+// DecryptionOn reports whether decryption runs (on unless set off;
+// observe runs it too).
 func (s System) DecryptionOn() bool { return s.Decryption != "off" }
+
+// DecryptionObserve: decryption only logs what it would decrypt and passes
+// everything through.
+func (s System) DecryptionObserve() bool { return s.Decryption == "observe" }
 
 // BuiltinExclusionsOn reports whether the built-in exclusion list applies.
 func (s System) BuiltinExclusionsOn() bool { return s.DecryptionBuiltinExclusions != "off" }
@@ -141,15 +146,15 @@ func ValidDomain(s string) bool {
 }
 
 func (v *validator) decryption(c *Config, zones, addrs map[string]bool) {
-	for _, f := range []struct{ path, val string }{
-		{"system.decryption", c.System.Decryption},
-		{"system.decryption_builtin_exclusions", c.System.DecryptionBuiltinExclusions},
-	} {
-		switch f.val {
-		case "", "on", "off":
-		default:
-			v.add(f.path, "must be on or off, got %q", f.val)
-		}
+	switch c.System.Decryption {
+	case "", "on", "off", "observe":
+	default:
+		v.add("system.decryption", "must be on, off or observe, got %q", c.System.Decryption)
+	}
+	switch c.System.DecryptionBuiltinExclusions {
+	case "", "on", "off":
+	default:
+		v.add("system.decryption_builtin_exclusions", "must be on or off, got %q", c.System.DecryptionBuiltinExclusions)
 	}
 	profiles := map[string]bool{}
 	for i, p := range c.DecryptionProfiles {

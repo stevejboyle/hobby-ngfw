@@ -349,11 +349,13 @@ func (p *proxy) verify(cs tls.ConnectionState, name string) (bool, string) {
 	return false, "failed the checks: " + short(err)
 }
 
-// clientRejected: the client turned the firewall's certificate down (an
-// alert about it, or it hung up mid-handshake).
+// clientRejected: the client turned the firewall's certificate down: an
+// alert about it, or it hung up mid-handshake. A TLS 1.3 client that sends
+// its alert before switching to the handshake keys (OpenSSL does) shows up
+// here as a record that won't decrypt ("bad record MAC").
 func clientRejected(err error) bool {
 	s := err.Error()
-	for _, w := range []string{"unknown certificate authority", "bad certificate", "certificate unknown", "unsupported certificate", "access denied"} {
+	for _, w := range []string{"unknown certificate authority", "bad certificate", "certificate unknown", "unsupported certificate", "access denied", "bad record MAC"} {
 		if strings.Contains(s, w) {
 			return true
 		}

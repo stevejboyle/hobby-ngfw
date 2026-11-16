@@ -59,7 +59,7 @@ cp /etc/resolv.conf "$MNT/etc/resolv.conf"
 in_root() { chroot "$MNT" /usr/bin/env DEBIAN_FRONTEND=noninteractive "$@"; }
 in_root apt-get update -qq
 in_root apt-get install -y -qq --no-install-recommends \
-	nftables conntrack libnetfilter-queue1 open-vm-tools cloud-guest-utils sudo openssl curl openssh-server >/dev/null
+	nftables conntrack libnetfilter-queue1 open-vm-tools cloud-guest-utils sudo openssl curl openssh-server ca-certificates >/dev/null
 # What upgrade bundles ship to older appliances, installed here directly:
 # FRR (BGP/OSPF), Kea (DHCP) and Suricata (IPS). ngfwd starts what the
 # config uses; Debian's own Suricata unit must never run (sjb-ips does).
@@ -75,7 +75,7 @@ printf 'vmw_pvscsi\nmptspi\nmptsas\nahci\n' >>"$MNT/etc/initramfs-tools/modules"
 in_root update-initramfs -u >/dev/null
 
 cp -r "$SRC/deploy/appliance/rootfs/." "$MNT/"
-install -m 755 "$OUT/bin/ngfwd" "$OUT/bin/fwctl" "$OUT/appidd/appidd" "$MNT/usr/local/sbin/"
+install -m 755 "$OUT/bin/ngfwd" "$OUT/bin/fwctl" "$OUT/bin/tlsd" "$OUT/appidd/appidd" "$MNT/usr/local/sbin/"
 install -d "$MNT/usr/share/sjb-os/lib" "$MNT/usr/share/sjb-os/appid" "$MNT/usr/share/sjb-os/licenses"
 install -m 644 "$OUT"/appidd/libndpi.so.* "$MNT/usr/share/sjb-os/lib/"
 install -m 644 "$OUT/appidd/catalog.json" "$MNT/usr/share/sjb-os/appid/"
@@ -97,7 +97,7 @@ if [[ -f $OUT/dev-root-key.pub ]]; then
 	install -m 600 "$OUT/dev-root-key.pub" "$MNT/etc/ngfw/root_authorized_keys"
 fi
 chmod 755 "$MNT/usr/local/sbin/ngfw-firstboot" "$MNT/usr/local/sbin/ngfw-console" "$MNT/usr/local/sbin/sjb-cli" \
-	"$MNT/usr/local/sbin/sjb-migrate" "$MNT/etc/update-motd.d/10-sjb"
+	"$MNT/usr/local/sbin/sjb-migrate" "$MNT/usr/local/sbin/sjb-decrypt-net" "$MNT/etc/update-motd.d/10-sjb"
 echo "$VERSION" >"$MNT/etc/ngfw-version"
 
 # SJB-OS branding. Only PRETTY_NAME changes in os-release: VMware Tools

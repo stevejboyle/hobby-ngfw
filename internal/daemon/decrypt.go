@@ -12,9 +12,18 @@ import (
 	"github.com/stevejboyle/hobby-ngfw/internal/decrypt"
 )
 
-// DecryptMode is what tlsd does with connections the rules decrypt in this
-// release.
-var DecryptMode = decrypt.ModeObserve
+// ObserveOnly makes every release of decryption observe (log what it would
+// decrypt, pass everything through), whatever system decryption says. The
+// first release with decryption (0.9.9-r04) ships observe only.
+var ObserveOnly = true
+
+// modeOf is tlsd's mode for a config.
+func modeOf(cfg *config.Config) string {
+	if ObserveOnly || cfg.System.DecryptionObserve() {
+		return decrypt.ModeObserve
+	}
+	return decrypt.ModeDecrypt
+}
 
 // MinDecryptCPUs is the vCPU count below which a commit that decrypts warns.
 const MinDecryptCPUs = 4
@@ -45,7 +54,7 @@ func (d *Daemon) cpus() int {
 
 // policyFor is tlsd's policy for a config.
 func policyFor(cfg *config.Config) decrypt.Policy {
-	p := decrypt.Policy{Mode: DecryptMode, Builtin: cfg.System.BuiltinExclusionsOn(), Rules: []decrypt.PolicyRule{}, Exclusions: []decrypt.Exclusion{}}
+	p := decrypt.Policy{Mode: modeOf(cfg), Builtin: cfg.System.BuiltinExclusionsOn(), Rules: []decrypt.PolicyRule{}, Exclusions: []decrypt.Exclusion{}}
 	for _, r := range cfg.DecryptionRules {
 		prof, _ := cfg.DecryptionProfile(r.ProfileOf())
 		p.Rules = append(p.Rules, decrypt.PolicyRule{Name: r.Name, Profile: r.ProfileOf(), BadCertificate: prof.BadCertificate,
@@ -87,8 +96,11 @@ func (d *Daemon) syncDecryptLocked(loaded bool) []string {
 	if !d.DecryptionCA().Present {
 		warns = append(warns, "no decryption CA yet: `request decryption ca generate` (or import one); until then connections pass through undecrypted")
 	}
-	if DecryptMode == decrypt.ModeObserve {
+	switch {
+	case ObserveOnly:
 		warns = append(warns, "TLS decryption observes only in this release: it logs what it would decrypt (show log decryption) and passes everything through")
+	case cfg.System.DecryptionObserve():
+		warns = append(warns, "TLS decryption is set to observe: it logs what it would decrypt (show log decryption) and passes everything through")
 	}
 	pol := policyFor(cfg)
 	data := fmt.Sprintf("%+v", pol)
@@ -190,8 +202,9 @@ func (d *Daemon) Decryption() DecryptionStatus {
 	d.mu.Lock()
 	cfg, ready := d.running, d.dec.ready
 	d.mu.Unlock()
-	st := DecryptionStatus{Rules: []string{}, Counts: map[string]int64{}, Mode: DecryptMode, CPUs: d.cpus(), Ready: ready}
+	st := DecryptionStatus{Rules: []string{}, Counts: map[string]int64{}, Mode: decrypt.ModeObserve, CPUs: d.cpus(), Ready: ready}
 	if cfg != nil {
+		st.Mode = modeOf(cfg)
 		st.Enabled, st.InUse, st.Builtin = cfg.System.DecryptionOn(), cfg.DecryptionActive(), cfg.System.BuiltinExclusionsOn()
 		for _, r := range cfg.DecryptionRules {
 			st.Rules = append(st.Rules, fmt.Sprintf("%s (%s)", r.Name, r.Action))
@@ -202,6 +215,7 @@ func (d *Daemon) Decryption() DecryptionStatus {
 	if d.dec.run != nil {
 		st.Installed, st.Running = d.dec.run.Available(), d.dec.run.Running()
 		if s, err := d.dec.run.Status(); err == nil {
+			st.Running = true // it answers, whatever systemd says
 			st.Counts, st.Active, st.Learned = s.Counts, s.Active, s.Learned
 			if s.Counts == nil {
 				st.Counts = map[string]int64{}

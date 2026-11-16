@@ -71,6 +71,19 @@ SH
 		systemctl enable --now --no-block --quiet appidd && log "App Identification (appidd) enabled"
 	fi
 
+	# TLS decryption: tlsd runs as sjb-tls, which alone can read the CA's
+	# key in /etc/ngfw/decryption (ngfwd writes it there).
+	if ! getent passwd sjb-tls >/dev/null; then
+		useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin sjb-tls
+		log "created user sjb-tls (TLS decryption)"
+	fi
+	if [[ -d /etc/ngfw/decryption ]]; then
+		chown root:sjb-tls /etc/ngfw/decryption && chmod 750 /etc/ngfw/decryption
+		for k in /etc/ngfw/decryption/*.key; do
+			[[ -f $k ]] && chown sjb-tls:sjb-tls "$k" && chmod 600 "$k"
+		done
+	fi
+
 	# No sudo for operators.
 	if id -nG "$USER_NAME" | grep -qw sudo; then gpasswd -d "$USER_NAME" sudo >/dev/null; log "$USER_NAME removed from sudo"; fi
 
@@ -97,6 +110,13 @@ undo() {
 	if systemctl -q is-enabled sjb-ips 2>/dev/null || systemctl -q is-active sjb-ips 2>/dev/null; then
 		systemctl disable --now --quiet sjb-ips || true
 		log "IPS (sjb-ips) stopped"
+	fi
+	# Stop TLS decryption (and take its loop down) before any rollback:
+	# versions before 0.9.9-r04 don't have it, and later ones start it
+	# again themselves when their config decrypts.
+	if systemctl -q is-enabled sjb-tlsd 2>/dev/null || systemctl -q is-active sjb-tlsd 2>/dev/null; then
+		systemctl disable --now --quiet sjb-tlsd || true
+		log "TLS decryption (sjb-tlsd) stopped"
 	fi
 	# Before 0.9.9 sshd read root's key from $SHARE/root-keys: put it back.
 	if version_lt "$target" 0.9.9 && [[ -s $ROOT_KEYS && ! -e $SHARE/root-keys/authorized_keys ]]; then

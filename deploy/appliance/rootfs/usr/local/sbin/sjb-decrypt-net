@@ -1,0 +1,111 @@
+#!/bin/bash
+# The cleartext loop for TLS decryption (tlsd): two small network
+# namespaces joined to the firewall by veth pairs, so the bytes tlsd passes
+# on cross the firewall's forward chain like routed traffic (security rules,
+# App Identification, IPS). Run by sjb-tlsd.service: `up` before tlsd
+# starts, `down` after it stops. Idempotent. See
+# internal/compiler/decrypt.go for the whole data path.
+#
+#   client --> [tproxy] tlsd client half --(sjbd-c netns)--> veth sjbd-c
+#     --> forward chain --> veth sjbd-s --(sjbd-s netns, tproxy)--> tlsd
+#     server half --> the real server
+set -euo pipefail
+NSC=sjbd-c   # loop entry: tlsd's client half
+NSS=sjbd-s   # loop exit: tlsd's server half
+MARK=0x40000000 # compiler.DecryptMark
+LOOP_PORT=15081 # tlsd -loop-port
+log() { echo "sjb-decrypt-net: $*"; }
+
+up() {
+	# Accepted sockets carry the handed-over SYN's mark (the decryption rule
+	# and zone, which tlsd reads). Early demux would hand loop packets to
+	# tlsd's own client socket (same addresses and ports) instead of
+	# forwarding them, so it is off while decryption runs.
+	sysctl -qw net.ipv4.tcp_fwmark_accept=1 net.ipv4.tcp_early_demux=0
+
+	for ns in $NSC $NSS; do
+		ip netns list | grep -qw "^$ns" || ip netns add $ns
+		ip -n $ns link set lo up
+		ip netns exec $ns sysctl -qw net.ipv4.conf.all.rp_filter=0 net.ipv4.conf.default.rp_filter=0 net.ipv4.tcp_fwmark_accept=1
+	done
+	if ! ip link show sjbd-c >/dev/null 2>&1; then
+		ip link add sjbd-c type veth peer name c0 netns $NSC
+	fi
+	if ! ip link show sjbd-s >/dev/null 2>&1; then
+		ip link add sjbd-s type veth peer name s0 netns $NSS
+	fi
+	sysctl -qw net.ipv4.conf.sjbd-c.rp_filter=0 net.ipv4.conf.sjbd-s.rp_filter=0
+	ip addr replace 169.254.77.1/30 dev sjbd-c
+	ip addr replace 169.254.77.5/30 dev sjbd-s
+	ip link set sjbd-c up
+	ip link set sjbd-s up
+	ip -n $NSC addr replace 169.254.77.2/30 dev c0
+	ip -n $NSC link set c0 up
+	ip -n $NSC route replace default via 169.254.77.1
+	ip -n $NSS addr replace 169.254.77.6/30 dev s0
+	ip -n $NSS link set s0 up
+	ip -n $NSS route replace default via 169.254.77.5
+
+	# Firewall side: handed-over packets are delivered locally (to tlsd),
+	# its replies route normally; loop traffic goes from one veth to the
+	# other.
+	rule() { ip rule del "$@" 2>/dev/null || true; ip rule add "$@"; }
+	rule pref 50 fwmark $MARK/$MARK iif lo lookup main
+	rule pref 51 fwmark $MARK/$MARK lookup 197
+	rule pref 52 iif sjbd-c lookup 198
+	rule pref 53 iif sjbd-s lookup 199
+	ip route replace local 0.0.0.0/0 dev lo table 197
+	ip route replace default via 169.254.77.6 dev sjbd-s table 198
+	ip route replace default via 169.254.77.2 dev sjbd-c table 199
+
+	# Inside the namespaces: replies to tlsd's transparent sockets, and new
+	# connections at the loop's exit, are delivered to tlsd.
+	for ns in $NSC $NSS; do
+		ip -n $ns rule del pref 50 2>/dev/null || true
+		ip -n $ns rule del pref 51 2>/dev/null || true
+		ip -n $ns rule add pref 50 fwmark 0x1/0x1 iif lo lookup main
+		ip -n $ns rule add pref 51 fwmark 0x1/0x1 lookup 100
+		ip -n $ns route replace local 0.0.0.0/0 dev lo table 100
+	done
+	ip netns exec $NSC nft -f - <<'NFT'
+table inet sjbd
+delete table inet sjbd
+table inet sjbd {
+	chain pre {
+		type filter hook prerouting priority mangle; policy accept;
+		meta l4proto tcp socket transparent 1 meta mark set 0x1 accept
+	}
+}
+NFT
+	ip netns exec $NSS nft -f - <<NFT
+table inet sjbd
+delete table inet sjbd
+table inet sjbd {
+	chain pre {
+		type filter hook prerouting priority mangle; policy accept;
+		meta l4proto tcp socket transparent 1 meta mark set 0x1 accept
+		iifname "s0" meta l4proto tcp meta mark set 0x1 tproxy ip to :$LOOP_PORT
+	}
+}
+NFT
+	log "loop up"
+}
+
+down() {
+	for p in 50 51 52 53; do ip rule del pref $p 2>/dev/null || true; done
+	ip route flush table 197 2>/dev/null || true
+	ip route flush table 198 2>/dev/null || true
+	ip route flush table 199 2>/dev/null || true
+	ip link del sjbd-c 2>/dev/null || true
+	ip link del sjbd-s 2>/dev/null || true
+	ip netns del $NSC 2>/dev/null || true
+	ip netns del $NSS 2>/dev/null || true
+	sysctl -qw net.ipv4.tcp_fwmark_accept=0 net.ipv4.tcp_early_demux=1
+	log "loop down"
+}
+
+case ${1:-} in
+up) up ;;
+down) down ;;
+*) echo "usage: sjb-decrypt-net up|down" >&2; exit 2 ;;
+esac

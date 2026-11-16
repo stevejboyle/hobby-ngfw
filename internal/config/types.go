@@ -149,8 +149,9 @@ type System struct {
 	// IPSDisabledSignatures are signature IDs left out of the IPS rules
 	// (false positives).
 	IPSDisabledSignatures []string `yaml:"ips_disabled_signatures,omitempty" json:"ips_disabled_signatures"`
-	// Decryption turns TLS decryption on or off: "on" (also when unset) or
-	// "off". It runs for connections a decryption rule decrypts.
+	// Decryption turns TLS decryption on (also when unset), off, or to
+	// "observe": log what the decryption rules would decrypt and pass
+	// everything through. It runs for connections a decryption rule decrypts.
 	Decryption string `yaml:"decryption,omitempty" json:"decryption"`
 	// DecryptionBuiltinExclusions: "off" stops using SJB-OS's built-in list
 	// of server names never decrypted (banking, payment, health, government).

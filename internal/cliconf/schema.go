@@ -87,7 +87,7 @@ var Kinds = []*Kind{
 		{Name: "app-identification", Field: "app_id", Kind: vEnum, Enum: []string{"on", "off"}, Help: "App Identification: name the application in each connection (on unless set off)"},
 		{Name: "ips", Field: "ips", Kind: vEnum, Enum: []string{"on", "off"}, Help: "IPS: inspect traffic of rules with an ips-profile (on unless set off)"},
 		{Name: "ips-disabled-signatures", Field: "ips_disabled_signatures", Kind: vList, Hint: "<sid>", Help: "signature IDs to leave out of the IPS (false positives; the threat log shows SIDs)"},
-		{Name: "decryption", Field: "decryption", Kind: vEnum, Enum: []string{"on", "off"}, Help: "TLS decryption for connections a decryption-rule decrypts (on unless set off)"},
+		{Name: "decryption", Field: "decryption", Kind: vEnum, Enum: []string{"on", "off", "observe"}, Help: "TLS decryption for connections a decryption-rule decrypts: on (default), off, or observe (log what it would decrypt, pass everything through)"},
 		{Name: "decryption-builtin-exclusions", Field: "decryption_builtin_exclusions", Kind: vEnum, Enum: []string{"on", "off"}, Help: "never decrypt SJB-OS's built-in list of banking, payment, health and government sites (on unless set off)"},
 	}},
 	{Name: "decryption-rule", Key: "decryption_rules", Ordered: true, Help: "which TLS connections to decrypt, first match wins (unmatched: not decrypted)", Attrs: []Attr{

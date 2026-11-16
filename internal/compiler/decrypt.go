@@ -121,9 +121,11 @@ func (c *compiler) decrypt(b *strings.Builder) error {
 
 	b.WriteString("\n\tchain decrypt {\n")
 	b.WriteString("\t\ttype filter hook prerouting priority mangle; policy accept;\n")
+	// The loop first: its packets carry the client's addresses and ports,
+	// so they would match tlsd's own client socket below.
+	fmt.Fprintf(b, "\t\tiifname { %q, %q } accept\n", LoopClientIf, LoopServerIf)
 	b.WriteString("\t\t# Packets of connections tlsd already holds go to its socket.\n")
 	fmt.Fprintf(b, "\t\tmeta l4proto tcp socket transparent 1 meta mark set meta mark or 0x%x accept\n", DecryptMark)
-	fmt.Fprintf(b, "\t\tiifname { %q, %q } accept\n", LoopClientIf, LoopServerIf)
 	for i, r := range c.cfg.DecryptionRules {
 		ins := c.decryptIngress(r.From)
 		to, ok := c.zoneExpr("fib daddr oifname", r.To)

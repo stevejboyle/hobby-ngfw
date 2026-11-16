@@ -86,7 +86,7 @@ if [[ -f $SIGNING_KEY ]]; then
 	mkdir -p "$STAGE/usr/local/sbin" "$STAGE/etc"
 	cp -R deploy/appliance/rootfs/. "$STAGE/"
 	find "$STAGE" -name .DS_Store -delete
-	install -m 755 "$OUT/bin/ngfwd" "$OUT/bin/fwctl" "$OUT/appidd/appidd" "$STAGE/usr/local/sbin/"
+	install -m 755 "$OUT/bin/ngfwd" "$OUT/bin/fwctl" "$OUT/bin/tlsd" "$OUT/appidd/appidd" "$STAGE/usr/local/sbin/"
 	install -d "$STAGE/usr/share/sjb-os/lib" "$STAGE/usr/share/sjb-os/appid" "$STAGE/usr/share/sjb-os/licenses"
 	install -m 644 "$OUT"/appidd/libndpi.so.* "$STAGE/usr/share/sjb-os/lib/"
 	install -m 644 "$OUT/appidd/catalog.json" "$STAGE/usr/share/sjb-os/appid/"
@@ -97,7 +97,7 @@ if [[ -f $SIGNING_KEY ]]; then
 	# Debian packages the base image lacks (FRR, Kea and their dependencies), as
 	# signed bundle files; sjb-packages installs them on the appliance.
 	BASE_RAW=${BASE_RAW:-build/appliance/sjb-os-0.9.9-r03.raw}
-	PACKAGES=${PACKAGES:-frr frr-pythontools kea-dhcp4-server libnetfilter-queue1 suricata}
+	PACKAGES=${PACKAGES:-frr frr-pythontools kea-dhcp4-server libnetfilter-queue1 suricata ca-certificates}
 	[[ -f $BASE_RAW ]] || { echo "need the base image $BASE_RAW to work out which packages to bundle"; exit 1; }
 	mkdir -p "$STAGE/usr/share/sjb-os/packages"
 	docker run --rm --privileged --platform linux/amd64 -v "$PWD":/src -w /src \

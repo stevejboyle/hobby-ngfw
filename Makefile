@@ -1,4 +1,4 @@
-.PHONY: build test validate lab-up lab-down lab-status lab-smoke lab-gate1 lab-gate-sessions clean
+.PHONY: build test validate lab-up lab-down lab-status lab-smoke lab-gate1 lab-gate-sessions lab-gate-decrypt clean
 
 build:
 	go build -o bin/ ./cmd/...
@@ -31,6 +31,11 @@ lab-gate1:
 # reorder, deletion, IPS-profile change, manual and automatic rollback).
 lab-gate-sessions:
 	./lab/gate-sessions.sh
+
+# TLS decryption gate: ngfwd, tlsd and the cleartext loop (needs openssl).
+# MODE=observe checks observe mode.
+lab-gate-decrypt:
+	./lab/gate-decrypt.sh
 
 clean:
 	rm -rf bin

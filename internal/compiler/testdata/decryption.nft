@@ -60,9 +60,9 @@ table inet ngfw {
 
 	chain decrypt {
 		type filter hook prerouting priority mangle; policy accept;
+		iifname { "sjbd-c", "sjbd-s" } accept
 		# Packets of connections tlsd already holds go to its socket.
 		meta l4proto tcp socket transparent 1 meta mark set meta mark or 0x40000000 accept
-		iifname { "sjbd-c", "sjbd-s" } accept
 		iifname "inside" ip saddr 10.10.1.50 tcp dport 443 accept comment "decrypt:skip-printer"
 		iifname "inside" ip saddr 10.10.1.50 udp dport 443 accept comment "decrypt:skip-printer"
 		iifname "outside" ip saddr 10.10.1.50 tcp dport 443 accept comment "decrypt:skip-printer"

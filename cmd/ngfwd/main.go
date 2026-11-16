@@ -57,6 +57,7 @@ func main() {
 	flag.StringVar(&frrDir, "frr", "/etc/frr", "FRR config directory (empty: don't manage BGP/OSPF, for development)")
 	flag.StringVar(&appidStats, "appid-stats", appid.StatsPath, "appidd's statistics file")
 	flag.StringVar(&decryptCA, "decryption-ca", decrypt.CADir, "decryption CA directory")
+	flag.StringVar(&decryptPolicy, "decryption-policy", decrypt.PolicyFile, "where to write tlsd's policy (readable by tlsd's user)")
 	flag.StringVar(&tlsdSocket, "tlsd-socket", "/run/sjb-tlsd/tlsd.sock", "tlsd's status socket")
 	flag.StringVar(&tlsdPath, "tlsd", "/usr/local/sbin/tlsd", "tlsd, the TLS decryption daemon (empty: no decryption, for development)")
 	flag.StringVar(&ipsDir, "ips-dir", "/var/lib/sjb-os/ips", "IPS signature directory (empty: no IPS, for development)")
@@ -129,9 +130,7 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 		go d.RunIPSUpdates(context.Background())
 	}
 	if tlsdPath != "" {
-		// tlsd reads its policy from the state directory (the appliance's
-		// is decrypt.PolicyFile).
-		d.SetDecrypt(decrypt.Exec{Binary: tlsdPath, Socket: tlsdSocket}, decryptCA, filepath.Join(stateDir, "tlsd-policy.json"))
+		d.SetDecrypt(decrypt.Exec{Binary: tlsdPath, Socket: tlsdSocket}, decryptCA, decryptPolicy)
 		go d.RunDecryptHealth(context.Background())
 	}
 	if err := d.Start(); err != nil {
@@ -342,7 +341,7 @@ var keaPath string
 var ipsDir string
 
 // tlsdPath is the TLS decryption daemon; empty: no decryption (development).
-var tlsdPath, tlsdSocket, decryptCA string
+var tlsdPath, tlsdSocket, decryptCA, decryptPolicy string
 
 // statsRoot is where interface counters are read (/sys under it).
 var statsRoot = "/"

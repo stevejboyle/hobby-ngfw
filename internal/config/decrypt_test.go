@@ -39,7 +39,7 @@ func TestDecryptionInvalid(t *testing.T) {
 		mod  func(c *Config)
 		want string
 	}{
-		{"bad system switch", func(c *Config) { c.System.Decryption = "maybe" }, "system.decryption: must be on or off"},
+		{"bad system switch", func(c *Config) { c.System.Decryption = "maybe" }, "system.decryption: must be on, off or observe"},
 		{"bad builtin switch", func(c *Config) { c.System.DecryptionBuiltinExclusions = "no" }, "system.decryption_builtin_exclusions: must be on or off"},
 		{"bad action", func(c *Config) { c.DecryptionRules[1].Action = "allow" }, `decryption_rules[1] "users-out": action must be decrypt or no-decrypt`},
 		{"unknown zone", func(c *Config) { c.DecryptionRules[1].From = []string{"dmz"} }, `from: unknown zone "dmz"`},

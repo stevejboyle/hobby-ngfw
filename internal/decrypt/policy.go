@@ -12,7 +12,7 @@ import (
 )
 
 // PolicyFile is where ngfwd writes tlsd's policy (no secrets in it).
-const PolicyFile = "/var/lib/ngfw/tlsd-policy.json"
+const PolicyFile = "/var/lib/sjb-os/tlsd-policy.json"
 
 // BuiltinExclusionsFile is SJB-OS's own list of server names never
 // decrypted: banking, payment, health and government. Shipped in bundles.

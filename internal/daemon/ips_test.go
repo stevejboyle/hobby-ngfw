@@ -14,6 +14,7 @@ type fakeSuricata struct {
 	starts, stops int
 	mem           uint64
 	mark          uint32
+	decrypted     bool
 	src, dst      string
 }
 
@@ -24,9 +25,9 @@ func (f *fakeSuricata) Running() bool            { return f.running }
 func (f *fakeSuricata) Reload() error            { return nil }
 func (f *fakeSuricata) MemTotal() uint64         { return f.mem }
 func (f *fakeSuricata) LoadedRules() (int, bool) { return 4, f.running }
-func (f *fakeSuricata) ConnMark(proto, src string, sport int, dst string, dport int) (uint32, bool) {
+func (f *fakeSuricata) ConnMark(proto, src string, sport int, dst string, dport int) (uint32, bool, bool) {
 	f.src, f.dst = src, dst
-	return f.mark, f.mark != 0
+	return f.mark, f.decrypted, f.mark != 0
 }
 
 func TestIPSLifecycleAndAlerts(t *testing.T) {
@@ -81,6 +82,17 @@ func TestIPSLifecycleAndAlerts(t *testing.T) {
 	if th, _ := logs.ParseThreat(lines[1]); th.Action != "alert" {
 		t.Fatalf("informational under strict alerts: %+v", th)
 	}
+	if th.Decrypted {
+		t.Fatal("not decrypted traffic")
+	}
+	// A match in decrypted traffic: the rule comes from the loop leg.
+	fs.decrypted = true
+	d.IPSAlert(ips.Alert{SID: 9900001, Severity: "critical", Proto: "tcp"})
+	fs.decrypted = false
+	if th, _ := logs.ParseThreat(lines[len(lines)-1]); !th.Decrypted || th.Rule != "allow-web" || th.Action != "block" || th.Value("decrypted") != "yes" {
+		t.Fatalf("decrypted threat: %+v", th)
+	}
+	lines = lines[:2]
 	// Default profile ignores informational: nothing logged.
 	d.mu.Lock()
 	d.running.Rules[idx].IPSProfile = "default"

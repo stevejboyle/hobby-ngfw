@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/stevejboyle/hobby-ngfw/internal/compiler"
 	"net"
 	"os"
 	"os/exec"
@@ -29,8 +30,11 @@ type Runner interface {
 	// MemTotal is the appliance's RAM in bytes (0 if unknown).
 	MemTotal() uint64
 	// ConnMark is the ct mark of the connection a packet with this
-	// 5-tuple belongs to, in either direction.
-	ConnMark(proto, src string, sport int, dst string, dport int) (uint32, bool)
+	// 5-tuple belongs to, in either direction. decrypted: it is TLS
+	// decryption's cleartext loop leg (conntrack zone LoopZone), which
+	// carries the rule; the client's own connection, with the same tuple in
+	// the default zone, doesn't.
+	ConnMark(proto, src string, sport int, dst string, dport int) (mark uint32, decrypted, ok bool)
 	// LoadedRules is how many signatures the running engine has active
 	// (false when it can't tell: not running, or still starting).
 	LoadedRules() (int, bool)
@@ -39,14 +43,14 @@ type Runner interface {
 // Noop runs nothing.
 type Noop struct{}
 
-func (Noop) Available() bool                                          { return false }
-func (Noop) Start() error                                             { return nil }
-func (Noop) Stop() error                                              { return nil }
-func (Noop) Running() bool                                            { return false }
-func (Noop) Reload() error                                            { return nil }
-func (Noop) MemTotal() uint64                                         { return 0 }
-func (Noop) ConnMark(string, string, int, string, int) (uint32, bool) { return 0, false }
-func (Noop) LoadedRules() (int, bool)                                 { return 0, false }
+func (Noop) Available() bool                                                { return false }
+func (Noop) Start() error                                                   { return nil }
+func (Noop) Stop() error                                                    { return nil }
+func (Noop) Running() bool                                                  { return false }
+func (Noop) Reload() error                                                  { return nil }
+func (Noop) MemTotal() uint64                                               { return 0 }
+func (Noop) ConnMark(string, string, int, string, int) (uint32, bool, bool) { return 0, false, false }
+func (Noop) LoadedRules() (int, bool)                                       { return 0, false }
 
 // CommandSocket is Suricata's unix-command socket (suricata.yaml).
 const CommandSocket = "/run/sjb-ips/suricata-command.socket"
@@ -140,13 +144,31 @@ func (Exec) MemTotal() uint64 {
 
 var markRE = regexp.MustCompile(`\bmark=(\d+)`)
 
-func (e Exec) ConnMark(proto, src string, sport int, dst string, dport int) (uint32, bool) {
+// LoopZone is TLS decryption's conntrack zone.
+const LoopZone = compiler.LoopCTZone
+
+func (e Exec) ConnMark(proto, src string, sport int, dst string, dport int) (uint32, bool, bool) {
+	// Decrypted traffic has two entries with this tuple: the client's own
+	// connection (default zone, no rule) and the loop leg the rules judged.
+	m, ok := e.connMark(0, proto, src, sport, dst, dport)
+	if !ok || m>>16 == 0 {
+		if lm, lok := e.connMark(LoopZone, proto, src, sport, dst, dport); lok {
+			return lm, true, true
+		}
+	}
+	return m, false, ok
+}
+
+func (e Exec) connMark(zone int, proto, src string, sport int, dst string, dport int) (uint32, bool) {
 	path := e.Conntrack
 	if path == "" {
 		path = "conntrack"
 	}
 	try := func(s string, sp int, d string, dp int) (uint32, bool) {
 		args := []string{"-G", "-p", proto, "-s", s, "-d", d}
+		if zone != 0 {
+			args = append(args, "--zone", strconv.Itoa(zone))
+		}
 		if proto == "tcp" || proto == "udp" {
 			args = append(args, "--sport", strconv.Itoa(sp), "--dport", strconv.Itoa(dp))
 		}

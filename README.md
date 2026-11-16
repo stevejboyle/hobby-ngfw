@@ -14,7 +14,9 @@ should rely on.
 
 **The short version:** [the product brief](docs/SJB-OS-product-brief.pdf)
 (two-page PDF): what got built, and how building it with AI compares with
-building it the usual way.
+building it the usual way. **The long version:** [the administrator
+guide](docs/SJB-OS-administrator-guide.pdf) (PDF): deploying, configuring
+and running it.
 
 ## How it was built
 
@@ -138,7 +140,9 @@ Later releases install in place: upload the signed `.upgrade` file on the web
 UI (System → Administration).
 
 The full guide, with settings, first-boot behaviour and day-to-day use, is
-[deploy/appliance/README.md](deploy/appliance/README.md).
+[deploy/appliance/README.md](deploy/appliance/README.md); the same ground,
+laid out for reading or printing, is in the
+[administrator guide](docs/SJB-OS-administrator-guide.pdf) (PDF).
 
 Once it's up, quarantine a host from anything that can reach mgmt, including
 NAC, SOAR and EDR integrations that send XML user-ID messages:

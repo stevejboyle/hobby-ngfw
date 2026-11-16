@@ -2,8 +2,9 @@
 # The cleartext loop for TLS decryption (tlsd): two small network
 # namespaces joined to the firewall by veth pairs, so the bytes tlsd passes
 # on cross the firewall's forward chain like routed traffic (security rules,
-# App Identification, IPS). Run by sjb-tlsd.service: `up` before tlsd
-# starts, `down` after it stops. Idempotent. See
+# App Identification, IPS). Run by sjb-decrypt-net.service, which
+# sjb-tlsd.service pulls in: `up` before tlsd starts (its sandbox must see
+# the namespaces), `down` after it stops. Idempotent. See
 # internal/compiler/decrypt.go for the whole data path.
 #
 #   client --> [tproxy] tlsd client half --(sjbd-c netns)--> veth sjbd-c

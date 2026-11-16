@@ -822,9 +822,10 @@ Whatever tlsd decides, the connection's bytes (decrypted, or as they came)
 cross the firewall's normal rules again on an internal hop, so the
 **security rules still decide what is allowed**, App Identification names
 the application, and an allow rule's **IPS profile inspects the decrypted
-content**. Threat log entries
-for matches inside decrypted traffic say so (`decrypted` column). QUIC (HTTP/3 over UDP 443) can't be decrypted: for decrypted
-traffic it is blocked, so browsers fall back to TLS (a profile can allow it).
+content**; threat log entries for matches inside decrypted traffic say so
+(`decrypted` column). QUIC (HTTP/3 over UDP 443) can't be decrypted: for
+decrypted traffic it is blocked, so browsers fall back to TLS (a profile
+can allow it).
 
 Nothing decrypted is logged. The decryption log has, per connection, the
 rule, the decision and its reason, the server name, addresses and ports.

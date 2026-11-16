@@ -37,14 +37,54 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
   22.9 hours of Steve's own time, measured from the session transcripts
   release by release (all but a 0.5-hour estimate for his ChatGPT review):
   [docs/effort-log.md](docs/effort-log.md).
-- **Size:** about 25,000 lines of Go, C, JavaScript and shell, tests
-  included.
+- **AI cost:** about $380 of AI tokens at Claude API list prices: 1.2
+  billion tokens, nearly all of them cached context, counted from the
+  session transcript. ChatGPT's review isn't included.
+- **Size:** about 23,100 lines of Go, C, JavaScript, shell and Python,
+  not counting comments and blank lines: 17,600 product, 5,500 tests.
 - **Testing:** unit tests, network-namespace gates in CI (including
   established sessions across policy changes), and a QEMU boot test of every
   release with VMware's device models: over 130 end-to-end checks of
   first boot, policy, application identification, intrusion prevention,
   routing, DHCP, upgrades and rollback.
+- **Releases:** 33 in eight days, each gated by the boot test. The public
+  history starts at 0.9.9-r01; the earlier releases are kept privately.
 - **Design:** [docs/architecture.md](docs/architecture.md).
+
+### Compared with building it the usual way
+
+| | Built the usual way (estimate) | Built with AI (measured) |
+| --- | --- | --- |
+| Time to release | About a year | 8 days |
+| People | One specialist, or about five engineers | One person directing AI |
+| Human hours | 2,000 to 10,000 engineering hours | 22.9 hours |
+| Cost | $300,000 to $900,000 in salary and benefits | About $380 of AI tokens |
+
+The left column is an estimate, not a measurement:
+
+- **Low end:** a component-by-component estimate for one senior specialist
+  who already knows this stack: 43 weeks of work plus 20% for integration
+  and testing, about 52 weeks or 2,060 hours. Priced at the 90th-percentile
+  US wage for software developers ($214,670 a year), about $147 an hour
+  with benefits: about $300,000.
+- **High end:** the basic COCOMO model (organic mode) applied to the 23,100
+  lines: 65 person-months, about five people for about 12 months, or 9,900
+  hours. Priced at the median wage ($64.44 an hour), about $92 an hour
+  with benefits: about $910,000.
+- **Benefits:** wages are about 70% of what employers pay in total (BLS
+  Employer Costs for Employee Compensation), so wages are divided by 0.7.
+- **Caveats:** COCOMO dates from 1981 and tends to run high for modern
+  code; the low end assumes an expert. Most of the hard work is done by
+  existing open-source engines (nftables, nDPI, Suricata, FRR, Kea), and
+  the line count covers only the new code. Neither estimate prices
+  Steve's own design judgment, and the speed says nothing about whether
+  the result is secure (see below).
+
+Sources: [BLS Occupational Outlook Handbook, software
+developers](https://www.bls.gov/ooh/computer-and-information-technology/software-developers.htm)
+(May 2025 wages); [BLS Employer Costs for Employee
+Compensation](https://www.bls.gov/news.release/ecec.nr0.htm); Claude API
+list prices for the token cost.
 
 What this does *not* show: that the result is secure, robust under real
 traffic, fast, or maintainable over years. Everything that makes a security

@@ -41,19 +41,22 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
   22.9 hours of Steve's own time to the 0.9.9-r03 release (23.7 including
   getting the repository ready to go public), measured from the session
   transcripts release by release (all but a 0.5-hour estimate for his
-  ChatGPT review): [docs/effort-log.md](docs/effort-log.md).
+  ChatGPT review): [docs/effort-log.md](docs/effort-log.md). TLS decryption
+  came next, in three releases (0.9.9-r04 to r06) and 0.2 hours: 23.9
+  through 0.9.9-r06.
 - **AI cost:** a $20/month Claude Pro plan. The 1.2 billion tokens it
   used (nearly all cached context, counted from the session transcript)
   would cost about $380 at Claude API list prices. ChatGPT's review isn't
   included.
-- **Size:** about 23,100 lines of Go, C, JavaScript, shell and Python,
-  not counting comments and blank lines: 17,600 product, 5,500 tests.
+- **Size:** at 0.9.9-r03, about 23,100 lines of Go, C, JavaScript, shell
+  and Python, not counting comments and blank lines: 17,600 product, 5,500
+  tests.
 - **Testing:** unit tests, network-namespace gates in CI (including
   established sessions across policy changes), and a QEMU boot test of every
-  release with VMware's device models: over 130 end-to-end checks of
+  release with VMware's device models: about 150 end-to-end checks of
   first boot, policy, application identification, intrusion prevention,
-  routing, DHCP, upgrades and rollback.
-- **Releases:** 33 in eight days, each gated by the boot test. The public
+  TLS decryption, routing, DHCP, upgrades and rollback.
+- **Releases:** 36 in nine days, each gated by the boot test. The public
   history starts at 0.9.9-r01; the earlier releases are kept privately.
 - **Design:** [docs/architecture.md](docs/architecture.md).
 
@@ -61,9 +64,9 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 
 | | Built the usual way (estimate) | Built with AI (measured) |
 | --- | --- | --- |
-| Time to release | About a year | 8 days, Nov 8 to 15, 2026 |
+| Time to first release | About a year | 8 days, Nov 8 to 15, 2026 |
 | People | One specialist, or about five engineers | One person directing AI |
-| Human hours | 2,000 to 10,000 engineering hours | 22.9 hours to release (23.7 including going public) |
+| Human hours | 2,000 to 10,000 engineering hours | 22.9 hours to release (23.9 through 0.9.9-r06) |
 | Cost | $300,000 to $900,000 in salary and benefits | A $20/month Claude Pro plan ($380 of tokens at API list prices) |
 
 The left column is an estimate, not a measurement:
@@ -102,8 +105,8 @@ maintenance) is out of scope.
 
 SJB-OS ("Stops Junk at the Border") is a firewall appliance for VMware:
 zone-based policy compiled to nftables, application identification with
-nDPI, inline intrusion prevention with Suricata, host tagging through an
-API, routing and DHCP, managed with a commit/rollback configuration model
+nDPI, inline intrusion prevention with Suricata, outbound TLS decryption,
+host tagging through an API, routing and DHCP, managed with a commit/rollback configuration model
 from a web UI and a CLI. See [Status](#status) for exactly what is
 implemented and tested.
 
@@ -159,16 +162,20 @@ on Steve's own ESXi lab):
 - App Identification (nDPI) with application, category and group rules.
 - IPS (Suricata, Emerging Threats Open) on chosen allow rules, with
   per-rule profiles and a threat log.
+- Outbound TLS decryption (0.9.9-r04 to r06) with a CA on the appliance:
+  the rules, App Identification and the IPS see inside HTTPS; banking,
+  payment, health and government sites excluded; pinned apps passed
+  through; fail-open. See the guide's caveats first.
 - Static routes, VRFs and VLAN subinterfaces, BGP and OSPF (FRR); a DHCP
   server (Kea).
-- A web UI and a captive configure-and-commit CLI; traffic, threat and
-  system logs with queries; dashboard statistics.
+- A web UI and a captive configure-and-commit CLI; traffic, threat,
+  decryption and system logs with queries; dashboard statistics.
 - Signed in-place upgrades with automatic restore and rollback.
 
 **Not implemented** (from the original plan, and not claimed): high
 availability, a packet-capture test suite, performance testing or tuning,
-external log storage, IPv6, TLS decryption. Nothing has been independently
-security-tested.
+external log storage, IPv6, inbound (server) TLS decryption. Nothing has
+been independently security-tested.
 
 The original build plan, for reference:
 

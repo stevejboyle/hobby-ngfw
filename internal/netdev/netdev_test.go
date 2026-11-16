@@ -106,14 +106,14 @@ func TestNeighbors(t *testing.T) {
 		if got := strings.Join(args, " "); got != "-4 -j neigh show" {
 			t.Fatalf("args %q", got)
 		}
-		return []byte(`[{"dst":"192.168.1.1","dev":"outside","lladdr":"3c:61:04:ff:3e:81","state":["REACHABLE"]},
+		return []byte(`[{"dst":"192.168.1.1","dev":"outside","lladdr":"02:00:5e:10:00:01","state":["REACHABLE"]},
 			{"dst":"10.10.1.50","dev":"inside","state":["FAILED"]}]`), nil
 	}}
 	nb, err := e.Neighbors()
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Neighbor{{"192.168.1.1", "outside", "3c:61:04:ff:3e:81", "REACHABLE"}, {"10.10.1.50", "inside", "", "FAILED"}}
+	want := []Neighbor{{"192.168.1.1", "outside", "02:00:5e:10:00:01", "REACHABLE"}, {"10.10.1.50", "inside", "", "FAILED"}}
 	if len(nb) != 2 || nb[0] != want[0] || nb[1] != want[1] {
 		t.Fatalf("got %+v", nb)
 	}

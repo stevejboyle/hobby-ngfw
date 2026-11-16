@@ -393,6 +393,10 @@ func (f *fakeLogs) Traffic(n int, q string) ([]logs.Traffic, error) {
 	f.q = q
 	return []logs.Traffic{{Rule: "allow-web", Action: "allow", Src: "10.10.1.50", DPort: 443}}, nil
 }
+func (f *fakeLogs) Decryption(n int, q string) ([]logs.Decryption, error) {
+	f.q = q
+	return []logs.Decryption{{Rule: "users-out", Decision: "excluded", ServerName: "www.bank.example", Src: "10.10.1.50", DPort: 443}}, nil
+}
 func (f *fakeLogs) Threat(n int, q string) ([]logs.Threat, error) {
 	f.q = q
 	return []logs.Threat{{Rule: "inside-out", Action: "block", Severity: "critical", SID: 9900001}}, nil

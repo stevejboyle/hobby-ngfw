@@ -160,7 +160,7 @@ async function refresh() {
 function normalise(c) {
   c = c || {};
   c.system = c.system || { hostname: "", mgmt_interface: "" };
-  for (const k of ["zones", "interfaces", "addresses", "address_groups", "services", "rules", "nat", "routes", "vrfs", "routing", "bgp_neighbors", "ospf_interfaces", "prefix_lists", "dhcp_servers", "dhcp_reservations", "application_groups", "ips_profiles"]) c[k] = c[k] || [];
+  for (const k of ["zones", "interfaces", "addresses", "address_groups", "services", "rules", "nat", "routes", "vrfs", "routing", "bgp_neighbors", "ospf_interfaces", "prefix_lists", "dhcp_servers", "dhcp_reservations", "application_groups", "ips_profiles", "decryption_rules", "decryption_profiles", "decryption_exclusions"]) c[k] = c[k] || [];
   c.system.ips_disabled_signatures = c.system.ips_disabled_signatures || [];
   return c;
 }
@@ -864,7 +864,8 @@ async function pagePolicy() {
   return h("div", {},
     h("div", { class: "page-head" }, h("h1", {}, "Policy"), h("span", { class: "spacer" }),
       h("button", { onclick: previewRuleset }, "Preview ruleset")),
-    listSection(ruleSpec()));
+    listSection(ruleSpec()),
+    listSection(decryptRuleSpec()));
 }
 
 async function previewRuleset() {
@@ -880,7 +881,8 @@ const pageNat = () => h("div", {}, h("div", { class: "page-head" }, h("h1", {}, 
 const pageObjects = async () => {
   await appCatalog();
   return h("div", {}, h("div", { class: "page-head" }, h("h1", {}, "Objects")),
-    listSection(addressSpec()), listSection(groupSpec()), listSection(serviceSpec()), listSection(appGroupSpec()), listSection(ipsProfileSpec()));
+    listSection(addressSpec()), listSection(groupSpec()), listSection(serviceSpec()), listSection(appGroupSpec()), listSection(ipsProfileSpec()),
+    listSection(decryptProfileSpec()), listSection(decryptExclusionSpec()));
 };
 
 const IPS_SEVERITIES = ["critical", "major", "minor", "informational"];
@@ -908,6 +910,147 @@ const ipsProfileSpec = () => ({
     return form([name, ...Object.values(sel)], () => ({ name: name.get(), ...Object.fromEntries(IPS_SEVERITIES.map((sev) => [sev, sel[sev].get()])) }));
   },
 });
+
+// ---- TLS decryption ---------------------------------------------------------
+const DECRYPT_DEFAULTS = { bad_certificate: "warn", unsupported: "pass", pinned: "exclude" };
+const decryptProfileNames = () => {
+  const own = (state.cand.decryption_profiles || []).map((p) => p.name);
+  return own.includes("default") ? own : ["default", ...own];
+};
+
+const decryptRuleSpec = () => ({
+  key: "decryption_rules", title: "Decryption rules", singular: "decryption rule", orderable: true,
+  note: "Which TLS connections the firewall decrypts, so the rules above, App Identification and the IPS see inside them. First match wins; anything unmatched isn't decrypted. Built-in and listed exclusions are never decrypted.",
+  blank: () => ({ name: "", from: [], to: [], source: [], destination: [], service: [], action: "decrypt", profile: "" }),
+  columns: [
+    ["Name", (r) => h("strong", {}, r.name)],
+    ["From", (r) => chips(r.from)], ["To", (r) => chips(r.to)],
+    ["Source", (r) => chips(r.source)], ["Destination", (r) => chips(r.destination)],
+    ["Service", (r) => chips(r.service, "443")],
+    ["Action", (r) => h("span", { class: r.action === "decrypt" ? "action-allow" : "muted" }, r.action)],
+    ["Profile", (r) => (r.action === "decrypt" ? h("span", { class: "chip" }, r.profile || "default") : "")],
+  ],
+  form: (r) => {
+    const tcp = state.cand.services.filter((x) => x.protocol === "tcp").map((x) => x.name);
+    const f = {
+      name: textField("Name", r.name, { required: true }),
+      action: selectField("Action", r.action, ["decrypt", "no-decrypt"], { hint: "no-decrypt exempts the traffic from the rules below it" }),
+      from: multiField("From zones", r.from, zoneNames()),
+      to: multiField("To zones", r.to, zoneNames()),
+      source: multiField("Source", r.source, addrNames(), { hint: "Addresses and groups" }),
+      destination: multiField("Destination", r.destination, addrNames(), { hint: "Addresses and groups" }),
+      service: multiField("Service", r.service, tcp, { hint: "TCP services; any means port 443" }),
+      profile: selectField("Profile", r.profile || "", [{ value: "", label: "(default)" }, ...decryptProfileNames()],
+        { hint: "What to do with bad certificates, undecryptable and pinned traffic (Objects → Decryption profiles)" }),
+    };
+    return form(Object.values(f), () => ({
+      name: f.name.get(), from: f.from.get(), to: f.to.get(), source: f.source.get(), destination: f.destination.get(),
+      service: f.service.get(), action: f.action.get(), profile: f.action.get() === "decrypt" ? f.profile.get() : "",
+    }));
+  },
+});
+
+const decryptProfileSpec = () => ({
+  key: "decryption_profiles", title: "Decryption profiles", singular: "decryption profile",
+  note: "What decryption does when the usual doesn't apply. The built-in default: a site with a bad certificate is shown to the browser as untrusted (it warns, as without the firewall); traffic that can't be decrypted passes through; a client that rejects the firewall's certificate (a pinned app) is passed through from then on; QUIC is blocked so browsers use TLS.",
+  blank: () => ({ name: "", bad_certificate: "", unsupported: "", pinned: "", allow_quic: false }),
+  columns: [
+    ["Name", (p) => h("strong", {}, p.name)],
+    ...[["Bad certificate", "bad_certificate"], ["Can't decrypt", "unsupported"], ["Pinned apps", "pinned"]].map(([t, k]) => [t, (p) => {
+      const a = p[k] || DECRYPT_DEFAULTS[k];
+      return h("span", { class: a === "block" ? "action-deny" : "", title: p[k] ? "" : "from the default profile" }, a);
+    }]),
+    ["QUIC", (p) => (p.allow_quic ? "allowed" : h("span", { class: "muted" }, "blocked"))],
+  ],
+  form: (p) => {
+    const name = textField("Name", p.name, { required: true, placeholder: "strict" });
+    const bad = selectField("Bad server certificate", p.bad_certificate || "", [{ value: "", label: "(default: warn)" }, "warn", "block"],
+      { hint: "warn: the browser shows its own warning; block: refuse" });
+    const uns = selectField("Can't be decrypted", p.unsupported || "", [{ value: "", label: "(default: pass)" }, "pass", "block"],
+      { hint: "Old TLS, client certificates, not TLS, encrypted client hello" });
+    const pin = selectField("Client rejects the certificate", p.pinned || "", [{ value: "", label: "(default: exclude)" }, "exclude", "block"],
+      { hint: "exclude: pass that server through from then on (24 h)" });
+    const quic = checkField("Let QUIC (UDP 443) through undecrypted", !!p.allow_quic);
+    return form([name, bad, uns, pin, quic], () => ({ name: name.get(), bad_certificate: bad.get(), unsupported: uns.get(), pinned: pin.get(), allow_quic: quic.get() }));
+  },
+});
+
+const decryptExclusionSpec = () => ({
+  key: "decryption_exclusions", title: "Decryption exclusions", singular: "decryption exclusion",
+  note: "Server names never decrypted, on top of SJB-OS's built-in list (banking, payment, health, government). bank.example covers it and everything under it; *.bank.example only what's under it.",
+  blank: () => ({ name: "", domains: [] }),
+  columns: [["Name", (e) => h("strong", {}, e.name)], ["Server names", (e) => chips(e.domains, "none")]],
+  form: (e) => {
+    const name = textField("Name", e.name, { required: true, placeholder: "our-bank" });
+    const domains = listField("Server names", e.domains, "comma-separated, e.g. bank.example, *.pay.example");
+    return form([name, domains], () => ({ name: name.get(), domains: domains.get().map((d) => d.toLowerCase()) }));
+  },
+});
+
+async function pageDecryption() {
+  const st = await api("GET", "decryption");
+  let learned = [];
+  try { learned = await api("GET", "decryption/learned"); } catch (e) { /* tlsd not running */ }
+  const ca = st.ca || {};
+  const when = (t) => (t && !t.startsWith("0001") ? new Date(t).toLocaleDateString() : "");
+  const gen = h("button", { class: ca.present ? "" : "primary", onclick: () => confirmDialog(ca.present ? "Replace the decryption CA?" : "Generate a decryption CA?",
+    ca.present ? "Clients that trust the current CA must be given the new certificate, or decrypted sites will fail on them." :
+      "SJB-OS makes a CA on the firewall. Its private key never leaves it. Install the certificate on the clients you decrypt.",
+    async () => { const r = await api("POST", "decryption/ca/generate", {}); toast(`New CA, fingerprint ${r.fingerprint.slice(0, 23)}…`); route(); },
+    ca.present ? "Replace" : "Generate", ca.present) }, ca.present ? "Generate a new CA" : "Generate CA");
+  const imp = h("button", { onclick: () => {
+    const cert = textArea("CA certificate (PEM)", "", { placeholder: "-----BEGIN CERTIFICATE-----" });
+    const key = textArea("Private key (PEM, unencrypted)", "", { placeholder: "-----BEGIN PRIVATE KEY-----" });
+    modal("Import a CA", h("div", {},
+      h("p", { class: "muted small" }, "Your own CA (a subordinate CA of your PKI is best). The key stays on the firewall and is never shown again."),
+      cert.node, key.node), { submit: "Import", wide: true, onSubmit: async () => {
+        const r = await api("POST", "decryption/ca/import", { cert: cert.get(), key: key.get() });
+        toast(`CA imported: ${r.subject}`); route();
+      } });
+  } }, "Import a CA");
+  const counts = st.counts || {};
+  const decisions = ["decrypted", "would-decrypt", "excluded", "learned", "passed", "blocked", "failed"];
+  return h("div", {},
+    h("div", { class: "page-head" }, h("h1", {}, "Decryption"), h("span", { class: "spacer" }), imp, gen),
+    h("p", { class: "tagline" }, "Sealed parcels are opened at the border, then sealed again."),
+    h("div", { class: "cards" },
+      card("State", stateBadge(st.state), st.state_detail || ""),
+      card("CA", ca.present ? (ca.source === "imported" ? "imported" : "generated") : h("span", { class: "muted" }, "none"),
+        ca.present ? `valid until ${when(ca.not_after)}` : "generate or import one"),
+      card("Connections", String(st.active || 0), "being handled now"),
+      card("Learned", String(st.learned || 0), "pinned servers passed through"),
+      card("vCPU", String(st.cpus || "?"), st.cpus < 4 ? "give the VM 4 for decryption" : "4 recommended"),
+    ),
+    h("section", { class: "panel" }, h("h2", {}, "Decryption CA"),
+      ca.present ? h("div", {},
+        h("p", {}, ca.subject),
+        h("p", { class: "mono small" }, "SHA-256 " + ca.fingerprint),
+        h("p", {}, h("a", { href: "/ui/api/decryption/ca.crt", download: "sjb-os-decryption-ca.crt" }, "Download the certificate"),
+          h("span", { class: "muted small" }, " to install as a trusted root on the clients you decrypt; check the fingerprint on each.")))
+        : h("p", { class: "muted" }, "No CA yet: until there is one, connections pass through undecrypted.")),
+    h("section", { class: "panel" }, h("h2", {}, "Rules and exclusions"),
+      (st.rules || []).length ? chips(st.rules) : h("p", { class: "muted" }, "No decryption rules. Add one on the Policy page (Decryption rules), or in the CLI: set decryption-rule NAME from inside to outside action decrypt."),
+      h("p", { class: "muted small" }, `Built-in exclusions (banking, payment, health, government): ${st.builtin_exclusions ? "on" : "off"}. Add your own on the Objects page.`)),
+    h("section", { class: "panel" }, h("h2", {}, "Since tlsd started"),
+      h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, decisions.map((d) => h("th", {}, d)))),
+        h("tbody", {}, h("tr", {}, decisions.map((d) => h("td", { class: "mono" }, String(counts[d] || 0))))))),
+      h("p", { class: "muted small" }, "Each connection is in Logs → Decryption: the server name and what happened, never what was inside.")),
+    h("section", { class: "panel" }, h("div", { class: "page-head" }, h("h2", {}, "Learned (pinned) servers"), h("span", { class: "spacer" }),
+      learned.length ? h("button", { onclick: () => confirmDialog("Decrypt these servers again?", "Their clients may fail again, and be learned again.",
+        async () => { const r = await api("POST", "decryption/learned/clear", {}); toast(`${r.cleared} forgotten`); route(); }, "Clear") }, "Clear") : null),
+      learned.length ? h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, ["Server name", "Address", "Passed through until"].map((t) => h("th", {}, t)))),
+        h("tbody", {}, learned.map((e) => h("tr", {}, h("td", {}, e.server_name), h("td", { class: "mono" }, e.ip), h("td", {}, new Date(e.expires).toLocaleString()))))))
+        : h("p", { class: "muted" }, "None: every client accepted the firewall's certificate.")),
+    h("section", { class: "panel" }, h("h2", {}, "Before you decrypt"),
+      h("ul", { class: "small" },
+        h("li", {}, "Decrypting other people's traffic can be unlawful without their knowledge or consent. Decrypt only devices you own or run, for users who have been told."),
+        h("li", {}, "The firewall sees passwords, messages and personal data in the clear while it passes them on. Exclusions reduce this; the built-in list is not complete."),
+        h("li", {}, "Anyone with the CA's key can impersonate any site to clients that trust it. It sits on the VM's disk: VM snapshots, backups and clones carry it."),
+        h("li", {}, "Pinned apps, client certificates, most Android apps and encrypted client hello can't be decrypted; they pass through."),
+        h("li", {}, "SJB-OS is an experimental lab demonstration, not a security product."))));
+}
 
 const appGroupSpec = () => ({
   key: "application_groups", title: "Application groups", singular: "application group",
@@ -1264,7 +1407,7 @@ state.apps = { q: "" };
 
 // stateBadge shows what an inspection engine does to traffic now.
 function stateBadge(state) {
-  const cls = { inspecting: "action-allow", classifying: "action-allow", loading: "action-reset", starting: "action-deny", unavailable: "action-deny" }[state] || "muted";
+  const cls = { inspecting: "action-allow", classifying: "action-allow", decrypting: "action-allow", observing: "action-reset", loading: "action-reset", starting: "action-deny", unavailable: "action-deny", "no-ca": "action-deny" }[state] || "muted";
   return h("span", { class: cls }, state ? state[0].toUpperCase() + state.slice(1) : "?");
 }
 
@@ -1336,6 +1479,7 @@ function saveCols(cols, key = COLS_KEY) {
   try { localStorage.setItem(key, JSON.stringify(cols)); } catch (e) { /* not remembered, still applied */ }
 }
 const THREAT_COLS_KEY = "sjb.logs.threat-columns";
+const DECRYPT_COLS_KEY = "sjb.logs.decryption-columns";
 
 async function pageLogs() {
   const L = state.logs;
@@ -1352,15 +1496,22 @@ async function pageLogs() {
     const tknown = new Set(c.threat_columns.map((x) => x.name));
     L.tcols = loadCols(c.threat_default, THREAT_COLS_KEY).filter((n) => tknown.has(n));
     if (!L.tcols.length) L.tcols = c.threat_default.slice();
+    L.dcolDefs = c.decryption_columns;
+    L.dcolDefault = c.decryption_default;
+    const dknown = new Set(c.decryption_columns.map((x) => x.name));
+    L.dcols = loadCols(c.decryption_default, DECRYPT_COLS_KEY).filter((n) => dknown.has(n));
+    if (!L.dcols.length) L.dcols = c.decryption_default.slice();
   }
   // The column picker works on the traffic or the threat columns.
   const threat = L.kind === "threat";
+  const dec = L.kind === "decryption";
   const C = threat
     ? { defs: L.tcolDefs, def: L.tcolDefault, get: () => L.tcols, set: (v) => { L.tcols = v; saveCols(v, THREAT_COLS_KEY); } }
+    : dec ? { defs: L.dcolDefs, def: L.dcolDefault, get: () => L.dcols, set: (v) => { L.dcols = v; saveCols(v, DECRYPT_COLS_KEY); } }
     : { defs: L.colDefs, def: L.colDefault, get: () => L.cols, set: (v) => { L.cols = v; saveCols(v); } };
   const view = h("div");
   let rows = [];
-  const draw = () => view.replaceChildren(L.kind === "traffic" ? trafficTable(rows) : threat ? threatTable(rows) : systemTable(rows));
+  const draw = () => view.replaceChildren(L.kind === "traffic" ? trafficTable(rows) : threat ? threatTable(rows) : dec ? decryptionTable(rows) : systemTable(rows));
   const load = async () => {
     try {
       rows = await api("GET", `logs/${L.kind}?n=${L.n}&q=${encodeURIComponent(L.q)}`);
@@ -1370,7 +1521,7 @@ async function pageLogs() {
     }
   };
   const tab = (kind, label) => h("button", { class: L.kind === kind ? "active" : "", onclick: () => { if (L.kind !== kind) { L.kind = kind; L.q = ""; } route(); } }, label);
-  const search = h("input", { value: L.q, placeholder: L.kind === "traffic" ? "e.g. zone = inside and dst = 4.2.2.2" : threat ? "e.g. severity = critical and action = block" : "e.g. source = sshd and message ~ failed", "aria-label": "Search the log", class: "log-query" });
+  const search = h("input", { value: L.q, placeholder: L.kind === "traffic" ? "e.g. zone = inside and dst = 4.2.2.2" : threat ? "e.g. severity = critical and action = block" : dec ? "e.g. decision = learned or server_name ~ example.com" : "e.g. source = sshd and message ~ failed", "aria-label": "Search the log", class: "log-query" });
   // Query help: fields of this log and the operators.
   const help = h("div", { class: "panel query-help" + (L.helping ? "" : " hidden") },
     h("p", {}, h("strong", {}, "Search: "), "plain words match anywhere; or ", h("code", {}, "field op value"),
@@ -1382,6 +1533,7 @@ async function pageLogs() {
     h("p", {}, h("strong", {}, "Examples: "), (L.kind === "traffic"
       ? ["zone = inside and dst = 4.2.2.2", "app ~ tube or category = media", "action != allow and dport = 22", "type = end and bytes > 1000000"]
       : threat ? ["severity = critical", "action = block and src = 10.0.0.0/8", "signature ~ trojan", "rule = inside-out and sid = 2100498"]
+      : dec ? ["decision = decrypted", "decision = learned", "server_name ~ example.com", "decision = blocked and src = 10.0.0.0/8"]
       : ["source = sshd and message ~ failed", "level = error", "source = ngfwd and message = commit"])
       .flatMap((ex, i) => [i ? " · " : null, h("button", { class: "link mono", onclick: () => { L.q = ex; route(); } }, ex)])),
     h("div", { class: "field-grid" }, ((L.fields && L.fields[L.kind]) || []).map((f) => h("div", {}, h("code", {}, f.name), " ", h("span", { class: "muted small" }, f.help)))));
@@ -1418,7 +1570,7 @@ async function pageLogs() {
   await load();
   return h("div", {},
     h("div", { class: "page-head" }, h("h1", {}, "Logs"),
-      h("span", { class: "seg" }, tab("traffic", "Data plane (traffic)"), tab("threat", "Threats (IPS)"), tab("system", "Management (system)"))),
+      h("span", { class: "seg" }, tab("traffic", "Data plane (traffic)"), tab("threat", "Threats (IPS)"), tab("decryption", "Decryption (TLS)"), tab("system", "Management (system)"))),
     h("p", { class: "tagline" }, "The guard's notebook, newest entries first."),
     h("div", { class: "row panel" },
       h("label", {}, "Search", search),
@@ -1515,6 +1667,33 @@ function threatTable(rows) {
   return h("div", { class: "table-wrap" }, h("table", {},
     h("thead", {}, h("tr", {}, L.tcols.map((c) => h("th", { title: defs.get(c).help }, defs.get(c).title)))),
     h("tbody", {}, rows.map((r) => h("tr", {}, L.tcols.map((c) => cell[c](r)))))));
+}
+
+function decryptionTable(rows) {
+  if (!rows.length) {
+    return h("p", { class: "empty panel" }, "Nothing logged yet. Connections that decryption rules cover write here (Policy → Decryption rules).");
+  }
+  const L = state.logs;
+  const defs = new Map(L.dcolDefs.map((c) => [c.name, c]));
+  const filterBy = (field, v) => (v === undefined || v === null || v === "" || v === 0 ? "" :
+    h("button", { class: "link", title: `Add ${field} = ${v} to the search`, onclick: () => { state.logs.q = addCondition(state.logs.q, field, v); route(); } }, String(v)));
+  const decClass = { decrypted: "action-allow", blocked: "action-deny", failed: "action-deny", learned: "action-reset" };
+  const cell = {
+    time: (r) => h("td", { class: "time" }, fmtTime(r.time)),
+    rule: (r) => h("td", {}, filterBy("rule", r.rule)),
+    decision: (r) => h("td", {}, h("span", { class: decClass[r.decision] || "muted" }, filterBy("decision", r.decision))),
+    reason: (r) => h("td", { class: "small" }, r.reason || ""),
+    server_name: (r) => h("td", {}, filterBy("server_name", r.server_name)),
+    src: (r) => h("td", { class: "mono" }, filterBy("src", r.src)),
+    sport: (r) => h("td", { class: "mono" }, filterBy("sport", r.sport)),
+    dst: (r) => h("td", { class: "mono" }, filterBy("dst", r.dst)),
+    dport: (r) => h("td", { class: "mono" }, filterBy("dport", r.dport)),
+    tls: (r) => h("td", {}, r.tls || ""),
+    alpn: (r) => h("td", {}, r.alpn || ""),
+  };
+  return h("div", { class: "table-wrap" }, h("table", {},
+    h("thead", {}, h("tr", {}, L.dcols.map((c) => h("th", { title: defs.get(c).help }, defs.get(c).title)))),
+    h("tbody", {}, rows.map((r) => h("tr", {}, L.dcols.map((c) => cell[c](r)))))));
 }
 
 function systemTable(rows) {
@@ -1653,7 +1832,7 @@ function waitForUpgrade(from) {
 // ---- router ----------------------------------------------------------------
 const pages = {
   dashboard: pageDashboard, policy: pagePolicy, nat: pageNat, objects: pageObjects,
-  network: pageNetwork, routing: pageRouting, dhcp: pageDHCP, apps: pageApps, ips: pageIPS, tags: pageTags, revisions: pageRevisions, logs: pageLogs, system: pageSystem,
+  network: pageNetwork, routing: pageRouting, dhcp: pageDHCP, apps: pageApps, ips: pageIPS, decryption: pageDecryption, tags: pageTags, revisions: pageRevisions, logs: pageLogs, system: pageSystem,
 };
 
 async function route() {
@@ -1670,7 +1849,7 @@ async function route() {
   } catch (e) {
     if (e.status !== 401) $("#main").replaceChildren(h("div", { class: "panel" }, errorBox(e)));
   }
-  const titles = { dhcp: "DHCP", apps: "Applications", ips: "IPS", network: "Interfaces", system: "Administration" };
+  const titles = { dhcp: "DHCP", apps: "Applications", ips: "IPS", decryption: "Decryption", network: "Interfaces", system: "Administration" };
   document.title = `SJB-OS · ${titles[name] || name[0].toUpperCase() + name.slice(1)}`;
 }
 

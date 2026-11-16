@@ -59,6 +59,11 @@ const shellHelp = `SJB-OS commands:
                               signatures (default: the last hour)
   show ips                    IPS: engine, signatures (version, count, last
                               update), rules inspected
+  show decryption             TLS decryption: state, CA, rules, connections
+  show decryption ca          the decryption CA's certificate (PEM) and
+                              fingerprint, to install on clients
+  show decryption learned     servers passed through because their clients
+                              rejected the firewall's certificate (pinned)
   show api-keys               tag API keys (name, scopes, key)
   show log traffic [N] [TEXT] data-plane log: connections matching rules with
                               logging on (newest first; default 50)
@@ -69,6 +74,9 @@ const shellHelp = `SJB-OS commands:
   show log threat [N] [TEXT]  IPS log: signature matches on rules with an
                               ips-profile, blocked or alerted (columns and
                               where work as for traffic)
+  show log decryption [N] [TEXT]
+                              decryption log: what tlsd did with each
+                              connection (decrypted, excluded, passed...)
   show log system [N] [TEXT]  management log: commits, logins, tags, upgrades
 
   load                        paste a whole config (YAML); finish with a line
@@ -84,6 +92,13 @@ const shellHelp = `SJB-OS commands:
   tags unregister IP TAG...
 
   request ips update          download the latest IPS signatures now
+  request decryption ca generate
+                              make a new decryption CA (clients must then
+                              trust its certificate: show decryption ca)
+  request decryption ca import
+                              paste your own CA certificate and key (PEM)
+  request decryption learned clear
+                              decrypt the learned (pinned) servers again
   ping HOST [COUNT]           ping through the forwarding table
   passwd                      change your password (SSH, console and web UI)
   configure                   configuration mode: set, delete, move, rename
@@ -390,10 +405,17 @@ func runShellLine(line string, in io.Reader) error {
 	case "commit", "confirm", "rollback", "tags", "sjb":
 		return dispatch(cmd, rest)
 	case "request":
-		if len(rest) == 2 && rest[0] == "ips" && rest[1] == "update" {
+		switch strings.Join(rest, " ") {
+		case "ips update":
 			return requestIPSUpdate()
+		case "decryption ca generate":
+			return requestDecryptionCAGenerate(in)
+		case "decryption ca import":
+			return requestDecryptionCAImport(in)
+		case "decryption learned clear":
+			return requestDecryptionLearnedClear()
 		}
-		return fmt.Errorf("request ips update")
+		return fmt.Errorf("request ips update | decryption ca generate | decryption ca import | decryption learned clear")
 	case "ping":
 		return pingCmd(rest)
 	case "passwd":
@@ -456,6 +478,12 @@ func showCmd(args []string) error {
 		return showAppCatalog(q)
 	case what == "ips" && len(rest) == 0:
 		return showIPS()
+	case what == "decryption" && len(rest) == 0:
+		return showDecryption()
+	case what == "decryption" && len(rest) == 1 && rest[0] == "ca":
+		return showDecryptionCA()
+	case what == "decryption" && len(rest) == 1 && rest[0] == "learned":
+		return showDecryptionLearned()
 	case what == "statistics" && len(rest) <= 1:
 		w := "1h"
 		if len(rest) == 1 {
@@ -696,14 +724,17 @@ func printStaticRoutes() error {
 // showLog prints the traffic or system log as a table, newest first.
 func showLog(args []string) error {
 	kind := args[0]
-	if kind != "traffic" && kind != "threat" && kind != "system" {
-		return fmt.Errorf("show log traffic, show log threat or show log system")
+	if kind != "traffic" && kind != "threat" && kind != "decryption" && kind != "system" {
+		return fmt.Errorf("show log traffic, show log threat, show log decryption or show log system")
 	}
 	n, q := 50, ""
 	cols := logs.DefaultTrafficColumns
 	parseCols := logs.ParseColumns
-	if kind == "threat" {
+	switch kind {
+	case "threat":
 		cols, parseCols = logs.DefaultThreatColumns, logs.ParseThreatColumns
+	case "decryption":
+		cols, parseCols = logs.DefaultDecryptionColumns, logs.ParseDecryptionColumns
 	}
 	rest := args[1:]
 	for i := 0; i < len(rest); i++ {
@@ -768,6 +799,18 @@ func showLog(args []string) error {
 			}
 			fmt.Fprintln(tw, strings.Join(row, "\t"))
 		}
+	}
+	if kind == "decryption" {
+		var es []logs.Decryption
+		if err := json.Unmarshal(out, &es); err != nil {
+			return err
+		}
+		if len(es) == 0 {
+			fmt.Println("no decryption log entries (connections decryption rules cover write here)")
+			return nil
+		}
+		table(len(es), func(i int, c string) string { return es[i].Value(c) }, func(i int) time.Time { return es[i].Time })
+		return nil
 	}
 	if kind == "threat" {
 		var es []logs.Threat

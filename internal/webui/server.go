@@ -102,7 +102,9 @@ func New(d *daemon.Daemon, o Options) http.Handler {
 	mux.HandleFunc("GET /ui/api/logs/traffic/columns", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		reply(w, map[string]any{"columns": logs.TrafficColumns, "default": logs.DefaultTrafficColumns,
 			"threat_columns": logs.ThreatColumns, "threat_default": logs.DefaultThreatColumns,
-			"fields": map[string]any{"traffic": logs.TrafficSchema.Fields(), "threat": logs.ThreatSchema.Fields(), "system": logs.SystemSchema.Fields()}}, nil)
+			"decryption_columns": logs.DecryptionColumns, "decryption_default": logs.DefaultDecryptionColumns,
+			"fields": map[string]any{"traffic": logs.TrafficSchema.Fields(), "threat": logs.ThreatSchema.Fields(),
+				"decryption": logs.DecryptionSchema.Fields(), "system": logs.SystemSchema.Fields()}}, nil)
 	}))
 	mux.HandleFunc("GET /ui/api/stats", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		win := r.URL.Query().Get("window")
@@ -122,6 +124,62 @@ func New(d *daemon.Daemon, o Options) http.Handler {
 	mux.HandleFunc("POST /ui/api/ips/update", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		v, err := s.d.UpdateIPS(r.Context())
 		reply(w, v, err)
+	}))
+	mux.HandleFunc("GET /ui/api/decryption", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+		reply(w, s.d.Decryption(), nil)
+	}))
+	mux.HandleFunc("GET /ui/api/decryption/ca", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+		reply(w, s.d.DecryptionCA(), nil)
+	}))
+	// The CA certificate as a file, to install on clients.
+	mux.HandleFunc("GET /ui/api/decryption/ca.crt", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+		ca := s.d.DecryptionCA()
+		if !ca.Present {
+			fail(w, http.StatusNotFound, "no decryption CA yet")
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-x509-ca-cert")
+		w.Header().Set("Content-Disposition", `attachment; filename="sjb-os-decryption-ca.crt"`)
+		io.WriteString(w, ca.PEM)
+	}))
+	mux.HandleFunc("POST /ui/api/decryption/ca/generate", s.auth(func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+		v, err := s.d.GenerateDecryptionCA(s.author(ss))
+		if err != nil {
+			daemonFail(w, err)
+			return
+		}
+		reply(w, v, nil)
+	}))
+	mux.HandleFunc("POST /ui/api/decryption/ca/import", s.auth(func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+		var req struct {
+			Cert string `json:"cert"`
+			Key  string `json:"key"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := s.d.ImportDecryptionCA(s.author(ss), []byte(req.Cert), []byte(req.Key))
+		if err != nil {
+			daemonFail(w, err)
+			return
+		}
+		reply(w, v, nil)
+	}))
+	mux.HandleFunc("GET /ui/api/decryption/learned", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+		v, err := s.d.DecryptionLearned()
+		if err != nil {
+			daemonFail(w, err)
+			return
+		}
+		reply(w, v, nil)
+	}))
+	mux.HandleFunc("POST /ui/api/decryption/learned/clear", s.auth(func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+		n, err := s.d.ClearDecryptionLearned(s.author(ss))
+		if err != nil {
+			daemonFail(w, err)
+			return
+		}
+		reply(w, map[string]int{"cleared": n}, nil)
 	}))
 	mux.HandleFunc("GET /ui/api/routing/{what}", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		v, err := s.d.RoutingStatus(r.PathValue("what"), r.URL.Query().Get("vrf"))
@@ -588,8 +646,15 @@ func (s *server) logs(w http.ResponseWriter, r *http.Request, _ *session, _ stri
 			th = []logs.Threat{}
 		}
 		v = th
+	case "decryption":
+		var de []logs.Decryption
+		de, err = s.o.Logs.Decryption(n, q)
+		if de == nil {
+			de = []logs.Decryption{}
+		}
+		v = de
 	default:
-		fail(w, http.StatusNotFound, "logs are traffic, threat or system")
+		fail(w, http.StatusNotFound, "logs are traffic, threat, decryption or system")
 		return
 	}
 	if errors.Is(err, logs.ErrQuery) {

@@ -84,7 +84,7 @@ func (d *Daemon) syncDecryptLocked(loaded bool) []string {
 	if n := d.cpus(); n < MinDecryptCPUs {
 		warns = append(warns, fmt.Sprintf("TLS decryption on a VM with %d vCPU: give it %d (each decrypted byte is decrypted and encrypted again, and inspected)", n, MinDecryptCPUs))
 	}
-	if !decrypt.ReadCAInfo(d.dec.caDir).Present {
+	if !d.DecryptionCA().Present {
 		warns = append(warns, "no decryption CA yet: `request decryption ca generate` (or import one); until then connections pass through undecrypted")
 	}
 	if DecryptMode == decrypt.ModeObserve {
@@ -197,7 +197,7 @@ func (d *Daemon) Decryption() DecryptionStatus {
 			st.Rules = append(st.Rules, fmt.Sprintf("%s (%s)", r.Name, r.Action))
 		}
 	}
-	st.CA = decrypt.ReadCAInfo(d.dec.caDir)
+	st.CA = d.DecryptionCA()
 	st.CA.PEM = ""
 	if d.dec.run != nil {
 		st.Installed, st.Running = d.dec.run.Available(), d.dec.run.Running()
@@ -233,7 +233,14 @@ func decryptionState(st DecryptionStatus) (string, string) {
 
 // DecryptionCA describes the CA, with its certificate (PEM) to install on
 // clients. Never the key.
-func (d *Daemon) DecryptionCA() decrypt.CAInfo { return decrypt.ReadCAInfo(d.dec.caDir) }
+func (d *Daemon) DecryptionCA() decrypt.CAInfo {
+	if d.dec.caDir == "" {
+		return decrypt.CAInfo{}
+	}
+	return decrypt.ReadCAInfo(d.dec.caDir)
+}
+
+var errNoDecryption = fmt.Errorf("%w: TLS decryption isn't available on this system", ErrInvalid)
 
 func (d *Daemon) caOwner() decrypt.Owner {
 	if d.dec.run == nil {
@@ -245,6 +252,9 @@ func (d *Daemon) caOwner() decrypt.Owner {
 // GenerateDecryptionCA makes a new decryption CA, replacing any. Clients
 // need the new certificate.
 func (d *Daemon) GenerateDecryptionCA(author string) (decrypt.CAInfo, error) {
+	if d.dec.caDir == "" {
+		return decrypt.CAInfo{}, errNoDecryption
+	}
 	d.mu.Lock()
 	host := "sjb-fw"
 	if d.running != nil && d.running.System.Hostname != "" {
@@ -262,6 +272,9 @@ func (d *Daemon) GenerateDecryptionCA(author string) (decrypt.CAInfo, error) {
 
 // ImportDecryptionCA installs the operator's CA certificate and key.
 func (d *Daemon) ImportDecryptionCA(author string, cert, key []byte) (decrypt.CAInfo, error) {
+	if d.dec.caDir == "" {
+		return decrypt.CAInfo{}, errNoDecryption
+	}
 	info, err := decrypt.ImportCA(d.dec.caDir, cert, key, d.Now(), d.caOwner())
 	if err != nil {
 		return decrypt.CAInfo{}, fmt.Errorf("%w: %v", ErrInvalid, err)
@@ -309,4 +322,3 @@ func (d *Daemon) ClearDecryptionLearned(author string) (int, error) {
 func errNotRunning(err error) error {
 	return fmt.Errorf("%w: tlsd isn't running (decryption rules decrypt nothing, or it is starting): %v", ErrInvalid, err)
 }
-

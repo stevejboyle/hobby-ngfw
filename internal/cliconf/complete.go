@@ -44,7 +44,7 @@ var operational = []Candidate{
 	{"confirm", "accept a commit waiting for confirmation"},
 	{"rollback", "commit an earlier revision again"},
 	{"tags", "register or unregister tagged hosts"},
-	{"request", "request ips update: download the latest IPS signatures"},
+	{"request", "request ips update, request decryption ca generate..."},
 	{"ping", "ping a host through the forwarding table"},
 	{"passwd", "change your password (SSH, console, web UI)"},
 	{"sjb", "a word from the border guard"},
@@ -72,6 +72,7 @@ var showWhat = []Candidate{
 	{"app", "applications seen so far (show app catalog: all it knows)"},
 	{"dhcp", "DHCP servers, or their leases (show dhcp leases)"},
 	{"ips", "IPS engine, signatures and inspected rules"},
+	{"decryption", "TLS decryption: state, CA (show decryption ca), learned servers"},
 	{"statistics", "traffic, applications, hosts and threats over 1h, 24h or 7d"},
 	{"api-keys", "tag API keys"},
 	{"log", "traffic (data plane), threat (IPS) or system (management) log"},
@@ -98,12 +99,15 @@ func OperationalCandidates(words []string) []Candidate {
 	case words[0] == "show" && len(words) == 3 && words[1] == "routes" && words[2] == "vrf":
 		return []Candidate{{"default", ""}, {"mgmt", ""}, {"<name>", "a VRF you defined"}}
 	case words[0] == "show" && len(words) == 2 && words[1] == "log":
-		return []Candidate{{"traffic", "data plane: connections matching rules with logging on"}, {"threat", "IPS: signature matches, blocked or alerted"}, {"system", "management: commits, logins, tags, upgrades"}}
-	case words[0] == "show" && len(words) >= 4 && words[1] == "log" && (words[2] == "traffic" || words[2] == "threat") && words[len(words)-1] == "columns":
+		return []Candidate{{"traffic", "data plane: connections matching rules with logging on"}, {"threat", "IPS: signature matches, blocked or alerted"}, {"decryption", "TLS decryption: what happened to each connection"}, {"system", "management: commits, logins, tags, upgrades"}}
+	case words[0] == "show" && len(words) >= 4 && words[1] == "log" && (words[2] == "traffic" || words[2] == "threat" || words[2] == "decryption") && words[len(words)-1] == "columns":
 		out := []Candidate{{"<col,col,...>", "comma-separated, in this order"}}
 		cols := logs.TrafficColumns
-		if words[2] == "threat" {
+		switch words[2] {
+		case "threat":
 			cols = logs.ThreatColumns
+		case "decryption":
+			cols = logs.DecryptionColumns
 		}
 		for _, c := range cols {
 			out = append(out, Candidate{c.Name, c.Help})
@@ -116,6 +120,8 @@ func OperationalCandidates(words []string) []Candidate {
 			schema = logs.SystemSchema
 		case "threat":
 			schema = logs.ThreatSchema
+		case "decryption":
+			schema = logs.DecryptionSchema
 		}
 		out := []Candidate{{"<field op value>", "e.g. zone = inside; join with and, or, not, ( )"}, {"and", ""}, {"or", ""}, {"not", ""}}
 		for _, f := range schema.Fields() {
@@ -126,10 +132,20 @@ func OperationalCandidates(words []string) []Candidate {
 		return []Candidate{{"<N>", "how many entries (default 50)"}, {"<text>", "only entries containing this"}, {"columns", "choose the columns: columns src,sport,dst,dport,app"}, {"where", "filter: where zone = inside and dst = 4.2.2.2"}}
 	case words[0] == "show" && len(words) >= 3 && words[1] == "log" && words[2] == "threat":
 		return []Candidate{{"<N>", "how many entries (default 50)"}, {"<text>", "only entries containing this"}, {"columns", "choose the columns: columns rule,severity,signature,src"}, {"where", "filter: where severity = critical and action = block"}}
+	case words[0] == "show" && len(words) >= 3 && words[1] == "log" && words[2] == "decryption":
+		return []Candidate{{"<N>", "how many entries (default 50)"}, {"<text>", "only entries containing this"}, {"columns", "choose the columns: columns decision,server_name,src"}, {"where", "filter: where decision = learned and src = 10.10.1.50"}}
+	case words[0] == "show" && len(words) == 2 && words[1] == "decryption":
+		return []Candidate{{"ca", "the CA's certificate, to install on clients"}, {"learned", "servers passed through because clients rejected the firewall's certificate"}}
 	case words[0] == "show" && len(words) == 2 && words[1] == "statistics":
 		return []Candidate{{"1h", "the last hour (default)"}, {"24h", "the last day"}, {"7d", "the last week"}}
 	case words[0] == "request" && len(words) == 1:
-		return []Candidate{{"ips", "the IPS"}}
+		return []Candidate{{"ips", "the IPS"}, {"decryption", "TLS decryption"}}
+	case words[0] == "request" && len(words) == 2 && words[1] == "decryption":
+		return []Candidate{{"ca", "the decryption CA"}, {"learned", "the learned (pinned) servers"}}
+	case words[0] == "request" && len(words) == 3 && words[1] == "decryption" && words[2] == "ca":
+		return []Candidate{{"generate", "make a new CA (replaces the current one)"}, {"import", "paste your own CA certificate and key"}}
+	case words[0] == "request" && len(words) == 3 && words[1] == "decryption" && words[2] == "learned":
+		return []Candidate{{"clear", "decrypt them again"}}
 	case words[0] == "request" && len(words) == 2 && words[1] == "ips":
 		return []Candidate{{"update", "download the latest signatures now"}}
 	case words[0] == "show" && len(words) >= 3 && words[1] == "log":

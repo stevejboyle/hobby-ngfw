@@ -1,0 +1,78 @@
+# TLS decryption: the firewall stands in the middle of chosen HTTPS
+# connections, with a CA the clients trust, so the rules, App
+# Identification and the IPS see what is inside. Decrypt only devices you
+# own or run, for users who have been told (see the guide's caveats).
+#
+# Decryption rules decide what is decrypted (first match wins; anything
+# unmatched is not). The security rules below still decide what is
+# allowed, now on the decrypted traffic. SJB-OS never decrypts its
+# built-in list of banking, payment, health and government sites, nor the
+# server names in decryption_exclusions.
+system:
+  hostname: sjb-fw
+  mgmt_interface: mgmt
+
+zones:
+  - name: inside
+  - name: outside
+
+interfaces:
+  - name: mgmt
+  - name: inside
+    zone: inside
+    address: 10.10.1.1/24
+  - name: outside
+    zone: outside
+
+addresses:
+  - name: printer
+    cidr: 10.10.1.50
+
+services:
+  - name: https
+    protocol: tcp
+    ports: "443"
+  - name: dns
+    protocol: udp
+    ports: "53"
+
+nat:
+  - name: out
+    from: [inside]
+    to: [outside]
+    type: masquerade
+
+decryption_profiles:
+  # Refuse sites whose own certificate is bad instead of letting the
+  # browser warn.
+  - name: strict
+    bad_certificate: block
+
+decryption_exclusions:
+  - name: our-bank
+    domains: ["*.bank.example", pay.example]
+
+decryption_rules:
+  - name: skip-printer
+    source: [printer]
+    action: no-decrypt
+  - name: users-out
+    from: [inside]
+    to: [outside]
+    service: [https]
+    action: decrypt
+    profile: strict
+
+rules:
+  - name: dns
+    from: [inside]
+    to: [outside]
+    service: [dns]
+    action: allow
+  - name: web-out
+    from: [inside]
+    to: [outside]
+    service: [https]
+    action: allow
+    log: true
+    ips_profile: default

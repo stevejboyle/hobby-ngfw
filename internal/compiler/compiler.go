@@ -140,6 +140,9 @@ func Compile(cfg *config.Config, tags map[string][]TagEntry) (*Result, error) {
 
 	c.input(&b)
 	c.ctZones(&b)
+	if err := c.decrypt(&b); err != nil {
+		return nil, err
+	}
 
 	if len(cfg.NAT) > 0 {
 		b.WriteString("\n\tchain postrouting {\n")
@@ -461,8 +464,21 @@ func (c *compiler) rule(r config.Rule) ([]string, error) {
 		return []string{fmt.Sprintf("# rule %q skipped: zone without interfaces", r.Name)}, nil
 	}
 
-	var lines []string
+	// Zone matches: one pair per ingress form, plus the decryption loop's
+	// form of the same zones (see decrypt.go) when traffic is decrypted.
+	type zonePair struct{ from, to string }
+	var pairs []zonePair
 	for _, from := range froms {
+		pairs = append(pairs, zonePair{from, to})
+	}
+	if c.decryptOn() && !(isAny(r.From) && isAny(r.To)) {
+		if in, out, ok := c.loopZones(r.From, r.To); ok {
+			pairs = append(pairs, zonePair{in, out})
+		}
+	}
+	var lines []string
+	for _, zp := range pairs {
+		from, to := zp.from, zp.to
 		for _, src := range c.addrTerms(r.Source) {
 			for _, dst := range c.addrTerms(r.Destination) {
 				for _, svc := range c.svcTerms(r.Service) {
@@ -722,6 +738,10 @@ func (c *compiler) input(b *strings.Builder) {
 	}
 	for _, z := range zoned {
 		fmt.Fprintf(b, "\t\t%s meta l4proto icmp accept\n", z)
+	}
+	if c.decryptOn() {
+		// Connections handed to tlsd (chain decrypt) arrive here.
+		fmt.Fprintf(b, "\t\tmeta mark and 0x%x != 0 meta l4proto tcp accept comment \"decryption\"\n", DecryptMark)
 	}
 	for _, z := range zoned {
 		fmt.Fprintf(b, "\t\t%s counter drop comment \"zone-to-firewall\"\n", z)

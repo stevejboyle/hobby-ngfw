@@ -28,7 +28,7 @@ func TestGolden(t *testing.T) {
 		},
 		"unused-tag": {{IP: netip.MustParseAddr("10.9.9.9")}},
 	}
-	for _, name := range []string{"basic", "lab", "vrf", "routing", "dhcp", "appid", "ips"} {
+	for _, name := range []string{"basic", "lab", "vrf", "routing", "dhcp", "appid", "ips", "decryption"} {
 		t.Run(name, func(t *testing.T) {
 			cfg, err := config.Load(filepath.Join("..", "..", "examples", name+".yaml"))
 			if err != nil {

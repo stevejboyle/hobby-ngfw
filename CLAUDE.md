@@ -94,8 +94,7 @@ border-guard humour (sayings.txt, `fwctl sjb`, page taglines). Keep humour in
 human-facing text only (banners, MOTD, CLI prose, log messages); never
 change machine-readable output for it (JSON fields, the tag API's XML responses,
 exit codes, nft comments, log prefixes). No third-party characters,
-catchphrases or trademarks: before 0.8.0 the product had another name, which
-must not come back. Never name another firewall vendor, its products or its
+catchphrases or trademarks. Never name another firewall vendor, its products or its
 feature trademarks anywhere: code, comments, tests, UI, docs, release notes,
 commit messages. Application identification is "App Identification" in human
 text, and its CLI keyword is `app-identification` (the YAML key `app_id` and
@@ -105,12 +104,10 @@ THIRD_PARTY_NOTICES.md ship in /usr/share/sjb-os/licenses; list any new
 third-party component there. Internal names (`ngfwd`, `fwctl`, `/etc/ngfw`,
 `guestinfo.ngfw.*`) stay as they are.
 
-Pre-0.8.0 names still appear on purpose in a few places: `sjb-migrate` (moves
-an upgraded appliance over and back), the legacy bundle prefix and key-file
-token in `internal/upgrade`, the legacy networkd file name in `nicaddr`, and
-`build.sh LEGACY_LAYOUT=1` (the transition bundle older appliances can
-install). Bundles from 0.8.0-r01 on use the new layout and need 0.8.0 or
-newer.
+Bundles install on 0.8.0 or newer (MIN_FROM); support for upgrading
+appliances from before 0.8.0 was removed in 0.9.9-r03. Upgrade keys load
+from files in today's format only; other lines in the key directory are
+skipped.
 
 ## Architecture in one paragraph
 

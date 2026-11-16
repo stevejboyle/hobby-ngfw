@@ -34,9 +34,6 @@ const MaxBundleSize = 256 << 20
 // KeyPrefix starts every public key line, so a key file says what it is for.
 const KeyPrefix = "sjb-os-upgrade-ed25519"
 
-// legacyKeyPrefix is the token key files had before 0.8.0; still accepted.
-const legacyKeyPrefix = "groot-os-upgrade-ed25519"
-
 // File is one manifest entry. Path is relative to the root filesystem.
 type File struct {
 	Path   string `json:"path"`
@@ -67,10 +64,6 @@ var ErrInvalid = errors.New("invalid upgrade bundle")
 var allowedPrefixes = []string{
 	"usr/local/sbin/",
 	"usr/share/sjb-os/",
-	// The shared directory's name before 0.8.0: the transition bundle
-	// (installable by older versions) ships under it, and it stays an alias
-	// until the move finishes.
-	"usr/share/groot-os/",
 	"etc/systemd/system/",
 	"etc/update-motd.d/",
 	"etc/sysctl.d/",
@@ -109,7 +102,7 @@ func FormatPublicKey(k ed25519.PublicKey, name string) string {
 // ParsePublicKey reads a line written by FormatPublicKey.
 func ParsePublicKey(line string) (PublicKey, error) {
 	f := strings.Fields(line)
-	if len(f) < 2 || (f[0] != KeyPrefix && f[0] != legacyKeyPrefix) {
+	if len(f) < 2 || f[0] != KeyPrefix {
 		return PublicKey{}, fmt.Errorf("not a %s key", KeyPrefix)
 	}
 	b, err := base64.StdEncoding.DecodeString(f[1])
@@ -139,11 +132,11 @@ func LoadKeys(dir string) ([]PublicKey, error) {
 			if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			k, err := ParsePublicKey(line)
-			if err != nil {
-				return nil, fmt.Errorf("%s: %w", m, err)
+			// A line that isn't a key in today's format (a file left by an
+			// older version) adds no trust: skip it.
+			if k, err := ParsePublicKey(line); err == nil {
+				keys = append(keys, k)
 			}
-			keys = append(keys, k)
 		}
 	}
 	if len(keys) == 0 {

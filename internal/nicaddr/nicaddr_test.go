@@ -171,30 +171,3 @@ func TestStartDefersApplying(t *testing.T) {
 		t.Fatalf("applied twice: %q", f.calls)
 	}
 }
-
-// An override written by a version before 0.8.0 is renamed, not rewritten:
-// networkd isn't asked to reconfigure the link for a reworded header.
-func TestLegacyOverrideRenamed(t *testing.T) {
-	f := setup(t)
-	f.addrs["outside"] = "192.0.2.10/24"
-	dep, _ := os.ReadFile(filepath.Join(f.dir, "20-outside.network"))
-	legacy := filepath.Join(f.dir, "10-outside-groot.network")
-	old := strings.Replace(string(Render("outside", "192.0.2.10/24", dep)), "SJB-OS", "OLD-OS", 1)
-	if err := os.WriteFile(legacy, []byte(old), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if !HasOverride(f.dir, "outside") {
-		t.Fatal("legacy override not seen")
-	}
-	if _, err := f.syncer().Sync(map[string]string{"outside": "192.0.2.10/24"}, Commit); err != nil {
-		t.Fatal(err)
-	}
-	if fileExists(legacy) || !fileExists(filepath.Join(f.dir, FileName("outside"))) {
-		t.Fatal("legacy file not renamed")
-	}
-	for _, c := range f.calls {
-		if strings.Contains(c, "outside") {
-			t.Fatalf("networkd asked to reconfigure outside for a header change: %v", f.calls)
-		}
-	}
-}

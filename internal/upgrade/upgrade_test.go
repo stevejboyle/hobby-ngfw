@@ -431,3 +431,23 @@ func TestRollbackOldBackupUsesUpgradeTime(t *testing.T) {
 		t.Fatalf("running %q", run)
 	}
 }
+
+// A key directory may hold files an older version left behind, in a format
+// this one doesn't read: they're skipped (they add no trust), and only a
+// directory with no valid key at all is an error.
+func TestLoadKeysSkipsForeignLines(t *testing.T) {
+	dir := t.TempDir()
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "old.pub"), []byte("some-other-format AAAA old\n"), 0o644)
+	if _, err := LoadKeys(dir); err == nil {
+		t.Fatal("no valid key: want an error")
+	}
+	os.WriteFile(filepath.Join(dir, "release.pub"), []byte(FormatPublicKey(pub, "release")), 0o644)
+	keys, err := LoadKeys(dir)
+	if err != nil || len(keys) != 1 || keys[0].Name != "release" {
+		t.Fatalf("keys %v, %v", keys, err)
+	}
+}

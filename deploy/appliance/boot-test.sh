@@ -18,8 +18,6 @@ SSH_PORT=${SSH_PORT:-2222}
 API_PORT=${API_PORT:-18443}
 UI_PORT=${UI_PORT:-18444}
 SIGNING_KEY=${SIGNING_KEY:-$HOME/.config/sjb-os/upgrade-signing.key}
-# Where the key lived before 0.8.0, if it hasn't been moved.
-[[ -f $SIGNING_KEY ]] || { old=$HOME/.config/groot-os/upgrade-signing.key; [[ -f $old ]] && SIGNING_KEY=$old; }
 SRC=$(cd "$(dirname "$0")/../.." && pwd)
 FAILS=0
 
@@ -45,8 +43,8 @@ qemu-system-x86_64 -m 4096 -smp 2 -cpu max -display none -serial "file:$LOG" \
 QEMU=$!
 trap 'kill $QEMU 2>/dev/null; rm -rf "$WORK"' EXIT
 
-# The console's ready line (images before 0.8.0 print their old name).
-READY='(SJB|GROOT)-OS ready'
+# The console's ready line.
+READY='SJB-OS ready'
 echo "booting (console log: $LOG) ..."
 for _ in $(seq 600); do
 	grep -qE "$READY" "$LOG" 2>/dev/null && break
@@ -82,7 +80,7 @@ retry255() {
 ROOTAUTH=(-i "$WORK/root_key" -o IdentitiesOnly=yes)
 root_run() { retry255 ssh "${SSHOPTS[@]}" "${ROOTAUTH[@]}" -o BatchMode=yes -o PreferredAuthentications=publickey root@127.0.0.1 "$@"; }
 # The admin account: password login, which lands in the captive CLI; "$*"
-# is a CLI command. Images before 0.8.0 call it groot; upgrading renames it.
+# is a CLI command.
 cli_run() { retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" "$*"; }
 
 for _ in $(seq 10); do root_run true && break; sleep 3; done
@@ -99,12 +97,10 @@ else
 	for _ in $(seq 20); do root_run true && break; sleep 3; done
 	root_run true && pass "root logs in with the base image's built-in key (image before 0.9.9)" || fail "root key login"
 fi
-admin_name() { root_run 'getent passwd admin >/dev/null && echo admin || echo groot'; }
-ADMIN=$(admin_name)
+ADMIN=admin
 st=$(cli_run show status)
 [[ $st == *running_revision* ]] && pass "$ADMIN logs in to the captive CLI (show status)" || fail "CLI show status: $st"
 
-OLD_ADMIN=$ADMIN
 if [[ -n $NEWBUNDLE ]]; then
 	BASE=$(root_run cat /etc/ngfw-version)
 	root_run "cat > /tmp/new.upgrade" <"$NEWBUNDLE"
@@ -112,9 +108,7 @@ if [[ -n $NEWBUNDLE ]]; then
 	NEWV=$(root_run cat /etc/ngfw-version)
 	[[ $NEWV != "$BASE" && $out == *"is running"* ]] &&
 		pass "upgraded the $BASE image in place to $NEWV; the checks below test $NEWV" || fail "upgrading to the new bundle: $out"
-	OLD_ADMIN=$ADMIN
-	ADMIN=$(admin_name)
-	if [[ $DEPLOYKEY == 0 && $OLD_ADMIN == "$ADMIN" ]]; then
+	if [[ $DEPLOYKEY == 0 ]]; then
 		# From an image before 0.9.9 (built-in root key): the upgrade keeps
 		# root's access by moving the key to /etc/ngfw and drops the shipped
 		# copy; rolling back puts it where the old version's sshd reads it.
@@ -130,42 +124,30 @@ if [[ -n $NEWBUNDLE ]]; then
 		k=$(root_run 'cat /etc/ngfw-version; test -s /etc/ngfw/root_authorized_keys && echo moved; ls /usr/share/sjb-os/root-keys 2>&1')
 		[[ $k == "$NEWV"*moved*"No such file"* ]] && pass "upgraded to $NEWV again: root's key moved again" || fail "re-upgrade root key: $k / $out"
 	fi
-	if [[ $OLD_ADMIN != "$ADMIN" ]]; then
-		# Moved from the pre-0.8.0 names: same password, new account name,
-		# paths and branding.
-		st=$(cli_run show status)
-		mv=$(root_run 'readlink /usr/share/sjb-os /var/lib/sjb-os; getent passwd groot; id -nG admin; cat /etc/iproute2/rt_protos.d/sjb.conf; ls /etc/iproute2/rt_protos.d')
-		[[ $ADMIN == admin && $st == *running_revision* && $mv == *"/usr/share/groot-os"*"/var/lib/groot-os"* && $mv == *sjbadm* &&
-			$mv == *"222 sjb"* && $mv != *groot.conf* && $mv != *"groot:x"* ]] &&
-			pass "upgrade from $BASE renamed groot to admin (same password), aliased the shared and state directories, route protocol sjb" ||
-			fail "pre-0.8.0 migration: $st / $mv / $(root_run 'journalctl -u ngfwd -b --no-pager -o cat | grep sjb-migrate | tail -8')"
-		# Roll back to the base image's version with a config it can't read
-		# (its fwctl made the backup and recorded no config: the revision
-		# running at the upgrade is found by time). Then upgrade again.
-		script=$'configure\nset application-group rbtest member [ youtube category:vpn ]\ncommit -m "boot test: before rollback to base"\nexit\nexit\n'
-		retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
-		before=$(root_run 'cat /var/lib/ngfw/running')
-		out=$(root_run fwctl upgrade rollback 2>&1)
-		act=
-		for _ in $(seq 15); do
-			act=$(root_run systemctl is-active ngfwd)
-			[[ $act == active ]] && break
-			sleep 2
-		done
-		now=$(root_run 'cat /var/lib/ngfw/running')
-		cfg=$(root_run "cat /var/lib/ngfw/revisions/\$(printf %06d \$(cat /var/lib/ngfw/running)).yaml")
-		ADMIN=$(admin_name)
-		st=$(cli_run show status)
-		[[ $(root_run cat /etc/ngfw-version) == "$BASE" && $act == active && $out == *"config: revision $now is the config that was running at the upgrade"* &&
-			$now == $((before + 1)) && $cfg != *rbtest* && $ADMIN == "$OLD_ADMIN" && $st == *running_revision* && -z $(root_run 'getent passwd admin') ]] &&
-			pass "rollback to $BASE: ngfwd starts on the pre-upgrade config (revision $now), the account is $OLD_ADMIN again (same password)" ||
-			fail "rollback to base $BASE: ngfwd $act, revisions $before -> $now, account $ADMIN: $out"
-		out=$(root_run fwctl upgrade apply /tmp/new.upgrade 2>&1)
-		ADMIN=$(admin_name)
-		st=$(cli_run show status)
-		[[ $(root_run cat /etc/ngfw-version) == "$NEWV" && $ADMIN == admin && $st == *running_revision* ]] &&
-			pass "upgraded to $NEWV again: the move to SJB-OS names runs again cleanly" || fail "second upgrade: $out / $ADMIN / $st"
-	fi
+	# Roll back to the base image's version after a commit, then upgrade
+	# again: the rollback restores the config that was running at the
+	# upgrade (as a new revision), not the later one.
+	script=$'configure\nset application-group rbtest member [ youtube category:vpn ]\ncommit -m "boot test: before rollback to base"\nexit\nexit\n'
+	retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
+	before=$(root_run 'cat /var/lib/ngfw/running')
+	out=$(root_run fwctl upgrade rollback 2>&1)
+	act=
+	for _ in $(seq 15); do
+		act=$(root_run systemctl is-active ngfwd)
+		[[ $act == active ]] && break
+		sleep 2
+	done
+	now=$(root_run 'cat /var/lib/ngfw/running')
+	cfg=$(root_run "cat /var/lib/ngfw/revisions/\$(printf %06d \$(cat /var/lib/ngfw/running)).yaml")
+	st=$(cli_run show status)
+	[[ $(root_run cat /etc/ngfw-version) == "$BASE" && $act == active && $out == *"config: revision $now is the config that was running at the upgrade"* &&
+		$now == $((before + 1)) && $cfg != *rbtest* && $st == *running_revision* ]] &&
+		pass "rollback to $BASE: ngfwd starts on the config that was running at the upgrade (revision $now)" ||
+		fail "rollback to base $BASE: ngfwd $act, revisions $before -> $now: $out"
+	out=$(root_run fwctl upgrade apply /tmp/new.upgrade 2>&1)
+	st=$(cli_run show status)
+	[[ $(root_run cat /etc/ngfw-version) == "$NEWV" && $st == *running_revision* ]] &&
+		pass "upgraded to $NEWV again" || fail "second upgrade: $out / $st"
 fi
 REV0=$(root_run fwctl status | grep -o '"running_revision": [0-9]*' | grep -o '[0-9]*$')
 names=$(root_run "ip -br link" | awk '{print $1}' | tr '\n' ' ')

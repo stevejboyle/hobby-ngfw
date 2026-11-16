@@ -84,18 +84,10 @@ type Networkd struct {
 // FileName is the override file for nic.
 func FileName(nic string) string { return "10-" + nic + "-sjb.network" }
 
-// legacyFileName is what versions before 0.8.0 called it; Sync renames it.
-func legacyFileName(nic string) string { return "10-" + nic + "-groot.network" }
-
-// HasOverride reports whether dir holds an override file for nic (either
-// name).
+// HasOverride reports whether dir holds an override file for nic.
 func HasOverride(dir, nic string) bool {
-	for _, n := range []string{FileName(nic), legacyFileName(nic)} {
-		if _, err := os.Stat(filepath.Join(dir, n)); err == nil {
-			return true
-		}
-	}
-	return false
+	_, err := os.Stat(filepath.Join(dir, FileName(nic)))
+	return err == nil
 }
 
 // sameIgnoringComments compares two networkd files without their comment
@@ -157,12 +149,6 @@ func (n *Networkd) Sync(want map[string]string, mode Mode) ([]State, error) {
 	var changed []string
 	for _, nic := range n.NICs {
 		path := filepath.Join(n.Dir, FileName(nic))
-		// An override written before 0.8.0 keeps working under its new name.
-		if legacy := filepath.Join(n.Dir, legacyFileName(nic)); fileExists(legacy) {
-			if err := os.Rename(legacy, path); err != nil {
-				return nil, err
-			}
-		}
 		have, err := os.ReadFile(path)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return nil, err

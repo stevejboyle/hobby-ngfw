@@ -875,32 +875,14 @@ Debian packages are not part of a bundle: keep them patched as root with
 `apt update && apt upgrade` (the appliance reaches the Debian mirrors over
 the outside link).
 
-### Upgrading to 0.8.0 from an earlier version
+### Appliances older than 0.8.0
 
-0.8.0 renamed the product to SJB-OS. Upgrading an earlier appliance (0.3.0
-or later) with `sjb-os-0.8.0.upgrade` moves it over in place:
+Bundles install on 0.8.0 or newer. An older appliance can't be upgraded in
+place: deploy a new OVA (vSphere 8.0 U1 or later) and move the policy and
+tag registrations over:
 
-- The admin login is renamed to **`admin`**, with the same password and SSH
-  keys (SSH, console and web UI); commit history shows `admin` as the
-  author.
-- Files move to `/usr/share/sjb-os` and `/var/lib/sjb-os`; the services,
-  banners, route protocol name (`proto sjb`) and os-release follow.
-- Rolling back to the earlier version undoes the rename. The old names stay
-  on disk until the next upgrade after 0.8.0, which removes them.
-- The hostname isn't changed: it's in your config (`set system hostname`).
-- Later bundles (0.8.0-r01 and on) install on 0.8.0 or newer only, so an
-  older appliance goes through 0.8.0 first.
-
-### Moving from 0.2.0 or earlier
-
-0.2.0 and earlier have no updater: deploy a new OVA (vSphere 8.0 U1 or
-later) and move the policy and tag registrations over:
-
-1. On the old appliance, save the policy and tag registrations:
-   ```bash
-   sudo fwctl show running > running.yaml
-   sudo cp /var/lib/ngfw/tags.json .
-   ```
+1. On the old appliance, save the policy (`show running`) and, as root, the
+   tag registrations (`/var/lib/ngfw/tags.json`).
 2. Deploy the new OVA with the same networks and settings.
 3. Restore the policy through the new appliance's CLI, and the tags as root:
    ```bash
@@ -1016,9 +998,9 @@ for bundle-only builds (`BUNDLE_ONLY=1 VERSION=x.y.z deploy/appliance/build.sh`)
 which skip the OVA.
 
 Given an older image and a bundle, `boot-test.sh OLD.raw NEW.upgrade`
-upgrades it first and tests the new version; from an image before 0.8.0 it
-also checks the move to the SJB-OS names, rolls back to the image's version
-(the account gets its old name back) and upgrades again.
+upgrades it first and tests the new version, rolls back to the image's
+version after a commit (the config running at the upgrade comes back) and
+upgrades again.
 
 What goes into the image: `rootfs/` is copied over the root filesystem
 (systemd units, first-boot and console scripts, sysctl and sshd settings,

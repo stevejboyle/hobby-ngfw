@@ -181,7 +181,6 @@ func (e *Engine) build(disabled map[int]bool) (Status, error) {
 	if err := writeFile(e.path(RulesFile), rules, 0o644); err != nil {
 		return st, err
 	}
-	os.Remove(e.path("rules/groot.rules")) // its name before 0.8.0
 	st.Built = e.now().UTC()
 	if err := e.saveStatus(st); err != nil {
 		return st, err

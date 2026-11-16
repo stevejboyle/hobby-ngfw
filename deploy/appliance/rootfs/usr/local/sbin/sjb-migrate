@@ -4,133 +4,19 @@
 # `sjb-migrate` after every start; `fwctl upgrade rollback` runs
 # `sjb-migrate undo TARGET` first, so a rollback to an older version gets the
 # setup it expects back.
-#
-# Appliances from before 0.8.0 used other names for the admin account, its
-# group, the shared and state directories and the units (the OLD_* values
-# below). Upgrading from them moves everything to the SJB-OS names; until the
-# old version can no longer be rolled back to, the old directory names stay as
-# the real directories with the new names as aliases, and the old files stay
-# in place. A later upgrade (once the rollback target is 0.8.0 or newer)
-# finishes the move and removes them.
 set -euo pipefail
-USER_NAME=admin
+USER_NAME="admin"
 GROUP=sjbadm
 SHARE=/usr/share/sjb-os
-STATE=/var/lib/sjb-os
 SHIM=/usr/lib/sjb-os/login-shell
 SOCK=/run/ngfw/ngfwd.sock
 ROOT_KEYS=/etc/ngfw/root_authorized_keys
-# Names before 0.8.0.
-OLD_USER=groot
-OLD_GROUP=grootadm
-OLD_SHARE=/usr/share/groot-os
-OLD_STATE=/var/lib/groot-os
-OLD_SHIM_DIR=/usr/lib/groot-os
-OLD_CREDS=/root/groot-credentials
 log() { echo "sjb-migrate: $*"; }
 
 # version_lt A B: A sorts before B (Debian version rules: 0.7.0-r01 < 0.8.0).
 version_lt() { dpkg --compare-versions "$1" lt "$2"; }
 
-# The upgrade state's rollback target ("" when there is none).
-rollback_target() {
-	sed -n 's/.*"rollback_to": *"\([^"]*\)".*/\1/p' "$STATE/upgrades.json" 2>/dev/null | head -1
-}
-
-# alias_dir NEW OLD: the new name points at the old directory (an upgraded
-# appliance), so both versions find their files.
-alias_dir() {
-	local new=$1 old=$2
-	if [[ -d $old && ! -L $old && ! -e $new ]]; then
-		install -d -m 755 "${new%/*}"
-		ln -s "$old" "$new"
-		log "$new -> $old"
-	fi
-}
-
-# end_sessions NAME: usermod won't rename an account with running processes
-# (an open CLI session, its systemd user manager). An upgrade restarts
-# ngfwd anyway, so those sessions would be cut regardless.
-end_sessions() {
-	loginctl terminate-user "$1" 2>/dev/null || true
-	for _ in 1 2 3 4 5; do
-		pgrep -u "$1" >/dev/null || return 0
-		pkill -u "$1" 2>/dev/null || true
-		sleep 1
-	done
-	pkill -KILL -u "$1" 2>/dev/null || true
-	sleep 1
-}
-
-rename_account() {
-	if getent passwd "$OLD_USER" >/dev/null && ! getent passwd "$USER_NAME" >/dev/null; then
-		end_sessions "$OLD_USER"
-		usermod -l "$USER_NAME" "$OLD_USER"
-		getent group "$OLD_USER" >/dev/null && groupmod -n "$USER_NAME" "$OLD_USER"
-		usermod -d "/home/$USER_NAME" -m "$USER_NAME" 2>/dev/null || usermod -d "/home/$USER_NAME" "$USER_NAME"
-		[[ -f /etc/ngfw/web-users ]] && sed -i -e "s/^$OLD_USER /$USER_NAME /" -e '1s/^# [A-Z-]* web UI users/# SJB-OS web UI users/' /etc/ngfw/web-users
-		log "account $OLD_USER renamed to $USER_NAME (same password, keys and home)"
-	fi
-	if getent group "$OLD_GROUP" >/dev/null && ! getent group "$GROUP" >/dev/null; then
-		groupmod -n "$GROUP" "$OLD_GROUP" && log "group $OLD_GROUP renamed to $GROUP"
-	fi
-	if [[ -f $OLD_CREDS && ! -e /root/sjb-credentials ]]; then
-		mv "$OLD_CREDS" /root/sjb-credentials
-	fi
-	# Commit history names the old account as author (web:NAME, NAME).
-	if grep -lqE "\"author\": \"(web:)?$OLD_USER\"" /var/lib/ngfw/revisions/*.json 2>/dev/null; then
-		sed -i -E "s/\"author\": \"(web:)?$OLD_USER\"/\"author\": \"\\1$USER_NAME\"/" /var/lib/ngfw/revisions/*.json
-		log "revision history authors renamed to $USER_NAME"
-	fi
-}
-
-# finish_move: once nothing can roll back to a version that knows only the
-# old names, make the new names the real ones and drop the old files.
-finish_move() {
-	local target
-	# During an upgrade the old fwctl records the rollback target only once
-	# the new version is healthy: look again when it has finished.
-	if grep -q '"result": "in-progress"' "$STATE/upgrades.json" 2>/dev/null; then
-		systemctl -q is-active sjb-migrate-finish.timer 2>/dev/null ||
-			systemd-run --on-active=300 --unit=sjb-migrate-finish --collect --quiet \
-				--description="SJB-OS: finish moving to the new names" /usr/local/sbin/sjb-migrate finish || true
-		return 0
-	fi
-	target=$(rollback_target)
-	[[ -n $target ]] && version_lt "$target" 0.8.0 && return 0
-	[[ -L $SHARE || -L $STATE || -e $OLD_SHIM_DIR || -e /usr/local/sbin/$OLD_USER-cli ]] || return 0
-	# The state directory holds the upgrade lock: move it while holding the
-	# lock, in the background (an upgrade may be finishing right now).
-	if [[ -L $STATE && -d $OLD_STATE ]]; then
-		systemd-run --no-block --collect --quiet --unit=sjb-migrate-state --description="SJB-OS state directory move" \
-			flock -w 900 "$OLD_STATE/upgrade.lock" sh -c "rm '$STATE' && mv '$OLD_STATE' '$STATE'" || true
-	fi
-	if [[ -L $SHARE && -d $OLD_SHARE ]]; then
-		rm "$SHARE" && mv "$OLD_SHARE" "$SHARE"
-	fi
-	rm -f "/usr/local/sbin/$OLD_USER-cli" "/usr/local/sbin/$OLD_USER-migrate" "/usr/local/sbin/$OLD_USER-packages" \
-		"/etc/update-motd.d/10-$OLD_USER" "/etc/iproute2/rt_protos.d/$OLD_USER.conf"
-	if [[ -e /etc/systemd/system/$OLD_USER-ips.service ]]; then
-		rm -f "/etc/systemd/system/$OLD_USER-ips.service" "/etc/systemd/system/multi-user.target.wants/$OLD_USER-ips.service"
-		systemctl daemon-reload
-	fi
-	rm -f "$SHARE/upgrade-keys/$OLD_USER-os-release.pub"
-	rm -rf "$OLD_SHIM_DIR"
-	sed -i "\|^$OLD_SHIM_DIR/|d" /etc/shells
-	log "pre-0.8.0 names removed"
-}
-
 apply() {
-	# Upgraded from before 0.8.0: alias the new directory names first (the
-	# binaries and units look there), then rename the account and group.
-	alias_dir "$SHARE" "$OLD_SHARE"
-	alias_dir "$STATE" "$OLD_STATE"
-	rename_account
-	if systemctl -q is-enabled "$OLD_USER-ips" 2>/dev/null || systemctl -q is-active "$OLD_USER-ips" 2>/dev/null; then
-		systemctl disable --now --quiet "$OLD_USER-ips" || true
-		log "old IPS unit stopped (ngfwd runs sjb-ips)"
-	fi
-
 	# The CLI's admins may use ngfwd's management socket; nobody else.
 	getent group "$GROUP" >/dev/null || { groupadd --system "$GROUP"; log "created group $GROUP"; }
 	id -nG "$USER_NAME" | grep -qw "$GROUP" || { usermod -aG "$GROUP" "$USER_NAME"; log "$USER_NAME added to $GROUP"; }
@@ -155,7 +41,6 @@ SH
 	# Name ngfwd's static-route protocol, so `ip route` shows "proto sjb".
 	install -d -m 755 /etc/iproute2/rt_protos.d
 	[[ -f /etc/iproute2/rt_protos.d/sjb.conf ]] || echo "222 sjb" >/etc/iproute2/rt_protos.d/sjb.conf
-	rm -f "/etc/iproute2/rt_protos.d/$OLD_USER.conf"
 
 	# Branding: VMware Tools reports PRETTY_NAME to vSphere as the guest's
 	# name; ID and VERSION_ID stay Debian's for apt.
@@ -202,16 +87,13 @@ SH
 		rm -f "$SHARE/root-keys/authorized_keys"
 		rmdir "$SHARE/root-keys" 2>/dev/null || true
 	fi
-
-	finish_move
 }
 
-# undo TARGET: before a rollback to version TARGET (no TARGET: assume one
-# from before 0.8.0).
+# undo TARGET: before a rollback to version TARGET (0.8.0 or newer: bundles
+# install on nothing older).
 undo() {
 	local target=${1:-0.0.0}
-	# Every version brings its own IPS unit back up; stop ours, unmask Debian's
-	# for versions without the IPS.
+	# Every version brings its own IPS unit back up; stop ours.
 	if systemctl -q is-enabled sjb-ips 2>/dev/null || systemctl -q is-active sjb-ips 2>/dev/null; then
 		systemctl disable --now --quiet sjb-ips || true
 		log "IPS (sjb-ips) stopped"
@@ -222,42 +104,11 @@ undo() {
 		install -m 644 "$ROOT_KEYS" "$SHARE/root-keys/authorized_keys"
 		log "root SSH key put back in $SHARE/root-keys for $target"
 	fi
-	if ! version_lt "$target" 0.8.0; then
-		return 0 # an SJB-OS version: it sets itself up again as it starts
-	fi
-	[[ -L /etc/systemd/system/suricata.service ]] && systemctl unmask --quiet suricata.service || true
-	# Before 0.8.0 the account, group and route protocol had the old names.
-	local u=$USER_NAME
-	if getent passwd "$USER_NAME" >/dev/null && ! getent passwd "$OLD_USER" >/dev/null; then
-		end_sessions "$USER_NAME"
-		usermod -l "$OLD_USER" "$USER_NAME"
-		getent group "$USER_NAME" >/dev/null && groupmod -n "$OLD_USER" "$USER_NAME"
-		usermod -d "/home/$OLD_USER" -m "$OLD_USER" 2>/dev/null || usermod -d "/home/$OLD_USER" "$OLD_USER"
-		[[ -f /etc/ngfw/web-users ]] && sed -i "s/^$USER_NAME /$OLD_USER /" /etc/ngfw/web-users
-		log "account $USER_NAME renamed back to $OLD_USER for $target"
-	fi
-	getent passwd "$OLD_USER" >/dev/null && u=$OLD_USER
-	getent group "$GROUP" >/dev/null && ! getent group "$OLD_GROUP" >/dev/null && groupmod -n "$OLD_GROUP" "$GROUP"
-	[[ -f /root/sjb-credentials && ! -e $OLD_CREDS ]] && mv /root/sjb-credentials "$OLD_CREDS"
-	rm -f /etc/iproute2/rt_protos.d/sjb.conf
-	# Their fwctl refuses a key directory with a key file format it doesn't
-	# know; theirs is still there.
-	rm -f "$SHARE/upgrade-keys/sjb-os-release.pub"
-	# Versions before App Identification have no appidd: stop it before rolling back.
-	if systemctl -q is-enabled appidd 2>/dev/null; then
-		systemctl disable --now --quiet appidd || true
-		log "App Identification (appidd) disabled"
-	fi
-	# Back to the pre-captive setup: bash and sudo. The old version's own
-	# setup takes them away again if it has the captive CLI.
-	usermod -s /bin/bash "$u"
-	id -nG "$u" | grep -qw sudo || usermod -aG sudo "$u"
-	log "$u has bash and sudo again (captive CLI undone)"
 }
 
 case ${1:-apply} in
 apply) apply ;;
 undo) undo "${2:-}" ;;
-finish) finish_move ;;
-*) echo "usage: sjb-migrate [apply|undo [TARGET-VERSION]|finish]" >&2; exit 2 ;;
+finish) ;; # left over from an earlier version's timer: nothing to do
+*) echo "usage: sjb-migrate [apply|undo [TARGET-VERSION]]" >&2; exit 2 ;;
 esac

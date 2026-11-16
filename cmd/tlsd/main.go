@@ -33,20 +33,6 @@ import (
 	"github.com/stevejboyle/hobby-ngfw/internal/logs"
 )
 
-// Status is what tlsd reports on its socket (GET /v1/status).
-type Status struct {
-	Mode       string           `json:"mode"`
-	Started    time.Time        `json:"started"`
-	CA         decrypt.CAInfo   `json:"ca"`
-	Rules      int              `json:"rules"`
-	Exclusions int              `json:"exclusion_names"`
-	Builtin    bool             `json:"builtin_exclusions"`
-	Counts     map[string]int64 `json:"counts"`
-	Active     int64            `json:"active"`
-	Learned    int              `json:"learned"`
-	LoadError  string           `json:"load_error,omitempty"`
-}
-
 func main() {
 	port := flag.Int("port", compiler.DecryptPort, "port the ruleset hands connections to (tproxy)")
 	loopPort := flag.Int("loop-port", compiler.DecryptPort+1, "port of the loop's far end, in the server-half namespace")
@@ -115,7 +101,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		st := p.st.Load()
-		s := Status{Mode: st.policy.Mode, Started: started, Rules: len(st.policy.Rules), Exclusions: st.match.Len(), Builtin: st.policy.Builtin,
+		s := decrypt.Status{Mode: st.policy.Mode, Started: started, Rules: len(st.policy.Rules), Exclusions: st.match.Len(), Builtin: st.policy.Builtin,
 			Counts: p.Counts(), Active: p.active.Load(), Learned: len(p.learned.List(p.now())), LoadError: st.err}
 		if st.cas != nil {
 			s.CA = decrypt.InfoOf(*st.cas)

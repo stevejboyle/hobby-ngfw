@@ -150,6 +150,48 @@ func (d *Daemon) MgmtHandler() http.Handler {
 		v, err := d.UpdateIPS(r.Context())
 		reply(w, v, err)
 	})
+	mux.HandleFunc("GET /v1/decryption", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, d.Decryption(), nil)
+	})
+	mux.HandleFunc("GET /v1/decryption/ca", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, d.DecryptionCA(), nil)
+	})
+	mux.HandleFunc("POST /v1/decryption/ca/generate", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Author string `json:"author"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := d.GenerateDecryptionCA(req.Author)
+		reply(w, v, err)
+	})
+	mux.HandleFunc("POST /v1/decryption/ca/import", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Author string `json:"author"`
+			Cert   string `json:"cert"`
+			Key    string `json:"key"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := d.ImportDecryptionCA(req.Author, []byte(req.Cert), []byte(req.Key))
+		reply(w, v, err)
+	})
+	mux.HandleFunc("GET /v1/decryption/learned", func(w http.ResponseWriter, r *http.Request) {
+		v, err := d.DecryptionLearned()
+		reply(w, v, err)
+	})
+	mux.HandleFunc("POST /v1/decryption/learned/clear", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Author string `json:"author"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		n, err := d.ClearDecryptionLearned(req.Author)
+		reply(w, map[string]int{"cleared": n}, err)
+	})
 	mux.HandleFunc("GET /v1/dhcp", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, d.DHCP(), nil)
 	})

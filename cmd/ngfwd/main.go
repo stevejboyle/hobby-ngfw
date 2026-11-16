@@ -26,6 +26,7 @@ import (
 	"github.com/stevejboyle/hobby-ngfw/internal/appid"
 	"github.com/stevejboyle/hobby-ngfw/internal/conntrack"
 	"github.com/stevejboyle/hobby-ngfw/internal/daemon"
+	"github.com/stevejboyle/hobby-ngfw/internal/decrypt"
 	"github.com/stevejboyle/hobby-ngfw/internal/dhcp"
 	"github.com/stevejboyle/hobby-ngfw/internal/frr"
 	"github.com/stevejboyle/hobby-ngfw/internal/ips"
@@ -55,6 +56,9 @@ func main() {
 	flag.StringVar(&vtyshPath, "vtysh", "/usr/bin/vtysh", "path to vtysh")
 	flag.StringVar(&frrDir, "frr", "/etc/frr", "FRR config directory (empty: don't manage BGP/OSPF, for development)")
 	flag.StringVar(&appidStats, "appid-stats", appid.StatsPath, "appidd's statistics file")
+	flag.StringVar(&decryptCA, "decryption-ca", decrypt.CADir, "decryption CA directory")
+	flag.StringVar(&tlsdSocket, "tlsd-socket", "/run/sjb-tlsd/tlsd.sock", "tlsd's status socket")
+	flag.StringVar(&tlsdPath, "tlsd", "/usr/local/sbin/tlsd", "tlsd, the TLS decryption daemon (empty: no decryption, for development)")
 	flag.StringVar(&ipsDir, "ips-dir", "/var/lib/sjb-os/ips", "IPS signature directory (empty: no IPS, for development)")
 	flag.StringVar(&keaPath, "kea", "/usr/sbin/kea-dhcp4", "path to kea-dhcp4, the DHCP server (empty: don't manage DHCP, for development)")
 	flag.StringVar(&ipPath, "ip", "ip", "path to the ip binary for static routes (empty: don't manage routes, for development)")
@@ -124,6 +128,12 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 		}
 		go d.RunIPSUpdates(context.Background())
 	}
+	if tlsdPath != "" {
+		// tlsd reads its policy from the state directory (the appliance's
+		// is decrypt.PolicyFile).
+		d.SetDecrypt(decrypt.Exec{Binary: tlsdPath, Socket: tlsdSocket}, decryptCA, filepath.Join(stateDir, "tlsd-policy.json"))
+		go d.RunDecryptHealth(context.Background())
+	}
 	if err := d.Start(); err != nil {
 		return err
 	}
@@ -188,8 +198,10 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 			v, err = logReader.System(n, q)
 		case "threat":
 			v, err = logReader.Threat(n, q)
+		case "decryption":
+			v, err = logReader.Decryption(n, q)
 		default:
-			http.Error(w, `{"error":"logs are traffic, threat or system"}`, http.StatusNotFound)
+			http.Error(w, `{"error":"logs are traffic, threat, decryption or system"}`, http.StatusNotFound)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -328,6 +340,9 @@ var keaPath string
 
 // ipsDir holds the IPS signatures; empty: no IPS (development).
 var ipsDir string
+
+// tlsdPath is the TLS decryption daemon; empty: no decryption (development).
+var tlsdPath, tlsdSocket, decryptCA string
 
 // statsRoot is where interface counters are read (/sys under it).
 var statsRoot = "/"

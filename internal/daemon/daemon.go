@@ -67,6 +67,7 @@ type Daemon struct {
 	wantRoutes  []routes.Route // static routes of the running config
 	routeStates []routes.State // result of the last sync
 	ips         ipsState
+	dec         decryptState
 	stats       *stats.Store
 	statsRoot   string
 	// policy is the running config's ruleset without tag set elements: a
@@ -309,6 +310,7 @@ func (d *Daemon) ReconcileRoutes() {
 	}
 	d.syncDHCPLocked(false)
 	d.syncIPSLocked()
+	d.syncDecryptLocked(false)
 	if after := installedCount(d.routeStates); after != before {
 		d.log.Info("static routes", "installed", after, "configured", len(d.wantRoutes), "problems", warn)
 	}
@@ -372,7 +374,8 @@ func (d *Daemon) Start() error {
 	// may prepare signatures differently), then start or stop the engine.
 	d.ips.built = "\x00"
 	warns = append(warns, d.syncFRRLocked()...)
-	for _, w := range append(warns, d.syncIPSLocked()...) {
+	warns = append(warns, d.syncIPSLocked()...)
+	for _, w := range append(warns, d.syncDecryptLocked(true)...) {
 		d.log.Warn(w)
 	}
 	// Flows set up while ngfwd was down (possibly with no ruleset) must be
@@ -650,6 +653,7 @@ func (d *Daemon) commitLocked(data []byte, author, message string, confirm time.
 	routeWarnings = append(routeWarnings, d.syncFRRLocked()...)
 	routeWarnings = append(routeWarnings, d.syncDHCPLocked(true)...)
 	routeWarnings = append(routeWarnings, d.syncIPSLocked()...)
+	routeWarnings = append(routeWarnings, d.syncDecryptLocked(true)...)
 
 	out := &CommitResult{Revision: rev, Warnings: append(append(res.Warnings, warnings...), routeWarnings...)}
 	if confirm > 0 {
@@ -817,6 +821,7 @@ func (d *Daemon) rollbackToNothingLocked() error {
 	d.syncFRRLocked()
 	d.syncDHCPLocked(true)
 	d.syncIPSLocked()
+	d.syncDecryptLocked(true)
 	return nil
 }
 

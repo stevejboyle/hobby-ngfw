@@ -157,6 +157,12 @@ appidd/             App Identification daemon (C, nDPI 6.0 built by deploy/appli
                     log the session end), conntrack DESTROY -> /run/appidd/stats.json
                     and "ngfw-session" journal lines
 internal/appid/     reads appidd's catalog and stats for show app / the Applications page
+cmd/tlsd/           TLS decryption daemon: tproxied connections, client hello,
+                    exclusions, decrypt (CA-signed leaf) or pass through, all
+                    via the cleartext loop (netns sjbd-c/sjbd-s) so the forward
+                    chain sees the bytes; status socket for ngfwd
+internal/decrypt/   decryption CA (generate/import/forge), hello parser,
+                    server-name matching, tlsd's policy file, learned list
 internal/ips/       IPS: ET Open download (md5-checked) and processing (every rule
                     alert + nfq_set_mark by severity, test sigs 9900001-4), status,
                     EVE alert socket; Suricata itself runs as sjb-ips.service
@@ -215,7 +221,14 @@ it; tag registration flushes the host's entries, daemon start flushes all.
 lab/gate-sessions.sh checks this. Rules naming applications allow at most
 compiler.AppPendingPackets (40) packets of a connection before its app is
 known, tagged with the rule so its IPS profile inspects them. Inspection
-state (internal/nfqueue: is the queue bound?) is reported in show ips/app. Config is edited as YAML
+state (internal/nfqueue: is the queue bound?) is reported in show ips/app. TLS
+decryption (0.9.9-r04, observe only in that release): decryption rules
+compile to chain decrypt (prerouting) that tproxies new TCP to tlsd only
+while decrypt_ready holds an element (ngfwd fills it while tlsd answers:
+fail-open); tlsd sends the bytes through the cleartext loop (veth sjbd-c ->
+forward chain -> veth sjbd-s, conntrack zone 0xfff0, zone code in DSCP), and
+every security rule has a loop form of its zone match. The CA lives in
+/etc/ngfw/decryption, keys readable only by user sjb-tls. Config is edited as YAML
 (`fwctl load`), not with `set`-style commands yet. The appliance's tag API
 certificate is self-signed. Upgrades (signed bundles, `fwctl upgrade`) cover
 SJB-OS files only, not the kernel or Debian packages; 0.2.0 and earlier

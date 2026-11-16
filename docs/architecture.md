@@ -316,6 +316,68 @@ arrive on a unix datagram socket; ngfwd looks up the connection's ct mark
 works out the action, and writes an `ngfw-threat {json}` journal line, the
 threat log. Alerts a profile ignores aren't logged.
 
+### TLS decryption as built (0.9.9-r04)
+
+Outbound TLS forward-proxy decryption (optional phase 4), so App
+Identification and the IPS see inside HTTPS. `tlsd` (Go, standard library
+`crypto/tls`, no new dependencies) takes the connections decryption rules
+cover and sends their bytes through a **cleartext loop**, so the existing
+forward chain (rules, App Identification, IPS) handles them unchanged:
+
+```mermaid
+flowchart LR
+  client(("client")) -- "TLS (SYN: tproxy, mark = rule + zone)" --> c["tlsd client half<br/>reads the hello, decides"]
+  c -- "plaintext, or the original bytes<br/>(client's addresses, DSCP = zone)" --> fwd["forward chain<br/>rules · appid · IPS"]
+  fwd --> s["tlsd server half"]
+  s -- "TLS, certificate checked" --> server(("server"))
+  subgraph nsC["netns sjbd-c"]
+    c
+  end
+  subgraph nsS["netns sjbd-s"]
+    s
+  end
+```
+
+- **Hand-over:** chain `decrypt` (prerouting, mangle) matches the decryption
+  rules (zones by ingress interface and `fib daddr oifname`, addresses, TCP
+  ports) on new connections and tproxies them to tlsd on port 15080, with a
+  packet mark carrying the rule's position and the ingress zone's code
+  (`net.ipv4.tcp_fwmark_accept` puts it on tlsd's accepted socket). Every
+  hand-over line requires the `decrypt_ready` set, which ngfwd fills while
+  tlsd answers on its socket and empties when it doesn't (checked every
+  2 s): fail-open. QUIC for decrypted traffic is dropped there unless the
+  profile allows it.
+- **Cleartext loop:** tlsd opens the loop leg from namespace `sjbd-c` with
+  the client's own address and port (a transparent socket) and the zone
+  code in DSCP; it enters the firewall on veth `sjbd-c`, is policy-routed to
+  veth `sjbd-s` through the forward hook, and is tproxied in namespace
+  `sjbd-s` to tlsd's server half. Raw prerouting puts the loop interfaces in
+  conntrack zone 0xfff0, apart from the client's original connection with
+  the same tuple. Every security rule gets a loop form of its zone match
+  (`iifname "sjbd-c" ip dscp <zone codes>`, `oifname "sjbd-s" fib daddr
+  oifname <egress interfaces>`), so the rules apply as written; a denied
+  loop connection makes tlsd reset the client. TCP early demux is off while
+  decryption runs (it would hand loop packets to tlsd's own client socket).
+  `sjb-decrypt-net` builds and removes the loop around `sjb-tlsd.service`.
+- **Decisions:** excluded names (built-in list plus the config's), learned
+  pinned servers, connections that can't be decrypted and observe mode pass
+  through; the rest are decrypted: tlsd connects to the server (ALPN as the
+  client offered), checks its chain against Debian's roots, and completes
+  the client's handshake with a week-long leaf from the decryption CA (or
+  from the untrusted CA when the server's failed), shared leaf key in
+  memory, cached per name. A client that rejects it is learned for 24 h.
+  Each decision is an `ngfw-decrypt {json}` journal line (no content).
+- **CA:** `/etc/ngfw/decryption` (never in bundles or revisions): ca.crt/key
+  and untrusted.crt/key, keys 0600 owned by `sjb-tls`, the account tlsd runs
+  as with only CAP_NET_ADMIN and CAP_SYS_ADMIN (setns). ngfwd generates or
+  imports it and serves only the certificate.
+- **Policy:** ngfwd writes `/var/lib/sjb-os/tlsd-policy.json` (rules with
+  their resolved profiles, exclusions, mode) at each commit and has tlsd
+  reload it; `system decryption observe` (and every 0.9.9-r04 commit) sets
+  observe mode.
+- Limits: default VRF only, outbound only, IPv4, no revocation checking;
+  upstream connections come from the firewall's own address.
+
 ## Commit sequence
 
 As built in phase 1 (Suricata and `appidd` reloads arrive in phase 2):
@@ -404,5 +466,6 @@ flowchart LR
   class p2 main
 ```
 
-Optional phase 4, open-ended: SSL forward-proxy decryption and custom App Identification
-signatures.
+Optional phase 4, open-ended: TLS forward-proxy decryption (started in
+0.9.9-r04: see [TLS decryption as built](#tls-decryption-as-built-099-r04))
+and custom App Identification signatures.

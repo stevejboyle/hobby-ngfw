@@ -761,9 +761,148 @@ Suricata as not installed.
 - Not yet: exceptions per profile, reset instead of drop, file and URL
   filtering, IPv6.
 
+## TLS decryption
+
+**Read this first.** TLS decryption puts the firewall in the middle of
+encrypted connections. It is a powerful and intrusive feature:
+
+- **Legal:** decrypting other people's traffic can be unlawful without
+  their knowledge or consent. Wiretap, employee-monitoring and data
+  protection laws differ by country and state. Decrypt only devices you own
+  or run, for users who have been told. This is not legal advice.
+- **Privacy:** while it passes them on, the firewall sees passwords,
+  messages, health and financial details in the clear (in memory; nothing
+  of the content is stored or logged). Exclusions reduce this; the built-in
+  list is not complete.
+- **Security:** anyone who has the decryption CA's private key can
+  impersonate any website to every client that trusts the CA. The key sits
+  unencrypted on the VM's disk (readable only by tlsd's account): VM
+  snapshots, backups, clones and exported OVAs carry it, so protect them.
+  The firewall becomes the judge of every decrypted site's certificate: it
+  checks names, dates and chains against Debian's trusted roots, but does
+  no revocation checking. tlsd is new, AI-written security code in an
+  experimental lab appliance.
+
+**In this release (0.9.9-r04) decryption observes only:** it reads each
+connection's TLS hello, decides what it would do, logs that (`show log
+decryption`), and passes every connection through unchanged. Use it to see
+what your rules and exclusions would cover before decryption arrives.
+
+### How it works
+
+Decryption rules pick connections (by zone, address and TCP service; port
+443 when no service is given). The firewall hands each new connection they
+cover to **tlsd**, which reads the client's TLS hello (the server name) and
+decides:
+
+- **Excluded** (never decrypted): server names on SJB-OS's built-in list
+  (banking, payment, health and government sites:
+  `/usr/share/sjb-os/decryption-exclusions.txt`) and on your exclusion
+  lists. A name covers itself and everything under it; `*.name` only what's
+  under it.
+- **Can't be decrypted**: not TLS, TLS older than 1.2, no server name,
+  encrypted client hello (the real name is hidden), servers that won't do
+  TLS 1.2 or later with the firewall. The rule's profile passes these
+  through (default) or blocks them.
+- **Decrypted**: tlsd connects to the real server and checks its
+  certificate, then completes the client's connection with a certificate it
+  issues for that server name, signed by the decryption CA (valid at most a
+  week, made in memory). When the server's own certificate fails the
+  checks (expired, self-signed, wrong name), tlsd issues one from a
+  separate **untrusted** CA instead, so the browser shows its usual warning
+  and the user decides, as without the firewall (or the profile blocks it).
+- **Pinned apps**: an app that only accepts its server's own certificate
+  rejects the firewall's. tlsd then remembers that server for 24 hours and
+  passes it through from then on (`show decryption learned`); the first
+  connection fails. The profile can block instead.
+
+Whatever tlsd decides, the connection's bytes (decrypted, or as they came)
+cross the firewall's normal rules again on an internal hop, so the
+**security rules still decide what is allowed**, App Identification names
+the application, and an allow rule's **IPS profile inspects the decrypted
+content**. QUIC (HTTP/3 over UDP 443) can't be decrypted: for decrypted
+traffic it is blocked, so browsers fall back to TLS (a profile can allow it).
+
+Nothing decrypted is logged. The decryption log has, per connection, the
+rule, the decision and its reason, the server name, addresses and ports.
+
+### Setting it up
+
+1. **Make a CA.** `request decryption ca generate` (or **Generate CA** on
+   Security → **Decryption**) makes a CA on the firewall; its key never
+   leaves it. To use your own PKI instead, import a CA certificate and its
+   unencrypted key (a subordinate CA is best): `request decryption ca
+   import` (paste both) or **Import a CA**.
+2. **Install the CA certificate on the clients** you will decrypt, as a
+   trusted root: download it from the Decryption page, or copy it from
+   `show decryption ca`, and check the SHA-256 fingerprint on each client.
+   - Windows: Trusted Root Certification Authorities (Group Policy for many).
+   - macOS: Keychain Access, System keychain, then set it to Always Trust.
+   - iOS/iPadOS: install the profile, then turn on full trust under
+     Settings → General → About → Certificate Trust Settings.
+   - Linux: `/usr/local/share/ca-certificates/` and `update-ca-certificates`.
+   - Firefox keeps its own store: import it there, or turn on
+     `security.enterprise_roots.enabled`.
+   - Android: most apps ignore user-installed CAs and will be learned as
+     pinned.
+3. **Add decryption rules** (Policy → **Decryption rules**, first match
+   wins; anything unmatched isn't decrypted):
+
+   ```
+   set decryption-rule users-out from inside to outside action decrypt
+   set decryption-exclusion our-bank domain [ *.bank.example pay.example ]
+   commit
+   ```
+
+   ```yaml
+   decryption_rules:
+     - name: skip-printer          # no-decrypt exempts from the rules below
+       source: [printer]
+       action: no-decrypt
+     - name: users-out
+       from: [inside]
+       to: [outside]
+       action: decrypt             # service: [https] by default (TCP 443)
+       profile: default
+   decryption_exclusions:
+     - name: our-bank
+       domains: ["*.bank.example", pay.example]
+   ```
+
+4. **Profiles** (Objects → **Decryption profiles**) choose, per rule:
+   `bad-certificate warn|block`, `unsupported pass|block`, `pinned
+   exclude|block` and `allow-quic yes|no`. The built-in **default** warns,
+   passes, excludes and blocks QUIC.
+
+Check it: `show decryption` (or the Decryption page) shows the state, the
+CA and its fingerprint, counts by decision, and learned servers;
+`show log decryption` (Logs → **Decryption**) shows each connection, e.g.
+`show log decryption where decision = learned`.
+
+- **States:** **decrypting**; **observing** (`set system decryption
+  observe`: log only, pass everything through); **no-ca** (no CA yet:
+  everything passes through); **unavailable** (tlsd not running); **off**.
+- **Fail-open:** the firewall hands connections to tlsd only while it
+  answers (checked every 2 seconds). If tlsd stops, new connections take
+  the normal path, undecrypted, and are still filtered by the security
+  rules (App Identification by server name, IPS on the encrypted traffic);
+  connections tlsd held at that moment are cut. ngfwd starts it again.
+- **Off:** `set system decryption off` stops tlsd and removes it from the
+  path. `set system decryption-builtin-exclusions off` stops using the
+  built-in list (not recommended).
+- **Replacing the CA** (generating again, or importing) means every client
+  needs the new certificate.
+- **Sizing:** each decrypted byte is decrypted, encrypted again and
+  inspected. Give the VM **4 vCPU** (a commit warns on fewer) and 4 GB of
+  RAM.
+- **Not yet:** decryption in VRFs other than the default, inbound (server)
+  decryption, client certificates (passed through), revocation checking,
+  IPv6. Without a NAT rule, servers see the firewall's address, not the
+  client's.
+
 ## Logs
 
-Three logs, under System → **Logs** in the web UI and in the CLI:
+Four logs, under System → **Logs** in the web UI and in the CLI:
 
 - **Data plane (traffic):** one entry per new connection that matches a
   rule with logging on (`log: yes`, the Log box on the Policy page, or
@@ -774,6 +913,9 @@ Three logs, under System → **Logs** in the web UI and in the CLI:
   default deny, aren't logged.
 - **Threats (IPS):** signature matches on rules with an IPS profile (see
   [Intrusion prevention](#intrusion-prevention-ips)).
+- **Decryption (TLS):** what TLS decryption did with each connection its
+  rules cover: decrypted, excluded, passed through, learned, blocked, and
+  why (see [TLS decryption](#tls-decryption)). Never what was inside.
 - **Management (system):** what ngfwd did and who asked (commits with author
   and message, rollbacks, confirmations, web logins and failed logins, tag
   changes, static-route problems, upgrades), plus SSH logins and first boot.
@@ -926,6 +1068,9 @@ unchanged. The full history lives in `/var/lib/ngfw/revisions/`.
   settings.
 - App Identification rules can't use nDPI's risk scores yet. The IPS has no per-profile
   exceptions yet, and blocks by dropping (no reset).
+- TLS decryption observes only in 0.9.9-r04 (logs what it would decrypt);
+  it covers outbound connections in the default VRF, with no revocation
+  checking.
 - The web UI and tag API certificate is self-signed (`curl -k`).
 - One web UI user (`admin`); no roles yet.
 - Upgrades cover SJB-OS itself and the packages it ships (FRR, Kea,

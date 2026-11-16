@@ -24,7 +24,7 @@ Debian's (below).
 
 The image is Debian 13 ("trixie"). Upgrade bundles carry Debian's own
 packages for what older images lack (FRR, Kea, Suricata,
-libnetfilter-queue1 and their dependencies) under
+libnetfilter-queue1, ca-certificates and their dependencies) under
 `/usr/share/sjb-os/packages`. The main ones:
 
 | Package | Purpose | License |
@@ -37,6 +37,7 @@ libnetfilter-queue1 and their dependencies) under
 | libmnl0 | netlink library | LGPL-2.1-or-later |
 | openssh-server | SSH | BSD-style |
 | openssl | TLS | Apache-2.0 |
+| ca-certificates | Trusted root certificates (TLS decryption checks servers against them) | MPL-2.0 (the Mozilla CA list), GPL-2.0-or-later (scripts) |
 | open-vm-tools | VMware guest tools | LGPL-2.1 and GPL-2.0 |
 | linux-image-amd64 | Kernel | GPL-2.0 |
 

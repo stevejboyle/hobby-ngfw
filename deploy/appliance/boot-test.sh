@@ -860,6 +860,101 @@ else
 	fail "Suricata not installed (sjb-packages): $(root_run 'journalctl -u sjb-packages -b --no-pager -o cat | grep -iE "error|fail|support|suricata" | tail -6' 2>&1)"
 fi
 
+# --- TLS decryption (tlsd) --------------------------------------------------------
+# A client and an HTTPS server on either side of the firewall, with a test
+# "public" root that tlsd trusts for this run only (a runtime drop-in). The
+# server answers with the address it saw: the firewall's when tlsd carried
+# the connection, the client's when it went straight through.
+dsec=$(root_run 'id -u sjb-tls; stat -c %a /usr/local/sbin/tlsd /usr/local/sbin/sjb-decrypt-net; systemctl cat sjb-tlsd | grep -c CapabilityBoundingSet=CAP_NET_ADMIN; test -s /etc/ssl/certs/ca-certificates.crt && echo roots' 2>&1)
+[[ $dsec =~ ^[0-9]+$'\n'755$'\n'755$'\n'1$'\n'roots$ ]] &&
+	pass "decryption installed: tlsd and sjb-decrypt-net, user sjb-tls, a capability-limited sjb-tlsd unit, Debian's trusted roots" ||
+	fail "decryption install: $dsec"
+root_run 'set -e
+	d=/etc/ssl/sjb-boottest; mkdir -p $d; cd $d
+	openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout testca.key -subj "/CN=Boot Test Public Root" \
+		-days 2 -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign -out testca.crt 2>/dev/null
+	for n in shop.example www.bank.example app.example bad.example; do
+		openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout $n.key -subj "/CN=$n" -out $n.csr 2>/dev/null
+		printf "subjectAltName=DNS:%s\nextendedKeyUsage=serverAuth\n" $n >$n.ext
+		if [ $n = bad.example ]; then openssl x509 -req -in $n.csr -signkey $n.key -days 2 -extfile $n.ext -out $n.crt 2>/dev/null
+		else openssl x509 -req -in $n.csr -CA testca.crt -CAkey testca.key -CAcreateserial -days 2 -extfile $n.ext -out $n.crt 2>/dev/null; fi
+	done
+	chmod 644 *.crt
+	mkdir -p /run/systemd/system/sjb-tlsd.service.d
+	printf "[Service]\nEnvironment=SSL_CERT_FILE=%s/testca.crt\n" $d >/run/systemd/system/sjb-tlsd.service.d/boot-test.conf
+	systemctl daemon-reload
+	ip link add dc1 type veth peer name dcc0; ip addr add 10.85.0.1/24 dev dc1; ip link set dc1 up
+	ip link add dc2 type veth peer name dcs0; ip addr add 10.86.0.1/24 dev dc2; ip link set dc2 up
+	ip netns add dcc; ip link set dcc0 netns dcc; ip -n dcc addr add 10.85.0.2/24 dev dcc0
+	ip -n dcc link set dcc0 up; ip -n dcc link set lo up; ip -n dcc route add default via 10.85.0.1
+	ip netns add dcs; ip link set dcs0 netns dcs; ip -n dcs addr add 10.86.0.2/24 dev dcs0
+	ip -n dcs link set dcs0 up; ip -n dcs link set lo up; ip -n dcs route add default via 10.86.0.1
+	cat > /root/decrypt-traffic.py' <deploy/appliance/boot-decrypt-traffic.py
+root_run 'nohup ip netns exec dcs python3 /root/decrypt-traffic.py server /etc/ssl/sjb-boottest >/dev/null 2>&1 &'
+dget() { root_run "ip netns exec dcc python3 /root/decrypt-traffic.py client $1 10.86.0.2 $2 $3"; }
+script=$'configure\nset zone dcli\nset zone dsrv\nset interface dc1 zone dcli address 10.85.0.1/24\nset interface dc2 zone dsrv address 10.86.0.1/24\nset service tls protocol tcp ports 443\nset rule dec-out from dcli to dsrv service tls action allow ips-profile default\nset decryption-exclusion boot-bank domain [ bank.example ]\nset decryption-rule dec from dcli to dsrv service tls action decrypt\ncommit -m "boot test: decryption"\nexit\nexit\n'
+out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
+[[ $out == *"committed revision"* && $out == *"no decryption CA yet"* ]] && pass "decryption rule committed; the commit warns that there is no CA yet" || fail "decryption commit: $out"
+out=$(cli_run request decryption ca generate)
+ca=$(root_run 'stat -c "%U %a" /etc/ngfw/decryption/ca.key; stat -c "%U:%G %a" /etc/ngfw/decryption')
+[[ $out == *"new decryption CA"* && $ca == "sjb-tls 600"$'\n'"root:sjb-tls 750" ]] &&
+	pass "request decryption ca generate: key readable by tlsd's user only (ca.key sjb-tls 600, directory root:sjb-tls 750)" || fail "CA generate: $out / $ca"
+cli_run show decryption ca | sed -n '/BEGIN CERT/,/END CERT/p' | root_run 'cat > /root/sjbca.pem'
+[[ $(root_run 'grep -c "BEGIN CERTIFICATE" /root/sjbca.pem') == 1 ]] && pass "show decryption ca prints the certificate for clients" || fail "show decryption ca"
+uc=$(ui "$UI/ui/api/decryption/ca.crt")
+[[ $uc == "-----BEGIN CERTIFICATE-----"* && $uc != *PRIVATE* ]] && pass "web UI: CA certificate download (no key)" || fail "ui CA download: ${uc:0:80}"
+for _ in $(seq 20); do
+	sd=$(cli_run show decryption)
+	[[ $sd == *OBSERVING* || $sd == *DECRYPTING* ]] && break
+	sleep 2
+done
+[[ $(root_run systemctl is-active sjb-tlsd) == active && ( $sd == *OBSERVING* || $sd == *DECRYPTING* ) ]] &&
+	pass "ngfwd started sjb-tlsd; show decryption: $(grep -oE 'OBSERVING|DECRYPTING' <<<"$sd")" || fail "tlsd start: $sd / $(root_run 'journalctl -u sjb-tlsd -b --no-pager -n 10 -o cat' 2>&1)"
+if [[ $sd == *OBSERVING* ]]; then
+	r=$(dget shop.example /etc/ssl/sjb-boottest/testca.crt /observed)
+	[[ $r == *"seen from 10.86.0.1 path /observed"*"issuer: Boot Test Public Root"* ]] &&
+		pass "observe: the connection went through tlsd (the server saw the firewall) with the server's own certificate" || fail "observe: $r"
+	for _ in $(seq 5); do ld=$(cli_run show log decryption 5 columns decision,server_name,src); [[ $ld == *would-decrypt*shop.example* ]] && break; sleep 2; done
+	[[ $ld == *would-decrypt*shop.example*10.85.0.2* ]] && pass "show log decryption: would-decrypt shop.example" || fail "decryption log: $ld"
+else
+	r=$(dget shop.example /root/sjbca.pem /hello)
+	[[ $r == *"seen from 10.86.0.1 path /hello"*"issuer: SJB-OS Decryption CA"* ]] &&
+		pass "decrypted: the client gets a certificate from the SJB-OS CA; the server's was checked against the trusted roots" || fail "decrypt: $r"
+	r=$(dget www.bank.example /etc/ssl/sjb-boottest/testca.crt /)
+	[[ $r == *"issuer: Boot Test Public Root"* ]] && pass "excluded name: not decrypted, the server's own certificate" || fail "exclusion: $r"
+	r=$(dget app.example /etc/ssl/sjb-boottest/testca.crt /); r2=$(dget app.example /etc/ssl/sjb-boottest/testca.crt /)
+	[[ $r == ERROR* && $r2 == *"issuer: Boot Test Public Root"* && $(cli_run show decryption learned) == *app.example* ]] &&
+		pass "a client that rejects the firewall's certificate is learned and passed through after" || fail "pinned: $r / $r2"
+	r=$(dget bad.example /root/sjbca.pem /)
+	[[ $r == ERROR* ]] && pass "a self-signed server certificate is shown as untrusted: the client refuses it" || fail "bad cert: $r"
+	# The IPS sees inside HTTPS: wait for the engine (restarted by this
+	# commit), then a signature in a decrypted request is blocked.
+	for _ in $(seq 120); do [[ $(cli_run show ips) == *INSPECTING* ]] && break; sleep 3; done
+	r=$(dget shop.example /root/sjbca.pem /SJB-IPS-TEST-CRITICAL)
+	for _ in $(seq 10); do lt=$(cli_run show log threat 10 columns rule,action,sid); [[ $lt == *dec-out*block*9900001* ]] && break; sleep 2; done
+	[[ $r == blocked || $r == ERROR* ]] && [[ $lt == *dec-out*block*9900001* ]] &&
+		pass "the IPS blocks a signature inside an HTTPS request (threat log: dec-out block 9900001)" || fail "IPS in HTTPS: $r / $lt"
+	for _ in $(seq 5); do ld=$(cli_run show log decryption 20 columns decision,server_name); [[ $ld == *decrypted*shop.example* && $ld == *excluded*www.bank.example* && $ld == *learned*app.example* ]] && break; sleep 2; done
+	[[ $ld == *decrypted*shop.example* && $ld == *excluded*www.bank.example* && $ld == *learned*app.example* ]] &&
+		pass "show log decryption: decrypted, excluded and learned entries" || fail "decryption log: $ld"
+fi
+uj=$(ui "$UI/ui/api/decryption")
+[[ $uj == *'"state":"'* && $uj == *'"fingerprint":"'* && $uj != *PRIVATE* ]] && pass "web UI: decryption status" || fail "ui decryption: ${uj:0:200}"
+# Fail-open: tlsd stopped, connections take the normal path; ngfwd starts it again.
+root_run systemctl stop sjb-tlsd
+for _ in $(seq 10); do r=$(dget shop.example /etc/ssl/sjb-boottest/testca.crt /direct); [[ $r == *"seen from 10.85.0.2"* ]] && break; sleep 1; done
+[[ $r == *"seen from 10.85.0.2 path /direct"* ]] && pass "tlsd stopped: traffic passes undecrypted, straight through (fail-open)" || fail "fail-open: $r"
+for _ in $(seq 20); do [[ $(root_run systemctl is-active sjb-tlsd) == active ]] && break; sleep 2; done
+[[ $(root_run systemctl is-active sjb-tlsd) == active ]] && pass "ngfwd starts sjb-tlsd again" || fail "tlsd restart"
+script=$'configure\nset system decryption off\ncommit -m "boot test: decryption off"\nexit\nexit\n'
+retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
+for _ in $(seq 10); do [[ $(root_run systemctl is-active sjb-tlsd) != active ]] && break; sleep 1; done
+[[ $(root_run systemctl is-active sjb-tlsd) != active && $(root_run 'nft list ruleset') != *"chain decrypt "* && $(root_run 'ip netns list') != *sjbd-c* ]] &&
+	pass "set system decryption off: tlsd stopped, the hand-over chain and the loop removed" || fail "decryption off"
+script=$'configure\ndelete system decryption\ndelete decryption-rule dec\ndelete decryption-exclusion boot-bank\ndelete rule dec-out\ndelete service tls\ndelete interface dc1\ndelete interface dc2\ndelete zone dcli\ndelete zone dsrv\ncommit -m "boot test: decryption cleanup"\nexit\nexit\n'
+retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
+root_run 'ip netns pids dcs | xargs -r kill; ip netns del dcc; ip netns del dcs; ip link del dc1; ip link del dc2; rm -rf /run/systemd/system/sjb-tlsd.service.d; systemctl daemon-reload' >/dev/null 2>&1
+
 # --- dashboard statistics (a sample a minute) ------------------------------------
 # The App Identification and IPS traffic above was sampled; wait for the minute in
 # progress, then check the hour's report and the CLI.

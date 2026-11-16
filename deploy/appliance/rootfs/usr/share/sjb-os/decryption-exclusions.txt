@@ -1,0 +1,94 @@
+# SJB-OS built-in decryption exclusions: server names TLS decryption never
+# decrypts. Each line is a name, which covers it and everything under it
+# (gov covers every name ending in .gov), or *.name, which covers only what
+# is under it. Written for SJB-OS (Apache-2.0).
+#
+# This list is a starting point, NOT complete: it can't know your bank,
+# insurer or clinic. Add your own with decryption exclusions
+# (set decryption-exclusion NAME domain [ ... ]). Turn this list off with
+# set system decryption-builtin-exclusions off.
+
+# Government and military top-level and second-level domains
+gov
+mil
+gov.uk
+nhs.uk
+gc.ca
+gov.au
+gov.nz
+gouv.fr
+bund.de
+europa.eu
+
+# Payment networks and processors
+visa.com
+mastercard.com
+americanexpress.com
+discover.com
+paypal.com
+paypalobjects.com
+venmo.com
+stripe.com
+squareup.com
+adyen.com
+braintreegateway.com
+wise.com
+zelle.com
+
+# Banks (large international and US/UK/EU retail banks)
+bankofamerica.com
+chase.com
+jpmorganchase.com
+wellsfargo.com
+citi.com
+citibank.com
+usbank.com
+pnc.com
+capitalone.com
+truist.com
+schwab.com
+fidelity.com
+vanguard.com
+ally.com
+hsbc.com
+hsbc.co.uk
+barclays.co.uk
+lloydsbank.com
+natwest.com
+santander.com
+santander.co.uk
+bnpparibas
+db.com
+ing.com
+ubs.com
+rbc.com
+td.com
+scotiabank.com
+commbank.com.au
+westpac.com.au
+anz.com
+
+# Tax and benefits
+irs.gov
+hmrc.gov.uk
+ssa.gov
+
+# Health: patient portals, insurers, pharmacies, telehealth
+mychart.com
+epic.com
+healthcare.gov
+medicare.gov
+unitedhealthcare.com
+uhc.com
+anthem.com
+aetna.com
+cigna.com
+humana.com
+bcbs.com
+kaiserpermanente.org
+cvs.com
+walgreens.com
+goodrx.com
+teladoc.com
+zocdoc.com
+23andme.com

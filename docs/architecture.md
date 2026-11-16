@@ -358,7 +358,9 @@ flowchart LR
   oifname <egress interfaces>`), so the rules apply as written; a denied
   loop connection makes tlsd reset the client. TCP early demux is off while
   decryption runs (it would hand loop packets to tlsd's own client socket).
-  `sjb-decrypt-net` builds and removes the loop around `sjb-tlsd.service`.
+  `sjb-decrypt-net.service` builds the loop before `sjb-tlsd.service`
+  starts (tlsd's sandbox is a private mount namespace, which must already
+  see the loop's namespaces) and removes it when tlsd stops.
 - **Decisions:** excluded names (built-in list plus the config's), learned
   pinned servers, connections that can't be decrypted and observe mode pass
   through; the rest are decrypted: tlsd connects to the server (ALPN as the
@@ -369,7 +371,8 @@ flowchart LR
   Each decision is an `ngfw-decrypt {json}` journal line (no content).
 - **CA:** `/etc/ngfw/decryption` (never in bundles or revisions): ca.crt/key
   and untrusted.crt/key, keys 0600 owned by `sjb-tls`, the account tlsd runs
-  as with only CAP_NET_ADMIN and CAP_SYS_ADMIN (setns). ngfwd generates or
+  as with only CAP_NET_ADMIN and CAP_SYS_ADMIN (setns). `/etc/ngfw` stays root-only:
+  the unit bind-mounts just the CA folder, read-only, at `/run/sjb-tlsd-ca`. ngfwd generates or
   imports it and serves only the certificate.
 - **Policy:** ngfwd writes `/var/lib/sjb-os/tlsd-policy.json` (rules with
   their resolved profiles, exclusions, mode) at each commit and has tlsd

@@ -250,11 +250,12 @@ func inspectionState(st IPSStatus) (string, string) {
 // Alerts the profile ignores aren't logged.
 func (d *Daemon) IPSAlert(a ips.Alert) {
 	var mark uint32
+	var decrypted bool
 	if d.ips.run != nil {
-		mark, _ = d.ips.run.ConnMark(a.Proto, a.Src, a.SPort, a.Dst, a.DPort)
+		mark, decrypted, _ = d.ips.run.ConnMark(a.Proto, a.Src, a.SPort, a.Dst, a.DPort)
 	}
 	t := logs.Threat{Time: a.Time, Action: config.IPSAlert, Severity: a.Severity, SID: a.SID, Signature: a.Message,
-		Category: a.Category, Proto: a.Proto, Src: a.Src, SPort: a.SPort, Dst: a.Dst, DPort: a.DPort}
+		Category: a.Category, Proto: a.Proto, Src: a.Src, SPort: a.SPort, Dst: a.Dst, DPort: a.DPort, Decrypted: decrypted}
 	if t.Time.IsZero() {
 		t.Time = d.Now().UTC()
 	}

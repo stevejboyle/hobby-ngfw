@@ -1663,6 +1663,7 @@ function threatTable(rows) {
     dst: (r) => h("td", { class: "mono" }, filterBy("dst", r.dst)),
     dport: (r) => h("td", { class: "mono" }, filterBy("dport", r.dport)),
     proto: (r) => h("td", {}, r.proto),
+    decrypted: (r) => h("td", {}, r.decrypted ? "yes" : ""),
   };
   return h("div", { class: "table-wrap" }, h("table", {},
     h("thead", {}, h("tr", {}, L.tcols.map((c) => h("th", { title: defs.get(c).help }, defs.get(c).title)))),

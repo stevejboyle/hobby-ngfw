@@ -27,6 +27,8 @@ type Threat struct {
 	SPort     int       `json:"sport,omitempty"`
 	Dst       string    `json:"dst"`
 	DPort     int       `json:"dport,omitempty"`
+	// Decrypted: the match was in TLS-decrypted traffic.
+	Decrypted bool `json:"decrypted,omitempty"`
 }
 
 // Line is the journal line for t.
@@ -64,6 +66,7 @@ var ThreatColumns = []Column{
 	{"dst", "Destination", "destination address"},
 	{"dport", "Dst port", "destination port"},
 	{"proto", "Protocol", "tcp, udp, ..."},
+	{"decrypted", "Decrypted", "yes when the match was inside decrypted TLS"},
 }
 
 // DefaultThreatColumns are shown when no columns are chosen.
@@ -86,6 +89,7 @@ var ThreatSchema = Schema{
 	"dport":     {kNum, []string{"dport"}, "destination port"},
 	"port":      {kNum, []string{"sport", "dport"}, "either port"},
 	"proto":     {kText, []string{"proto"}, "tcp, udp, ..."},
+	"decrypted": {kText, []string{"decrypted"}, "yes: inside decrypted TLS"},
 }
 
 // Value is the text of one column of t.
@@ -125,6 +129,11 @@ func (t Threat) Value(col string) string {
 		return num(t.DPort)
 	case "proto":
 		return t.Proto
+	case "decrypted":
+		if t.Decrypted {
+			return "yes"
+		}
+		return ""
 	}
 	return ""
 }

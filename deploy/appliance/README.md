@@ -555,10 +555,18 @@ root key or password ships with SJB-OS, and the vendor has no way in.
   Passwords are always refused for root over SSH.
 - **VMware console:** root can log in with the `root_password` you set at
   deploy time (change it later with `passwd` as root).
-- **Neither set:** root can't log in. To recover, open the VMware console,
-  interrupt the boot at the GRUB menu (hold Shift or press Esc), add
-  `init=/bin/bash` to the `linux` line and boot: you get a root shell to
-  fix things (for example, add a key to `/etc/ngfw/root_authorized_keys`).
+- **Neither set:** root can't log in. To recover, from the VMware console:
+  1. Restart the VM and interrupt the boot at the GRUB menu (hold Shift or
+     press Esc). Press `e`, add `init=/bin/bash` to the end of the line
+     starting with `linux`, and press Ctrl-X to boot. You get a root shell.
+  2. The disk starts read-only: make it writable with
+     `mount -o remount,rw /`.
+  3. Fix what you need: reset `admin` with `fwctl web-passwd`, and consider
+     adding a key to `/etc/ngfw/root_authorized_keys` so next time you can
+     use SSH instead.
+  4. Run `sync`, then restart the VM from vSphere (Reset). This shell
+     can't shut down cleanly on its own.
+
   Anyone with that much access to vSphere could do the same.
 - **Appliances from before 0.9.9** carried a development key. Upgrading
   moves that appliance's key to `/etc/ngfw/root_authorized_keys`, so its
@@ -568,7 +576,7 @@ Root-only tasks for now: editing tag API keys (`/etc/ngfw/api-keys`, one
 `<name> <scopes> <key>` per line, scopes `tags:read`/`tags:write`, keys of
 24+ characters, then `systemctl restart ngfwd`), resetting a forgotten
 `admin` password (`fwctl web-passwd`, which sets SSH, console and web UI
-together), and Debian updates (`apt update && apt upgrade`). The full
+together and takes effect at once, no restart needed), and Debian updates (`apt update && apt upgrade`). The full
 journal (`journalctl`) is there too, beyond what the Logs views show.
 
 ## Applications (App Identification)

@@ -39,19 +39,18 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 
 ## The evidence
 
-- **Time:** about a week of calendar time (2026-11-08 to 2026-11-15) and
-  22.9 hours of Steve's own time to the 0.9.9-r03 release (23.7 including
-  getting the repository ready to go public), measured from the session
+- **Time:** nine days of calendar time (2026-11-08 to 2026-11-16) and
+  25.3 hours of Steve's own time in total, measured from the session
   transcripts release by release (all but a 0.5-hour estimate for his
-  ChatGPT review): [docs/effort-log.md](docs/effort-log.md). TLS decryption
-  came next, in three releases (0.9.9-r04 to r06) and 0.2 hours: 23.9
-  through 0.9.9-r06.
-- **AI cost:** a $20/month Claude Pro plan. The 1.2 billion tokens it
-  used (nearly all cached context, counted from the session transcript)
-  would cost about $380 at Claude API list prices. ChatGPT's review isn't
+  ChatGPT review): [docs/effort-log.md](docs/effort-log.md). Of that,
+  22.9 hours took it to its first full release (0.9.9-r03), and TLS
+  decryption (0.9.9-r04 to r06) took 0.6 hours.
+- **AI cost:** a $20/month Claude Pro plan. The 1.45 billion tokens it
+  used (nearly all cached context, counted from the session transcripts)
+  would cost about $465 at Claude API list prices. ChatGPT's review isn't
   included.
-- **Size:** at 0.9.9-r03, about 23,100 lines of Go, C, JavaScript, shell
-  and Python, not counting comments and blank lines: 17,600 product, 5,500
+- **Size:** at 0.9.9-r06, about 27,700 lines of Go, C, JavaScript, shell
+  and Python, not counting comments and blank lines: 20,900 product, 6,800
   tests.
 - **Testing:** unit tests, network-namespace gates in CI (including
   established sessions across policy changes), and a QEMU boot test of every
@@ -66,22 +65,23 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 
 | | Built the usual way (estimate) | Built with AI (measured) |
 | --- | --- | --- |
-| Time to first release | About a year | 8 days, Nov 8 to 15, 2026 |
-| People | One specialist, or about five engineers | One person directing AI |
-| Human hours | 2,000 to 10,000 engineering hours | 22.9 hours to release (23.9 through 0.9.9-r06) |
-| Cost | $300,000 to $900,000 in salary and benefits | A $20/month Claude Pro plan ($380 of tokens at API list prices) |
+| Time to build | About a year | 9 days, Nov 8 to 16, 2026 |
+| People | One specialist, or about six engineers | One person directing AI |
+| Human hours | 2,400 to 12,000 engineering hours | 25.3 hours, everything to date |
+| Cost | $350,000 to $1.1 million in salary and benefits | A $20/month Claude Pro plan ($465 of tokens at API list prices) |
 
 The left column is an estimate, not a measurement:
 
 - **Low end:** a component-by-component estimate for one senior specialist
-  who already knows this stack: 43 weeks of work plus 20% for integration
-  and testing, about 52 weeks or 2,060 hours. Priced at the 90th-percentile
-  US wage for software developers ($214,670 a year), about $147 an hour
-  with benefits: about $300,000.
-- **High end:** the basic COCOMO model (organic mode) applied to the 23,100
-  lines: 65 person-months, about five people for about 12 months, or 9,900
-  hours. Priced at the median wage ($64.44 an hour), about $92 an hour
-  with benefits: about $910,000.
+  who already knows this stack: 49 weeks of work (6 of them for TLS
+  decryption) plus 20% for integration and testing, about 59 weeks or
+  2,350 hours. Priced at the 90th-percentile US wage for software
+  developers ($214,670 a year), about $147 an hour with benefits: about
+  $350,000.
+- **High end:** the basic COCOMO model (organic mode) applied to the 27,700
+  lines at 0.9.9-r06: 78 person-months, about six people for about 13
+  months, or 11,900 hours. Priced at the median wage ($64.44 an hour),
+  about $92 an hour with benefits: about $1.1 million.
 - **Benefits:** wages are about 70% of what employers pay in total (BLS
   Employer Costs for Employee Compensation), so wages are divided by 0.7.
 - **Caveats:** COCOMO dates from 1981 and tends to run high for modern

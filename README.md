@@ -57,9 +57,9 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 
 | | Built the usual way (estimate) | Built with AI (measured) |
 | --- | --- | --- |
-| Time to release | About a year | 8 days |
+| Time to release | About a year | 8 days, Nov 8 to 15, 2026 |
 | People | One specialist, or about five engineers | One person directing AI |
-| Human hours | 2,000 to 10,000 engineering hours | 22.9 hours |
+| Human hours | 2,000 to 10,000 engineering hours | 22.9 hours to release (23.7 including going public) |
 | Cost | $300,000 to $900,000 in salary and benefits | A $20/month Claude Pro plan ($380 of tokens at API list prices) |
 
 The left column is an estimate, not a measurement:

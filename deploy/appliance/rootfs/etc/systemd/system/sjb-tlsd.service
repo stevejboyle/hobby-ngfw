@@ -1,16 +1,17 @@
 [Unit]
 Description=SJB-OS TLS decryption (tlsd)
 Documentation=https://github.com/stevejboyle/hobby-ngfw
-After=ngfwd.service
+After=ngfwd.service sjb-decrypt-net.service
+# The cleartext loop: up before tlsd starts, down when tlsd stops.
+Requires=sjb-decrypt-net.service
+BindsTo=sjb-decrypt-net.service
 
 [Service]
 # ngfwd enables and starts this when a decryption rule decrypts, and stops
 # it when none does. The ruleset hands connections to tlsd only while it
 # answers (ngfwd checks every 2 s), so traffic flows undecrypted while it
 # starts or is down (fail-open).
-ExecStartPre=+/usr/local/sbin/sjb-decrypt-net up
-ExecStart=/usr/local/sbin/tlsd
-ExecStopPost=+/usr/local/sbin/sjb-decrypt-net down
+ExecStart=/usr/local/sbin/tlsd -ca /run/sjb-tlsd-ca
 Restart=on-failure
 RestartSec=5
 SyslogIdentifier=tlsd
@@ -35,7 +36,9 @@ RestrictAddressFamilies=AF_INET AF_UNIX AF_NETLINK
 RuntimeDirectory=sjb-tlsd
 StateDirectory=sjb-tlsd
 StateDirectoryMode=0700
-ReadOnlyPaths=/etc/ngfw/decryption
+# The CA, without opening up /etc/ngfw (root-only): only its folder,
+# read-only, at /run/sjb-tlsd-ca. sjb-migrate creates the folder.
+BindReadOnlyPaths=/etc/ngfw/decryption:/run/sjb-tlsd-ca
 LimitNOFILE=65536
 MemoryMax=1G
 

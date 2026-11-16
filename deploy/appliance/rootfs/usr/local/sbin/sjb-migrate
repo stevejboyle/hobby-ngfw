@@ -77,12 +77,13 @@ SH
 		useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin sjb-tls
 		log "created user sjb-tls (TLS decryption)"
 	fi
-	if [[ -d /etc/ngfw/decryption ]]; then
-		chown root:sjb-tls /etc/ngfw/decryption && chmod 750 /etc/ngfw/decryption
-		for k in /etc/ngfw/decryption/*.key; do
-			[[ -f $k ]] && chown sjb-tls:sjb-tls "$k" && chmod 600 "$k"
-		done
-	fi
+	# The CA folder always exists: sjb-tlsd.service bind-mounts it (read-only)
+	# into tlsd's sandbox, since /etc/ngfw itself stays root-only.
+	install -d -m 750 -o root -g sjb-tls /etc/ngfw/decryption
+	chown root:sjb-tls /etc/ngfw/decryption && chmod 750 /etc/ngfw/decryption
+	for k in /etc/ngfw/decryption/*.key; do
+		[[ -f $k ]] && chown sjb-tls:sjb-tls "$k" && chmod 600 "$k"
+	done
 
 	# No sudo for operators.
 	if id -nG "$USER_NAME" | grep -qw sudo; then gpasswd -d "$USER_NAME" sudo >/dev/null; log "$USER_NAME removed from sudo"; fi

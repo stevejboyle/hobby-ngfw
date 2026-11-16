@@ -865,9 +865,9 @@ fi
 # "public" root that tlsd trusts for this run only (a runtime drop-in). The
 # server answers with the address it saw: the firewall's when tlsd carried
 # the connection, the client's when it went straight through.
-dsec=$(root_run 'id -u sjb-tls; stat -c %a /usr/local/sbin/tlsd /usr/local/sbin/sjb-decrypt-net; systemctl cat sjb-tlsd | grep -c CapabilityBoundingSet=CAP_NET_ADMIN; test -s /etc/ssl/certs/ca-certificates.crt && echo roots' 2>&1)
-[[ $dsec =~ ^[0-9]+$'\n'755$'\n'755$'\n'1$'\n'roots$ ]] &&
-	pass "decryption installed: tlsd and sjb-decrypt-net, user sjb-tls, a capability-limited sjb-tlsd unit, Debian's trusted roots" ||
+dsec=$(root_run 'id -u sjb-tls; stat -c %a /usr/local/sbin/tlsd /usr/local/sbin/sjb-decrypt-net; systemctl cat sjb-tlsd | grep -c CapabilityBoundingSet=CAP_NET_ADMIN; test -s /etc/ssl/certs/ca-certificates.crt && echo roots; stat -c "%U:%G %a" /etc/ngfw/decryption /etc/ngfw' 2>&1)
+[[ $dsec =~ ^[0-9]+$'\n'755$'\n'755$'\n'1$'\n'roots$'\n''root:sjb-tls 750'$'\n''root:root 700'$ ]] &&
+	pass "decryption installed: tlsd and sjb-decrypt-net, user sjb-tls, a capability-limited sjb-tlsd unit, Debian's trusted roots; /etc/ngfw stays root-only" ||
 	fail "decryption install: $dsec"
 root_run 'set -e
 	d=/etc/ssl/sjb-boottest; mkdir -p $d; cd $d

@@ -12,6 +12,10 @@ should rely on.
 > not rely on it to protect production systems. Working code does not
 > establish security effectiveness, resilience, or operational readiness.**
 
+**The short version:** [the product brief](docs/SJB-OS-product-brief.pdf)
+(two-page PDF): what got built, and how building it with AI compares with
+building it the usual way.
+
 ## How it was built
 
 Steve Boyle used Claude Code to generate the project-specific implementation,

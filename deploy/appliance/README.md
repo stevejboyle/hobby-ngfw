@@ -260,7 +260,13 @@ allow-list, the IPS on every allowed connection, risky applications
 blocked, tag-based quarantine, and TLS decryption of users' web traffic
 with sensible exclusions. It has no network settings of its own, and
 `load` replaces the whole config, so merge it with yours rather than
-loading it bare.
+loading it bare. Then [`tools/policy-test.sh`](../../tools/policy-test.sh),
+run from a client in the inside zone, checks the policy is enforced:
+allowed services work; other ports, resolvers and encrypted DNS don't get
+out; the IPS blocks its test strings over HTTP and decrypted HTTPS; sites
+are decrypted, exclusions aren't, bad certificates and QUIC are blocked.
+Each "blocked" result is checked against a working control, so it means
+the firewall stopped it. `-D` gives it your approved DNS resolvers.
 
 ### What a commit does
 

@@ -388,6 +388,12 @@ destination 172.17.0.0/16 next-vrf lab-b`.
   never touches mgmt, inside, outside or vrf-mgmt.
 - `show vrf` and `show routes vrf NAME` in the CLI, and the Interfaces page,
   show what's in place.
+- **Interfaces you didn't create:** with TLS decryption set up, `show arp`
+  and root's `ip link` also list `sjbd-c` and `sjbd-s`. They are the two
+  ends of decryption's internal cleartext loop (see
+  [How it works](#how-it-works)), with link-local addresses (169.254.77.x)
+  that never leave the appliance. Nothing to configure; ngfwd creates and
+  removes them with decryption.
 
 ## BGP and OSPF
 
@@ -836,6 +842,15 @@ content**; threat log entries for matches inside decrypted traffic say so
 decrypted traffic it is blocked, so browsers fall back to TLS (a profile
 can allow it).
 
+The internal hop is a loop of two virtual interfaces, **`sjbd-c`** (the
+client side: decrypted bytes enter the firewall here as if from the
+client) and **`sjbd-s`** (the server side: they leave the forward rules
+here for tlsd to re-encrypt towards the real server). Each has its far end
+in a private network namespace of the same name and a link-local address
+(169.254.77.x), and the loop has its own connection-tracking zone, so its
+traffic is never confused with the real connection. They show up in `show
+arp` and root's `ip link`; they take no configuration.
+
 Nothing decrypted is logged. The decryption log has, per connection, the
 rule, the decision and its reason, the server name, addresses and ports.
 
@@ -843,7 +858,11 @@ rule, the decision and its reason, the server name, addresses and ports.
 
 1. **Make a CA.** `request decryption ca generate` (or **Generate CA** on
    Security → **Decryption**) makes a CA on the firewall; its key never
-   leaves it. To use your own PKI instead, import a CA certificate and its
+   leaves it. It is named "SJB-OS Decryption CA (*hostname*)" after the
+   hostname in the running config (`sjb-fw` if none is set), and clients
+   and browsers show that name, so set the hostname you want first
+   (`set system hostname NAME`, commit); changing it later means
+   generating the CA again and reinstalling it on the clients. To use your own PKI instead, import a CA certificate and its
    unencrypted key (a subordinate CA is best; paste its intermediates after
    it, in order, and SJB-OS sends them with every certificate it issues):
    `request decryption ca import` or **Import a CA**.

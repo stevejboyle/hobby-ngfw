@@ -117,7 +117,10 @@ tcp() {
 # dnsq SERVER NAME: answer, none or skip.
 dnsq() {
 	if have dig; then
-		dig -4 +time=3 +tries=1 +short @"$1" "$2" A 2>/dev/null | grep -q . && echo answer || echo none
+		# +short still prints ";;" error lines (refused, unreachable, timed
+		# out) on stdout: an answer needs exit 0 and a line that isn't one.
+		local out
+		if out=$(dig -4 +time=3 +tries=1 +short @"$1" "$2" A 2>/dev/null) && grep -qv '^;' <<<"$out"; then echo answer; else echo none; fi
 	elif [[ -n $PY ]]; then
 		"$PY" - "$1" "$2" 2>/dev/null <<'EOF' && echo answer || echo none
 import os, socket, struct, sys

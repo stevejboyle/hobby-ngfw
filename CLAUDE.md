@@ -25,7 +25,8 @@ outside) and manages it over SSH and the tag API on mgmt.
   paths are `/etc/ngfw` (keys, TLS, initial config) and `/var/lib/ngfw`
   (revisions, tags). Features must work within that layout.
 - Anything a feature needs at runtime (packages, units, sysctls, files) goes
-  into the image via deploy/appliance, and the boot test checks it.
+  into the image via deploy/appliance, and the boot test checks it (it runs
+  for version bumps; see below).
 - The namespace lab and the container gate exist only to test the code in CI
   and during development. They are not a deployment path.
 - The operator guide is deploy/appliance/README.md. Update it with any
@@ -191,8 +192,18 @@ docs/               architecture, effort log
 
 The appliance build (`deploy/appliance/build.sh`) needs Docker with
 linux/amd64; `boot-test.sh` boots the result in QEMU with VMware device
-models (pvscsi, vmxnet3) and checks first boot. Run both after any change
-under deploy/appliance or to what ngfwd needs at runtime.
+models (pvscsi, vmxnet3) and checks first boot. When to run it depends on
+the release (Steve's rule):
+
+- **Revision builds** (`X.Y.Z-rNN` to `rNN+1`, e.g. 0.9.9-r08 to r09): no
+  full boot test. Run `make test` (vet, race) plus the lab gates, golden
+  files and other checks that cover what changed. The release notes say
+  which tests ran and that the boot test didn't.
+- **Version bumps** (X.Y.Z changes, e.g. 0.9.9 to 0.9.10 or 1.0.0): the full
+  boot test, the base image upgraded to the new bundle.
+
+Build any release from a clean commit: a build with uncommitted changes
+records `+local-changes` in its source manifest.
 
 ## Known phase 1 limits
 
@@ -237,7 +248,8 @@ certificate is self-signed. Upgrades (signed bundles, `fwctl upgrade`) cover
 SJB-OS files only, not the kernel or Debian packages; 0.2.0 and earlier
 must be redeployed once to get the updater. One web UI user, no roles.
 IPv4 only, and IPv6 is out of scope until Steve says otherwise. In real
-use on ESXi; boot-test.sh in QEMU is the pre-release check.
+use on ESXi; boot-test.sh in QEMU is the pre-release check for version
+bumps (revision builds run the relevant tests only).
 
 ## Conventions
 

@@ -56,7 +56,7 @@ NICs, 2 vCPU, 2 GB RAM, 8 GB disk. Give it 4 GB of RAM to use the IPS.
 
    | Key | Default | Notes |
    | --- | --- | --- |
-   | hostname | sjb-fw | |
+   | hostname | sjb-fw | Change it later with `set system hostname NAME` and commit: the prompt, web UI and console follow (0.9.9-r08 and later) |
    | admin_password | generated | `admin`'s one password (SSH, console, web UI), 10+ characters; shown on the VM console until you change it. A shorter one is replaced by a generated one |
    | admin_ssh_key | none | Public key for user `admin` |
    | root_ssh_key | none | Public key that may log in as root over SSH, for recovery. None: root has no SSH access. No key ships with SJB-OS |

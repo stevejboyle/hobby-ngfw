@@ -37,6 +37,7 @@ import (
 	"github.com/stevejboyle/hobby-ngfw/internal/routes"
 	"github.com/stevejboyle/hobby-ngfw/internal/stats"
 	"github.com/stevejboyle/hobby-ngfw/internal/store"
+	"github.com/stevejboyle/hobby-ngfw/internal/sysname"
 	"github.com/stevejboyle/hobby-ngfw/internal/tags"
 	"github.com/stevejboyle/hobby-ngfw/internal/upgrade"
 	"github.com/stevejboyle/hobby-ngfw/internal/webui"
@@ -63,6 +64,7 @@ func main() {
 	flag.StringVar(&ipsDir, "ips-dir", "/var/lib/sjb-os/ips", "IPS signature directory (empty: no IPS, for development)")
 	flag.StringVar(&keaPath, "kea", "/usr/sbin/kea-dhcp4", "path to kea-dhcp4, the DHCP server (empty: don't manage DHCP, for development)")
 	flag.StringVar(&ipPath, "ip", "ip", "path to the ip binary for static routes (empty: don't manage routes, for development)")
+	flag.StringVar(&hostnameDir, "hostname-dir", "", "apply system.hostname to the system: the hostname and hosts files in this directory, and the live hostname (the appliance passes /etc; empty: leave the hostname alone)")
 	bootstrap := flag.String("bootstrap", "", "config file to commit as revision 1 if nothing has been committed yet")
 	uiListen := flag.String("ui-listen", "", "address for the web UI, e.g. :443 (disabled if empty; needs -tls-cert)")
 	webUsers := flag.String("web-users", "/etc/ngfw/web-users", "web UI user file (see fwctl web-passwd)")
@@ -99,6 +101,9 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 		d.SetRouter(routes.Exec{Path: ipPath, RestoreDefault: restoreDeploymentDefault})
 		d.SetNetdev(netdev.Exec{Path: ipPath})
 		d.SetNICs(&nicaddr.Networkd{Dir: "/etc/systemd/network", NICs: []string{"inside", "outside"}, HasAddr: nicaddr.IPHasAddr(ipPath)})
+	}
+	if hostnameDir != "" {
+		d.SetHostname(&sysname.Host{Etc: hostnameDir, Get: os.Hostname, Set: setHostname})
 	}
 	if frrDir != "" {
 		d.SetFRR(frr.Exec{Dir: frrDir, Vtysh: vtyshPath})
@@ -330,6 +335,10 @@ var mgmtGroup string
 
 // ipPath is the ip binary for static routes (set by -ip).
 var ipPath string
+
+// hostnameDir is where the hostname and hosts files are (/etc on the
+// appliance); empty leaves the hostname alone.
+var hostnameDir string
 
 // frrDir is FRR's config directory (set by -frr); vtyshPath its shell.
 var frrDir, vtyshPath string

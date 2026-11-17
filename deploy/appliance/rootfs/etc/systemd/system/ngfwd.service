@@ -17,6 +17,7 @@ ExecStart=/usr/local/sbin/ngfwd \
     -tls-key /etc/ngfw/tls.key \
     -ui-listen :443 \
     -web-users /etc/ngfw/web-users \
+    -hostname-dir /etc \
     -bootstrap /etc/ngfw/initial.yaml
 ExecStartPost=/bin/sh -c 'for i in $(seq 50); do [ -S /run/ngfw/ngfwd.sock ] && exit 0; sleep 0.1; done; exit 1'
 # Accounts and shells for the captive CLI (idempotent; see sjb-migrate).

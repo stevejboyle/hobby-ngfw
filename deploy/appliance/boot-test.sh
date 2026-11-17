@@ -955,6 +955,18 @@ script=$'configure\ndelete system decryption\ndelete decryption-rule dec\ndelete
 retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
 root_run 'ip netns pids dcs | xargs -r kill; ip netns del dcc; ip netns del dcs; ip link del dc1; ip link del dc2; rm -rf /run/systemd/system/sjb-tlsd.service.d; systemctl daemon-reload' >/dev/null 2>&1
 
+# --- hostname: a commit renames the appliance ------------------------------------
+oldhn=$(root_run hostname)
+script=$'configure\nset system hostname bt-renamed\ncommit -m "boot test: rename"\nexit\nexit\n'
+retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
+hn=$(root_run 'hostname; cat /etc/hostname; grep "^127.0.1.1" /etc/hosts')
+pr=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<$'exit\n' 2>&1)
+[[ $hn == $'bt-renamed\nbt-renamed\n127.0.1.1 bt-renamed' && $pr == *"@bt-renamed>"* ]] &&
+	pass "set system hostname renames the appliance: hostname, /etc/hostname, /etc/hosts and the CLI prompt" || fail "rename: $hn / prompt: ${pr:0:200}"
+script=$'configure\nset system hostname '"$oldhn"$'\ncommit -m "boot test: rename back"\nexit\nexit\n'
+retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
+[[ $(root_run hostname) == "$oldhn" ]] && pass "renamed back to $oldhn" || fail "rename back: $(root_run hostname)"
+
 # --- dashboard statistics (a sample a minute) ------------------------------------
 # The App Identification and IPS traffic above was sampled; wait for the minute in
 # progress, then check the hour's report and the CLI.

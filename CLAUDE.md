@@ -168,6 +168,8 @@ internal/ips/       IPS: ET Open download (md5-checked) and processing (every ru
                     EVE alert socket; Suricata itself runs as sjb-ips.service
 internal/routes/    static routes: sync the config's routes into the kernel
                     (`ip route ... proto 222`; ngfwd owns only proto 222)
+internal/sysname/   system.hostname -> the live hostname, /etc/hostname and /etc/hosts
+                    (ngfwd -hostname-dir /etc on the appliance), at commit and start
 cmd/fwctl/shell.go  the captive CLI (`fwctl shell`): operational and configure mode
 internal/cliconf/   configure mode: schema of objects/attributes, set/delete/
                     move/rename on a working copy, Tab/? completion data

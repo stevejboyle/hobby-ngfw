@@ -29,6 +29,7 @@ import (
 	"github.com/stevejboyle/hobby-ngfw/internal/routes"
 	"github.com/stevejboyle/hobby-ngfw/internal/stats"
 	"github.com/stevejboyle/hobby-ngfw/internal/store"
+	"github.com/stevejboyle/hobby-ngfw/internal/sysname"
 	"github.com/stevejboyle/hobby-ngfw/internal/tags"
 )
 
@@ -58,6 +59,8 @@ type Daemon struct {
 	wantFRR     *frr.Result
 	frrApplied  string // frr.conf + daemons last applied without error
 	nics        nicaddr.Syncer
+	host        sysname.Syncer
+	wantHost    string            // system.hostname of the running config
 	wantNICs    map[string]string // physical NIC -> configured address
 	nicStates   []nicaddr.State
 	netdev      netdev.Syncer
@@ -115,7 +118,7 @@ type Status struct {
 // New builds a daemon. Call Start before serving.
 func New(st *store.Store, reg *tags.Registry, runner nft.Runner, ct conntrack.Flusher, log *slog.Logger) *Daemon {
 	return &Daemon{store: st, tags: reg, nft: runner, ct: ct, log: log, Now: time.Now, sets: map[string]string{},
-		Queues: func(q ...int) nfqueue.State { return nfqueue.Read("", q...) }, router: routes.Noop{}, nics: nicaddr.Noop{}, netdev: netdev.Noop{}, frr: frr.Noop{}, dhcp: dhcp.Noop{}}
+		Queues: func(q ...int) nfqueue.State { return nfqueue.Read("", q...) }, router: routes.Noop{}, nics: nicaddr.Noop{}, host: sysname.Noop{}, netdev: netdev.Noop{}, frr: frr.Noop{}, dhcp: dhcp.Noop{}}
 }
 
 // SetRouter sets how static routes reach the kernel. Call before Start.
@@ -160,6 +163,10 @@ func wantedNICs(cfg *config.Config) map[string]string {
 // SetNICs sets how physical NIC addresses are applied. Call before Start.
 func (d *Daemon) SetNICs(n nicaddr.Syncer) { d.nics = n }
 
+// SetHostname sets how the configured hostname is applied to the system.
+// Call before Start.
+func (d *Daemon) SetHostname(h sysname.Syncer) { d.host = h }
+
 // NICs reports the configured physical NIC addresses and whether each is applied.
 func (d *Daemon) NICs() []nicaddr.State {
 	d.mu.Lock()
@@ -203,6 +210,13 @@ func wantedNet(cfg *config.Config) netdev.Want {
 // a warning per device that isn't yet. Callers hold d.mu.
 func (d *Daemon) syncNetLocked(mode nicaddr.Mode) []string {
 	var warn []string
+	if d.wantHost != "" {
+		if changed, err := d.host.Sync(d.wantHost); err != nil {
+			warn = append(warn, fmt.Sprintf("hostname not applied: %v", err))
+		} else if changed {
+			d.log.Info("hostname applied", "hostname", d.wantHost)
+		}
+	}
 	// Physical NIC addresses first: VLANs sit on those NICs, and routes need
 	// their networks.
 	if ns, err := d.nics.Sync(d.wantNICs, mode); err != nil {
@@ -361,6 +375,7 @@ func (d *Daemon) Start() error {
 	d.sets = res.Sets
 	d.policy = policyOf(cfg)
 	d.wantNICs = wantedNICs(cfg)
+	d.wantHost = strings.TrimSpace(cfg.System.Hostname)
 	d.wantNet = wantedNet(cfg)
 	d.wantRoutes = wantedRoutes(cfg)
 	d.wantFRR = frr.Compile(cfg)
@@ -645,6 +660,7 @@ func (d *Daemon) commitLocked(data []byte, author, message string, confirm time.
 	warnings = append(warnings, d.flushIfPolicyChangedLocked(cfg)...)
 	d.sets = res.Sets
 	d.wantNICs = wantedNICs(cfg)
+	d.wantHost = strings.TrimSpace(cfg.System.Hostname)
 	d.wantNet = wantedNet(cfg)
 	d.wantRoutes = wantedRoutes(cfg)
 	d.wantFRR = frrRes

@@ -116,17 +116,36 @@ func newCA(cn string, now time.Time, years int) (CA, error) {
 	return CA{Cert: cert, Key: key}, nil
 }
 
+// maxCN is X.509's upper bound on a common name (ub-common-name, RFC 5280).
+// Clients tolerate longer ones, but CA names stay within it.
+const maxCN = 64
+
+// untrustedCN names the CA that re-signs certificates the firewall rejected;
+// browsers show it in their warning. Clients and tools match its prefix,
+// "SJB-OS Untrusted".
+const untrustedCN = "SJB-OS Untrusted: site certificate failed the firewall's checks"
+
+// trustedCN names a generated decryption CA after the firewall, shortening
+// a long hostname so the name stays within maxCN.
+func trustedCN(hostname string) string {
+	const pre, post = "SJB-OS Decryption CA (", ")"
+	if room := maxCN - len(pre) - len(post); len(hostname) > room {
+		hostname = hostname[:room]
+	}
+	return pre + hostname + post
+}
+
 // GenerateCA makes a new decryption CA (valid 5 years) and untrusted CA in
 // dir, replacing any there.
 func GenerateCA(dir, hostname string, now time.Time, o Owner) (CAInfo, error) {
 	if hostname == "" {
 		hostname = "sjb-fw"
 	}
-	tr, err := newCA(fmt.Sprintf("SJB-OS Decryption CA (%s)", hostname), now, 5)
+	tr, err := newCA(trustedCN(hostname), now, 5)
 	if err != nil {
 		return CAInfo{}, err
 	}
-	un, err := newCA("SJB-OS Untrusted: this site's own certificate failed the firewall's checks", now, 5)
+	un, err := newCA(untrustedCN, now, 5)
 	if err != nil {
 		return CAInfo{}, err
 	}
@@ -172,7 +191,7 @@ func ImportCA(dir string, certPEM, keyPEM []byte, now time.Time, o Owner) (CAInf
 	if !samePublic(cert.PublicKey, key.Public()) {
 		return CAInfo{}, errors.New("the key does not belong to the certificate")
 	}
-	un, err := newCA("SJB-OS Untrusted: this site's own certificate failed the firewall's checks", now, 5)
+	un, err := newCA(untrustedCN, now, 5)
 	if err != nil {
 		return CAInfo{}, err
 	}

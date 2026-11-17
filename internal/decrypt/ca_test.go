@@ -200,3 +200,29 @@ func roots(cs ...*x509.Certificate) *x509.CertPool {
 	}
 	return p
 }
+
+// CA names stay within X.509's 64-character limit on a common name, even
+// for the longest hostname, and keep the prefixes clients and tools match.
+func TestCANamesFit(t *testing.T) {
+	long := strings.Repeat("h", 63) // the longest DNS label
+	for _, host := range []string{"sjb-fw", long} {
+		dir := filepath.Join(t.TempDir(), "decryption")
+		if _, err := GenerateCA(dir, host, now, NoOwner); err != nil {
+			t.Fatal(err)
+		}
+		cas, err := LoadCAs(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tr, un := cas.Trusted.Cert.Subject.CommonName, cas.Untrusted.Cert.Subject.CommonName
+		if len(tr) > maxCN || len(un) > maxCN {
+			t.Errorf("host %d chars: names %d and %d chars, want at most %d: %q, %q", len(host), len(tr), len(un), maxCN, tr, un)
+		}
+		if !strings.HasPrefix(tr, "SJB-OS Decryption CA (") || !strings.HasSuffix(tr, ")") || !strings.HasPrefix(un, "SJB-OS Untrusted") {
+			t.Errorf("names lost their prefixes: %q, %q", tr, un)
+		}
+	}
+	if got := trustedCN("sjb-fw"); got != "SJB-OS Decryption CA (sjb-fw)" {
+		t.Errorf("short hostname changed: %q", got)
+	}
+}

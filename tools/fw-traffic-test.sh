@@ -187,7 +187,7 @@ appid_quic() {
 		name=${e%%|*} url=${e#*|}
 		code=$(curl -s -o /dev/null -m 10 -A "$UA" -w '%{http_code}' --http3-only "$url" 2>/dev/null)
 		if [[ $code =~ ^[1-5][0-9][0-9]$ ]]; then result "$name" ok "HTTP $code"
-		elif decrypt_probe; then result "$name" ok "blocked: expected, TLS decryption blocks QUIC"
+		elif decrypt_probe; then result "$name" skip "no response: may be QUIC blocking; confirm in firewall logs"
 		else result "$name" fail "no response"; fi
 	done
 }
@@ -419,7 +419,7 @@ tls_decrypted() {
 }
 
 tls_details() {
-	local s e days v
+	local s e days v rc
 	if peer www.example.com && [[ $(kind "$P_ISSUER") == ours ]]; then
 		if s=$(date -d "$P_START" +%s 2>/dev/null) && e=$(date -d "$P_END" +%s 2>/dev/null); then
 			days=$(((e - s) / 86400))
@@ -433,6 +433,11 @@ tls_details() {
 	fi
 	# tlsd offers HTTP/1.1 when the client does, so the IPS reads requests best.
 	v=$(curl -s -o /dev/null -m 10 -A "$UA" --http2 -w '%{http_version}' https://www.example.com/ 2>/dev/null)
+	rc=$?
+	if ((rc != 0)) || [[ ! $v =~ ^(1[.][01]|2|3)$ ]]; then
+		result "HTTP version" fail "request failed or returned no valid version (curl $rc, HTTP ${v:-?})"
+		return
+	fi
 	if decrypt_probe; then
 		if [[ $v == 1.1 ]]; then result "HTTP version when decrypted" ok "HTTP/1.1 (preferred for inspection)"
 		else result "HTTP version when decrypted" ok "HTTP/$v"; fi
@@ -460,8 +465,7 @@ tls_bad_certs() {
 		verified "https://$h/"; rc=$?
 		if [[ $rc == 0 ]]; then result "bad cert $h" fail "ACCEPTED: curl trusted a bad certificate"; continue; fi
 		if ! peer "$h"; then
-			if decrypt_probe; then result "bad cert $h" ok "blocked (profile: bad-certificate block)"
-			else result "bad cert $h" skip "no TLS answer (site down?)"; fi
+			result "bad cert $h" skip "no TLS answer: blocking or connectivity failure; confirm in decryption logs"
 			continue
 		fi
 		case $(kind "$P_ISSUER") in
@@ -477,8 +481,7 @@ tls_passthrough() {
 	# No server name: tlsd can't issue a certificate, so the default profile
 	# passes the connection through untouched.
 	if ! peer 1.1.1.1 -; then
-		if decrypt_probe; then result "no server name (1.1.1.1)" ok "blocked (profile: unsupported block)"
-		else result "no server name (1.1.1.1)" skip "no TLS answer"; fi
+		result "no server name (1.1.1.1)" skip "no TLS answer: blocking or connectivity failure; confirm in decryption logs"
 		return
 	fi
 	case $(kind "$P_ISSUER") in
@@ -488,24 +491,47 @@ tls_passthrough() {
 }
 
 tls_ips() {
-	# The SJB-OS test signatures inside HTTPS: only visible to the IPS once
-	# the connection is decrypted. The default IPS profile blocks critical
-	# and alerts on minor.
-	local code
-	code=$(curl -s -o /dev/null -m 8 -A "$UA" -w '%{http_code}' https://www.example.com/SJB-IPS-TEST-CRITICAL 2>/dev/null)
-	if [[ ! $code =~ ^[1-5][0-9][0-9]$ ]]; then
-		result "IPS inside HTTPS, critical" ok "blocked: the IPS saw the decrypted request"
-	elif decrypt_probe; then
-		result "IPS inside HTTPS, critical" fail "passed (HTTP $code): does the allow rule have an IPS profile?"
-	else
-		result "IPS inside HTTPS, critical" ok "passed (HTTP $code): expected, nothing is decrypted"
+	# A failed request alone cannot prove an IPS block. Require decryption,
+	# a working HTTPS control before and after, and a compatible curl error;
+	# the matching threat-log event is still needed to confirm the cause.
+	local code rc before after
+	if ! decrypt_probe; then
+		result "IPS inside HTTPS" skip "decryption not established; cannot test inspection of plaintext"
+		return
 	fi
-	code=$(curl -s -o /dev/null -m 8 -A "$UA" -w '%{http_code}' https://www.example.com/SJB-IPS-TEST-MINOR 2>/dev/null)
-	if [[ $code =~ ^[1-5][0-9][0-9]$ ]]; then
-		if decrypt_probe; then result "IPS inside HTTPS, minor" ok "passed (HTTP $code); the threat log should show it, marked decrypted"
-		else result "IPS inside HTTPS, minor" ok "passed (HTTP $code): not decrypted, so not seen"; fi
+	before=$(curl -s -o /dev/null -m 8 -A "$UA" -w '%{http_code}' https://www.example.com/ 2>/dev/null)
+	rc=$?
+	if ((rc != 0)) || [[ ! $before =~ ^[1-5][0-9][0-9]$ ]]; then
+		result "IPS inside HTTPS, control" fail "ordinary HTTPS failed (curl $rc, HTTP $before); block test inconclusive"
+		return
+	fi
+
+	code=$(curl -s -o /dev/null -m 8 -A "$UA" -w '%{http_code}' https://www.example.com/SJB-IPS-TEST-CRITICAL 2>/dev/null)
+	rc=$?
+	if ((rc == 0)) && [[ $code =~ ^[1-5][0-9][0-9]$ ]]; then
+		result "IPS inside HTTPS, critical" fail "passed (HTTP $code): does the allow rule have an IPS profile?"
+	elif [[ $code =~ ^[1-5][0-9][0-9]$ ]]; then
+		result "IPS inside HTTPS, critical" fail "HTTP $code received before curl failed ($rc); block not established"
 	else
-		result "IPS inside HTTPS, minor" fail "no response"
+		case $rc in
+		28 | 52 | 55 | 56)
+			after=$(curl -s -o /dev/null -m 8 -A "$UA" -w '%{http_code}' https://www.example.com/ 2>/dev/null)
+			local after_rc=$?
+			if ((after_rc == 0)) && [[ $after =~ ^[1-5][0-9][0-9]$ ]]; then
+				result "IPS inside HTTPS, critical" ok "consistent with blocking (curl $rc); controls passed; confirm SID 9900001 in the threat log"
+			else
+				result "IPS inside HTTPS, critical" fail "HTTPS control also failed (curl $after_rc, HTTP $after); block test inconclusive"
+			fi ;;
+		*) result "IPS inside HTTPS, critical" fail "curl $rc, HTTP $code: certificate, connection or other error; not evidence of an IPS block" ;;
+		esac
+	fi
+
+	code=$(curl -s -o /dev/null -m 8 -A "$UA" -w '%{http_code}' https://www.example.com/SJB-IPS-TEST-MINOR 2>/dev/null)
+	rc=$?
+	if ((rc == 0)) && [[ $code =~ ^[1-5][0-9][0-9]$ ]]; then
+		result "IPS inside HTTPS, minor" ok "passed (HTTP $code); check SID 9900003 in the threat log to confirm inspection"
+	else
+		result "IPS inside HTTPS, minor" fail "curl $rc, HTTP $code: request failed"
 	fi
 }
 
@@ -514,7 +540,7 @@ tls_quic() {
 	if ! curl -V 2>/dev/null | grep -q HTTP3; then result "QUIC while decrypting" skip "this curl has no HTTP/3"; return; fi
 	code=$(curl -s -o /dev/null -m 10 -A "$UA" -w '%{http_code}' --http3-only https://www.example.com/ 2>/dev/null)
 	if [[ $code =~ ^[1-5][0-9][0-9]$ ]]; then result "QUIC while decrypting" ok "allowed (profile: allow-quic yes, or not decrypted)"
-	else result "QUIC while decrypting" ok "blocked, so browsers fall back to TLS (default profile)"; fi
+	else result "QUIC while decrypting" skip "no response: blocking or connectivity failure; confirm in firewall logs"; fi
 }
 
 run_tls() {
@@ -576,4 +602,4 @@ echo "done: $ok ok, $bad failed, $skip skipped"
 [[ $DO_IPS == 1 ]] && echo "Threats: Logs -> Threats or 'show log threat' (informational ones only if the profile alerts on them)."
 [[ $DO_APPID == 1 ]] && echo "Applications: wait 2-3 minutes, then Security -> Applications or 'show app'."
 [[ $DO_TLS == 1 ]] && echo "Decryption: Logs -> Decryption or 'show log decryption'; 'show decryption' for counts and learned servers."
-exit 0
+((bad == 0))

@@ -40,23 +40,30 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 ## The evidence
 
 - **Time:** nine days of calendar time (2026-11-08 to 2026-11-16) and
-  27.3 hours of Steve's own time in total, measured from the session
+  28.4 hours of Steve's own time in total, measured from the session
   transcripts release by release (all but a 0.5-hour estimate for his
   ChatGPT review): [docs/effort-log.md](docs/effort-log.md). Of that,
   22.9 hours took it to its first full release (0.9.9-r03), and TLS
   decryption (0.9.9-r04 to r06) took 0.6 hours.
-- **AI cost:** a $20/month Claude Pro plan. The 1.54 billion tokens it
+- **AI cost:** a $20/month Claude Pro plan. The 1.60 billion tokens it
   used (nearly all cached context, counted from the session transcripts)
-  would cost about $491 at Claude API list prices. ChatGPT's review isn't
+  would cost about $510 at Claude API list prices. ChatGPT's review isn't
   included.
-- **Size:** at 0.9.9-r08, about 28,200 lines of Go, C, JavaScript, shell
-  and Python, not counting comments and blank lines: 21,200 product, 7,000
+- **Size:** on 2026-11-17, about 28,500 lines of Go, C, JavaScript, shell
+  and Python, not counting comments and blank lines: 21,500 product, 7,000
   tests.
 - **Testing:** unit tests, network-namespace gates in CI (including
-  established sessions across policy changes), and a QEMU boot test of every
-  release with VMware's device models: about 150 end-to-end checks of
-  first boot, policy, application identification, intrusion prevention,
-  TLS decryption, routing, DHCP, upgrades and rollback.
+  established sessions across policy changes), and a QEMU boot test with
+  VMware's device models: about 150 end-to-end checks of first boot,
+  policy, application identification, intrusion prevention, TLS
+  decryption, routing, DHCP, upgrades and rollback (every release through
+  0.9.9-r08; from now on, version bumps, while revisions run the tests that
+  cover what changed). From a client VM behind the firewall,
+  [`tools/fw-traffic-test.sh`](tools/fw-traffic-test.sh) exercises App
+  Identification, the IPS and TLS decryption, and
+  [`tools/policy-test.sh`](tools/policy-test.sh) checks the
+  [best-practice policy](examples/best-practice.yaml): 47 checks passed,
+  none failed, on Steve's appliance.
 - **Releases:** 38 in nine days, each gated by the boot test. The public
   history starts at 0.9.9-r01; the earlier releases are kept privately.
 - **Design:** [docs/architecture.md](docs/architecture.md).
@@ -67,8 +74,8 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 | --- | --- | --- |
 | Time to build | About a year | 9 days, Nov 8 to 16, 2026 |
 | People | One specialist, or about six engineers | One person directing AI |
-| Human hours | 2,400 to 12,200 engineering hours | 27.3 hours, everything to date |
-| Cost | $350,000 to $1.1 million in salary and benefits | A $20/month Claude Pro plan ($491 of tokens at API list prices) |
+| Human hours | 2,400 to 12,300 engineering hours | 28.4 hours, everything to date |
+| Cost | $350,000 to $1.1 million in salary and benefits | A $20/month Claude Pro plan ($510 of tokens at API list prices) |
 
 The left column is an estimate, not a measurement:
 
@@ -78,9 +85,9 @@ The left column is an estimate, not a measurement:
   2,350 hours. Priced at the 90th-percentile US wage for software
   developers ($214,670 a year), about $147 an hour with benefits: about
   $350,000.
-- **High end:** the basic COCOMO model (organic mode) applied to the 28,200
-  lines at 0.9.9-r08: 80 person-months, about six people for about 13
-  months, or 12,200 hours. Priced at the median wage ($64.44 an hour),
+- **High end:** the basic COCOMO model (organic mode) applied to the 28,500
+  lines (2026-11-17): 81 person-months, about six people for about 13
+  months, or 12,300 hours. Priced at the median wage ($64.44 an hour),
   about $92 an hour with benefits: about $1.1 million.
 - **Benefits:** wages are about 70% of what employers pay in total (BLS
   Employer Costs for Employee Compensation), so wages are divided by 0.7.

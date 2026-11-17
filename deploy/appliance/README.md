@@ -748,7 +748,8 @@ Suricata as not installed.
   (the four test strings plus real ET Open signatures at every severity:
   DNS lookups of sinkholed WannaCry kill-switch domains, scanner user
   agents and the like), and prints what the default profile should do with
-  each. `-l` lists them without sending anything.
+  each. It also checks TLS decryption (see below). `-l` lists everything
+  without sending anything.
 - **Off:** `set system ips off` skips every rule's profile (with a warning)
   and stops the engine; so does removing the last profile from the rules.
 - **Inspection state:** `show ips` and the IPS page say what the IPS is
@@ -891,6 +892,16 @@ Check it: `show decryption` (or the Decryption page) shows the state, the
 CA and its fingerprint, counts by decision, and learned servers;
 `show log decryption` (Logs → **Decryption**) shows each connection, e.g.
 `show log decryption where decision = learned`.
+
+From a Linux client behind the firewall,
+[`tools/fw-traffic-test.sh -t`](../../tools/fw-traffic-test.sh) checks
+decryption end to end by looking at which CA signed each site's
+certificate: that sites are decrypted and this client trusts the CA,
+that excluded banking, payment, government and health sites are not
+(add your own with `-x name`), that badssl.com's broken certificates get
+the untrusted CA or are blocked, that a connection without a server name
+passes through, that the IPS catches its test strings inside HTTPS, and
+what happens to QUIC. For an imported CA, pass its certificate with `-C`.
 
 - **States:** **decrypting**; **observing** (`set system decryption
   observe`: log only, pass everything through); **busy** (tlsd holds its

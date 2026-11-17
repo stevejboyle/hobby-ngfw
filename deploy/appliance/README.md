@@ -254,6 +254,13 @@ ssh admin@<mgmt-ip> confirm          # within 5 minutes, or it rolls back
 
 The config format is the one `show running` prints; see
 `examples/basic.yaml` in the repo for every object type.
+[`examples/best-practice.yaml`](../../examples/best-practice.yaml) is a
+starting point for a secure policy: default deny with an outbound
+allow-list, the IPS on every allowed connection, risky applications
+blocked, tag-based quarantine, and TLS decryption of users' web traffic
+with sensible exclusions. It has no network settings of its own, and
+`load` replaces the whole config, so merge it with yours rather than
+loading it bare.
 
 ### What a commit does
 

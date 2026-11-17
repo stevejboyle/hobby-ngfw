@@ -1,0 +1,252 @@
+# Enterprise best-practice security policy: a template, not a network.
+#
+# What it does:
+#   - Default deny. Outbound from inside is an allow-list: web, DNS to
+#     approved resolvers, NTP, mail submission and ping. Everything else
+#     is denied and logged. Nothing from outside reaches inside.
+#   - Every allowed connection is inspected by the IPS and logged.
+#   - Risky applications are blocked even over allowed ports: anonymizers
+#     and consumer VPNs, peer-to-peer, remote-control tools, open proxies,
+#     encrypted DNS that bypasses the approved resolvers, crypto mining.
+#   - Hosts tagged "quarantine" (through the tag API, e.g. by a NAC or EDR
+#     tool) are cut off at once, with no commit.
+#   - Users' HTTPS is decrypted so the rules, App Identification and the IPS
+#     see inside it. Hosts tagged "no-decrypt" (servers, IoT, anything that
+#     breaks) never are, nor the built-in banking, payment, health and
+#     government sites, nor the services listed under decryption_exclusions.
+#     Sites with bad certificates are blocked rather than warned about.
+#
+# What it doesn't have: addresses on your networks, routes, VLANs, VRFs,
+# DHCP or dynamic routing. It loads as-is on any SJB-OS appliance (the
+# three standard interfaces, deployment addresses), but `load` replaces the
+# whole config: to keep what you have, merge this with your current config
+# (`show running`) rather than loading it bare, and check `show diff`.
+#
+# Before turning it on:
+#   - Decrypt only devices you own or run, for users who have been told;
+#     see the guide's caveats. Install the decryption CA on those clients
+#     first, or every decrypted site shows a certificate error. To see what
+#     would be decrypted without decrypting anything, set
+#     system.decryption to observe.
+#   - Replace the approved DNS resolvers with your own if you run internal
+#     DNS (and allow the internal resolvers to reach these instead).
+#   - Allow your own corporate VPN or remote-support tool above
+#     block-risky-apps if you use one: that rule blocks the whole VPN
+#     category and the common remote-control tools.
+#   - Commit with -confirm 5m the first time, so a mistake rolls itself back.
+
+system:
+  hostname: sjb-fw              # yours
+  mgmt_interface: mgmt          # never filtered, so policy can't lock you out
+  app_id: "on"
+  ips: "on"
+  decryption: "on"              # or observe, to log decisions first
+
+zones:
+  - name: inside                # users and their devices
+  - name: outside               # the internet
+
+# Every SJB-OS appliance has these three interfaces. No addresses here:
+# inside and outside keep the ones set at deployment. Add VLANs, VRFs or
+# addresses of your own when you merge this with your config.
+interfaces:
+  - name: mgmt
+  - name: inside
+    zone: inside
+  - name: outside
+    zone: outside
+
+addresses:
+  # Approved DNS resolvers: public resolvers that block known-malicious
+  # domains. Replace with your own resolvers if you run them.
+  - name: quad9-a
+    cidr: 9.9.9.9
+  - name: quad9-b
+    cidr: 149.112.112.112
+  - name: cloudflare-security-a
+    cidr: 1.1.1.2
+  - name: cloudflare-security-b
+    cidr: 1.0.0.2
+
+address_groups:
+  - name: approved-dns
+    static: [quad9-a, quad9-b, cloudflare-security-a, cloudflare-security-b]
+  # Dynamic groups: membership comes from the tag API, not from commits.
+  - name: quarantined
+    tag: quarantine
+  - name: no-decrypt-hosts
+    tag: no-decrypt
+
+services:
+  - name: http
+    protocol: tcp
+    ports: "80"
+  - name: https
+    protocol: tcp
+    ports: "443"
+  - name: dns-udp
+    protocol: udp
+    ports: "53"
+  - name: dns-tcp
+    protocol: tcp
+    ports: "53"
+  - name: ntp
+    protocol: udp
+    ports: "123"
+  - name: mail-submission
+    protocol: tcp
+    ports: "465,587"
+  - name: imaps
+    protocol: tcp
+    ports: "993"
+  - name: ping
+    protocol: icmp
+
+application_groups:
+  # Ways around the policy, or out of the network, that a well-run
+  # enterprise blocks outright.
+  - name: risky-apps
+    members:
+      - category:VPN            # anonymizers and VPNs: Tor, Psiphon, UltraSurf, NordVPN, ...
+      - category:Mining
+      - BitTorrent
+      - eDonkey
+      - Gnutella
+      - TeamViewer
+      - AnyDesk
+      - VNC
+      - RDP
+      - HTTP_Proxy
+      - SOCKS
+      - DoH_DoT                 # encrypted DNS that would bypass the approved resolvers
+
+ips_profiles:
+  # Block what is clearly an attack or malware, record what is suspicious,
+  # skip informational matches (they are mostly noise).
+  - name: enterprise
+    critical: block
+    major: block
+    minor: alert
+    informational: ignore
+
+rules:
+  # Order matters: the first match wins.
+  - name: quarantine
+    from: [inside]
+    source: [quarantined]
+    action: deny
+    log: true
+  - name: block-risky-apps
+    from: [inside]
+    to: [outside]
+    application: [risky-apps]
+    action: reset
+    log: true
+  - name: dns-to-approved-resolvers
+    from: [inside]
+    to: [outside]
+    destination: [approved-dns]
+    service: [dns-udp, dns-tcp]
+    action: allow
+    log: true
+    ips_profile: enterprise
+  - name: block-other-dns
+    from: [inside]
+    to: [outside]
+    service: [dns-udp, dns-tcp]
+    action: reset
+    log: true
+  - name: web
+    from: [inside]
+    to: [outside]
+    service: [http, https]
+    action: allow
+    log: true
+    ips_profile: enterprise
+  - name: time
+    from: [inside]
+    to: [outside]
+    service: [ntp]
+    action: allow
+    log: true
+    ips_profile: enterprise
+  - name: mail
+    from: [inside]
+    to: [outside]
+    service: [mail-submission, imaps]
+    action: allow
+    log: true
+    ips_profile: enterprise
+  - name: ping-out
+    from: [inside]
+    to: [outside]
+    service: [ping]
+    action: allow
+    log: true
+  # Everything else is denied anyway; these make the denials visible.
+  - name: deny-other-outbound
+    from: [inside]
+    to: [outside]
+    action: deny
+    log: true
+  - name: deny-inbound
+    from: [outside]
+    to: [inside]
+    action: deny
+    log: true
+
+nat:
+  - name: inside-out
+    from: [inside]
+    to: [outside]
+    type: masquerade
+
+decryption_profiles:
+  # Refuse sites whose own certificate is bad instead of letting users
+  # click through the warning; pass what can't be decrypted (old TLS, no
+  # server name) so it isn't silently broken; learn pinned apps and stop
+  # decrypting them; block QUIC so browsers fall back to TLS.
+  - name: enterprise
+    bad_certificate: block
+    unsupported: pass
+    pinned: exclude
+    allow_quic: false
+
+decryption_exclusions:
+  # Services that pin their certificates or break when decrypted, on top of
+  # SJB-OS's built-in banking, payment, health and government list.
+  - name: os-updates-and-identity
+    domains:
+      - "*.apple.com"
+      - "*.icloud.com"
+      - "*.mzstatic.com"
+      - "*.windowsupdate.com"
+      - "*.update.microsoft.com"
+      - "*.delivery.mp.microsoft.com"
+      - login.microsoftonline.com
+      - login.live.com
+      - "*.okta.com"
+      - accounts.google.com
+  - name: collaboration-media
+    domains:
+      - "*.zoom.us"
+      - "*.webex.com"
+      - "*.teams.microsoft.com"
+      - "*.skype.com"
+  - name: pinned-apps
+    domains:
+      - "*.dropbox.com"
+      - "*.whatsapp.net"
+      - "*.signal.org"
+
+decryption_rules:
+  # First match wins; anything unmatched is not decrypted.
+  - name: never-decrypt-tagged
+    source: [no-decrypt-hosts]
+    action: no-decrypt
+  - name: decrypt-users-web
+    from: [inside]
+    to: [outside]
+    service: [https]
+    action: decrypt
+    profile: enterprise

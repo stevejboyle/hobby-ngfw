@@ -40,16 +40,16 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 ## The evidence
 
 - **Time:** nine days of calendar time (2026-11-08 to 2026-11-16) and
-  25.3 hours of Steve's own time in total, measured from the session
+  26.4 hours of Steve's own time in total, measured from the session
   transcripts release by release (all but a 0.5-hour estimate for his
   ChatGPT review): [docs/effort-log.md](docs/effort-log.md). Of that,
   22.9 hours took it to its first full release (0.9.9-r03), and TLS
   decryption (0.9.9-r04 to r06) took 0.6 hours.
-- **AI cost:** a $20/month Claude Pro plan. The 1.45 billion tokens it
+- **AI cost:** a $20/month Claude Pro plan. The 1.49 billion tokens it
   used (nearly all cached context, counted from the session transcripts)
-  would cost about $465 at Claude API list prices. ChatGPT's review isn't
+  would cost about $480 at Claude API list prices. ChatGPT's review isn't
   included.
-- **Size:** at 0.9.9-r06, about 27,700 lines of Go, C, JavaScript, shell
+- **Size:** at 0.9.9-r07, about 27,700 lines of Go, C, JavaScript, shell
   and Python, not counting comments and blank lines: 20,900 product, 6,800
   tests.
 - **Testing:** unit tests, network-namespace gates in CI (including
@@ -57,7 +57,7 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
   release with VMware's device models: about 150 end-to-end checks of
   first boot, policy, application identification, intrusion prevention,
   TLS decryption, routing, DHCP, upgrades and rollback.
-- **Releases:** 36 in nine days, each gated by the boot test. The public
+- **Releases:** 37 in nine days, each gated by the boot test. The public
   history starts at 0.9.9-r01; the earlier releases are kept privately.
 - **Design:** [docs/architecture.md](docs/architecture.md).
 
@@ -67,8 +67,8 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 | --- | --- | --- |
 | Time to build | About a year | 9 days, Nov 8 to 16, 2026 |
 | People | One specialist, or about six engineers | One person directing AI |
-| Human hours | 2,400 to 12,000 engineering hours | 25.3 hours, everything to date |
-| Cost | $350,000 to $1.1 million in salary and benefits | A $20/month Claude Pro plan ($465 of tokens at API list prices) |
+| Human hours | 2,400 to 12,000 engineering hours | 26.4 hours, everything to date |
+| Cost | $350,000 to $1.1 million in salary and benefits | A $20/month Claude Pro plan ($480 of tokens at API list prices) |
 
 The left column is an estimate, not a measurement:
 
@@ -79,7 +79,7 @@ The left column is an estimate, not a measurement:
   developers ($214,670 a year), about $147 an hour with benefits: about
   $350,000.
 - **High end:** the basic COCOMO model (organic mode) applied to the 27,700
-  lines at 0.9.9-r06: 78 person-months, about six people for about 13
+  lines at 0.9.9-r07: 78 person-months, about six people for about 13
   months, or 11,900 hours. Priced at the median wage ($64.44 an hour),
   about $92 an hour with benefits: about $1.1 million.
 - **Benefits:** wages are about 70% of what employers pay in total (BLS

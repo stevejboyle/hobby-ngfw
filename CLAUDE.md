@@ -40,12 +40,22 @@ outside) and manages it over SSH and the tag API on mgmt.
   Never config, state, secrets or first-boot network settings. Any new file
   the image installs from this repo must sit under an allowed path, or
   upgrades can't deliver it.
-- Operators never get a Unix shell. `admin`'s SSH and console logins land in
-  the captive CLI (`fwctl shell`, entered through `sjb-cli`); new operator
-  features need a CLI command (and a web UI page). No sudo for `admin`; it
-  reaches ngfwd through the management socket, shared with group `sjbadm`.
+- Operators never get a Unix shell. Every SJB-OS user's SSH and console
+  logins land in the captive CLI (`fwctl shell`, entered through `sjb-cli`);
+  new operator features need a CLI command (and a web UI page). No sudo for
+  anyone; users reach ngfwd through the management socket, shared with group
+  `sjbadm`, and ngfwd names the caller by SO_PEERCRED (root = superuser).
   CLI commands never pass input to a shell and run only fixed tools with
   checked arguments.
+- Users and roles (`internal/accounts`, `/etc/ngfw/users.json` and
+  `roles.json`, never in the config): every management route (mgmt socket
+  and `/ui/api/`) declares an `accounts.Need`; a zero Need panics. New
+  config fields need an area in `internal/accounts/configareas.go` (a test
+  fails otherwise). Never trust a client's "author": use the verified
+  caller (`Caller.Author()`). `admin` is the permanent superuser. Each
+  user is a Unix login ngfwd creates (comment "SJB-OS user"); sjb-migrate
+  undo locks those before a rollback to a version before 0.9.9-r09
+  (`RBAC_VERSION` there: change it if this ships under another version).
 - Root: only what the operator sets at deploy time: `root_ssh_key` (SSH,
   key only, written by first boot to `/etc/ngfw/root_authorized_keys`,
   which upgrades never touch) and `root_password` (VMware console only).
@@ -57,10 +67,11 @@ outside) and manages it over SSH and the tag API on mgmt.
   unrelated and stays: it lets appliances verify bundles, nothing more.
   boot-test.sh passes a throwaway root key and password through QEMU
   `-fw_cfg opt/sjb/<key>` (first boot reads it like guestinfo).
-- `admin` has one password for SSH, the console and the web UI. Every change
-  path (web UI, CLI `passwd` via ngfwd's `/v1/password`, root's
-  `fwctl web-passwd`) goes through `webui.Users` with `System` set, which
-  runs chpasswd before writing the web hash. Keep it that way.
+- Each user has one password for SSH, the console and the web UI. Every
+  change path (web UI, CLI `passwd` and `request user password`, root's
+  `fwctl web-passwd`) goes through `accounts.Store` with `Sys` set, which
+  runs chpasswd before writing the hash (and keeps admin's hash in the old
+  `/etc/ngfw/web-users` for rollbacks). Keep it that way.
 - Debian packages ship inside bundles as files under
   /usr/share/sjb-os/packages (build.sh + fetch-packages.sh work out what
   the base image lacks; sjb-packages installs missing-or-older ones in the
@@ -180,6 +191,7 @@ internal/logs/      traffic (kernel "ngfw <rule> <action>" lines) and system
 internal/upgrade/   signed upgrade bundles: build, verify, apply, auto-restore,
                     rollback (run by `fwctl upgrade`; a rollback re-commits
                     the config running at the upgrade if it changed since)
+internal/accounts/  users, roles, permission areas, lockout, SSH keys, Unix logins
 internal/webui/     web UI: session auth, JSON API under /ui/api/, embedded
                     static pages (plain JS/CSS in static/, no build step)
 cmd/sjbpkg/       build machine tool: signing key, build and verify bundles
@@ -246,7 +258,8 @@ every security rule has a loop form of its zone match. The CA lives in
 (`fwctl load`), not with `set`-style commands yet. The appliance's tag API
 certificate is self-signed. Upgrades (signed bundles, `fwctl upgrade`) cover
 SJB-OS files only, not the kernel or Debian packages; 0.2.0 and earlier
-must be redeployed once to get the updater. One web UI user, no roles.
+must be redeployed once to get the updater. Users are local only (no
+LDAP/RADIUS/SAML/OIDC yet); web and SSH/console lockouts count separately.
 IPv4 only, and IPv6 is out of scope until Steve says otherwise. In real
 use on ESXi; boot-test.sh in QEMU is the pre-release check for version
 bumps (revision builds run the relevant tests only).
@@ -289,7 +302,8 @@ The UI's static files are embedded in ngfwd, so rebuild ngfwd after editing
 them. To try the UI on a Mac, run ngfwd with stub `-nft` and `-conntrack`
 scripts that exit 0, a relative `-socket` (macOS limits socket paths to 104
 characters), `-bootstrap examples/basic.yaml`, a `-web-users` file made with
-`fwctl web-passwd -web-only -file`, and `-ui-listen 127.0.0.1:9443 -ui-dev-http`. That
+`fwctl web-passwd -web-only -file` (it creates `users.json` beside it; pass
+that as `-users`, plus `-unix-accounts=false`), and `-ui-listen 127.0.0.1:9443 -ui-dev-http`. That
 flag serves plain HTTP and is refused on anything but loopback; browsers
 accept the UI's Secure cookie on `localhost`. Never use it on the appliance.
 
@@ -304,6 +318,10 @@ GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bin/ ./cmd/...
 docker run --rm --privileged -v "$PWD":/src:ro -w /src debian:stable-slim bash -c \
   'apt-get update -qq && apt-get install -y -qq iproute2 iputils-ping nftables conntrack python3 curl make procps && make lab-gate1'
 ```
+
+`make lab-gate-users` runs the users gate (Unix logins, roles over the
+socket, PAM lockout, sjb-migrate undo) in a throwaway Debian 13 container;
+it refuses to run outside one, since it creates accounts and rewrites PAM.
 
 On Linux: `make build && sudo make lab-gate1`. The gate script shows how to
 drive ngfwd directly (`-state`, `-socket`, `-api-listen`, `-api-keys`) for

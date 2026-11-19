@@ -140,7 +140,10 @@ vSphere 8.0 U1 or later with three networks: **mgmt**, **inside** and **outside*
 5. Open the web UI at `https://<mgmt-ip>/` and log in as `admin` with the
    password from the console, or `ssh admin@<mgmt-ip>` for the CLI.
 
-Operators get a CLI, never a Unix shell: `admin` has no bash and no sudo. Root logs in only with the SSH key or console password you set at
+Operators get a CLI, never a Unix shell: `admin` has no bash and no sudo.
+`admin` is the permanent superuser; add a user for each person, with a
+built-in role (superuser, admin, read-only) or a custom one, on System →
+Users or with `request user add` in the CLI. Root logs in only with the SSH key or console password you set at
 deploy time, for recovery; no root key or password ships with SJB-OS.
 
 Later releases install in place: upload the signed `.upgrade` file on the web
@@ -181,6 +184,11 @@ on Steve's own ESXi lab):
   server (Kea).
 - A web UI and a captive configure-and-commit CLI; traffic, threat,
   decryption and system logs with queries; dashboard statistics.
+- Multiple local users with role-based access: built-in superuser, admin
+  and read-only roles, custom roles by area (view or change), config
+  changes checked against the areas they touch, per-user SSH keys, account
+  lockout, and every change recorded under the user the firewall verified.
+  Directory sign-in (LDAP, RADIUS, SAML, OIDC) is not built yet.
 - Signed in-place upgrades with automatic restore and rollback.
 
 **Not implemented** (from the original plan, and not claimed): high

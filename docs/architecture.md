@@ -21,10 +21,11 @@ the appliance layout:
 | --- | --- |
 | Interfaces | `mgmt` (unfiltered, own VRF `vrf-mgmt`), `inside`, `outside`; named at first boot from adapter order |
 | Daemon | `ngfwd.service`, started before networking so the ruleset is in place before any interface is up |
-| Management | Web UI (`:443`), SSH and the tag API (`:8443`), reachable only via mgmt. SSH as `admin` lands in the captive CLI (`fwctl shell`), which talks to ngfwd over a Unix socket shared with group `sjbadm`. Root: only the SSH key and console password the operator sets at deploy time (none ship) |
+| Management | Web UI (`:443`), SSH and the tag API (`:8443`), reachable only via mgmt. SSH as any SJB-OS user lands in the captive CLI (`fwctl shell`), which talks to ngfwd over a Unix socket shared with group `sjbadm`; ngfwd names the caller from the socket peer and checks their role. Root: only the SSH key and console password the operator sets at deploy time (none ship) |
 | Config and state | `/etc/ngfw` (API keys, TLS, initial config), `/var/lib/ngfw` (revisions, tags) |
 | First boot | `ngfw-firstboot.service`: settings from OVF properties or `guestinfo.ngfw.*`, credentials, starter policy |
-| Management UI | Web UI on `https://<mgmt-ip>/` (443), served by `ngfwd`, session login as `admin` |
+| Management UI | Web UI on `https://<mgmt-ip>/` (443), served by `ngfwd`, session login per user, pages per role |
+| Users and roles | Local users (`/etc/ngfw/users.json`, custom roles in `roles.json`): one password each for web, SSH and console, SSH keys, lockout; built-in superuser/admin/read-only roles and custom roles by area (view/change); `admin` permanent superuser |
 | Upgrade | Signed `.upgrade` bundle applied in place (`fwctl upgrade` or the web UI); auto-restore if ngfwd is unhealthy; `fwctl upgrade rollback` (re-commits the upgrade-time config if it changed since, so the older version can read it) |
 
 The namespace lab in `lab/` exercises the same daemon in CI. It is a test
@@ -111,14 +112,30 @@ The design below is the target. Phase 1 simplified it on purpose:
 - The web UI (planned for phase 3) was pulled forward. `ngfwd` serves it on
   mgmt :443: plain HTML/JS embedded in the binary, a session-authenticated
   JSON API under `/ui/api/` that calls the same `Daemon` methods as `fwctl`,
-  PBKDF2 password file, CSRF header on every change. Forms edit the whole
+  PBKDF2 password hashes in the user database, CSRF header on every change. Forms edit the whole
   candidate as JSON; the server stores YAML and validates on every save.
 - The CLI has a configure-and-commit configuration mode (`configure`, then `set`,
   `delete`, `move`, `rename` on a working copy that is saved to the candidate
   whenever it validates) and Tab/`?` completion driven by one schema
   (`internal/cliconf`); the line editor is stdlib-only, using `stty` for raw
   mode.
-- Captive CLI: `admin` has no Unix shell and no sudo. SSH
+- Users and roles (`internal/accounts`): users live outside the config
+  (`/etc/ngfw/users.json`, `roles.json`), so a config rollback never brings
+  back a deleted user or an old password. Each user is also a Unix login
+  (comment "SJB-OS user", group `sjbadm`, the captive-CLI shell) that ngfwd
+  creates, locks and deletes with fixed tools; SSH keys go to
+  `/etc/ssh/sjb-keys/<user>`. ngfwd identifies a socket caller by
+  `SO_PEERCRED` (root is a superuser, for recovery) and a web caller by the
+  session, resolves their role on every request, and checks it against the
+  permission every route declares (a route without one panics at start).
+  Config changes are diffed section by section; each section belongs to an
+  area (a test fails if a config field has none), and an edit, commit or
+  rollback touching an area the role can't change is refused. Revisions
+  record the verified author (`cli:alice`, `web:alice`). pam_faillock
+  (sjb-migrate) locks SSH/console logins after five failures; the web UI
+  keeps its own count. Built so a directory (LDAP, RADIUS, SAML, OIDC) can
+  add other user sources and map its groups to these roles later.
+- Captive CLI: operators have no Unix shell and no sudo. SSH
   (sshd `ForceCommand`) and the console (login shell shim) both run
   `fwctl shell`, a fixed command set over the management socket. Account
   changes that bundles can't ship as files are made by `sjb-migrate` after
@@ -160,7 +177,7 @@ What runs in SJB-OS 0.4.0. One daemon, one lock, one nftables table.
 ```mermaid
 flowchart TB
   subgraph ext["Reached only via mgmt (vrf-mgmt)"]
-    admin["Operator: SSH or console<br/>user admin"]
+    admin["Operators: SSH or console<br/>each their own user"]
     rootk["Root: SSH key or console<br/>(development, recovery)"]
     integ["NAC / SOAR / EDR scripts"]
     browser["Browser"]
@@ -168,9 +185,9 @@ flowchart TB
   subgraph vm["SJB-OS VM (Debian 13)"]
     fwctl["Captive CLI<br/>fwctl shell"]
     subgraph ngfwd["ngfwd (single process, one mutex)"]
-      mgmtapi["Mgmt API<br/>HTTP/JSON, root-only Unix socket"]
+      mgmtapi["Mgmt API<br/>HTTP/JSON, Unix socket<br/>caller by SO_PEERCRED, role checked"]
       tagapi["Tag API :8443 TLS<br/>REST /api/v1/tags · XML user-ID /api/"]
-      webui["Web UI :443 TLS<br/>session login, /ui/api/"]
+      webui["Web UI :443 TLS<br/>session login per user, role checked"]
       commit["Commit pipeline<br/>validate → compile → nft -c → apply"]
       reg["Tag registry<br/>TTL, persisted"]
     end
@@ -466,7 +483,7 @@ flowchart LR
   p0["<b>0 · Lab, skeleton</b><br/>repo and CLAUDE.md<br/>namespace test lab<br/>config schema<br/>CI<br/><i>done</i>"]
   p1["<b>1 · Stateful core</b><br/>commit and rollback<br/>zones, rules, NAT<br/>tag API: REST + XML user-ID<br/>VMware OVA<br/>web UI, in-place upgrades<br/><i>done</i>"]
   p2["<b>2 · NGFW features</b><br/>App Identification via nDPI<br/>inline IPS, ET Open<br/>logs in ClickHouse<br/>external lists"]
-  p3["<b>3 · Polish and HA</b><br/>web UI roles, more UI<br/>HA pair, session sync<br/>user identity via tag API<br/>performance tests"]
+  p3["<b>3 · Polish and HA</b><br/>more UI<br/>HA pair, session sync<br/>user identity via tag API<br/>performance tests"]
   p0 --> p1 --> p2 --> p3
   p0 -.- g0(["Gate: one command builds and tests the lab"])
   p1 -.- g1(["Gate: tag API blocks a host in under 1 s; rollback restores"])

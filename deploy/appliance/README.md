@@ -82,10 +82,11 @@ NICs, 2 vCPU, 2 GB RAM, 8 GB disk. Give it 4 GB of RAM to use the IPS.
 - Management in its own routing table (VRF `vrf-mgmt`), so a mgmt gateway
   never carries forwarded traffic. The web UI, SSH and the tag API answer
   only on mgmt.
-- User `admin`, whose login (SSH and console) is the SJB-OS CLI, not a
-  Unix shell, and who has no sudo. SSH host keys, a self-signed TLS
-  certificate (web UI and tag API), a tag API key, and one password for
-  `admin` that works for SSH, the console and the web UI.
+- User `admin`, the permanent superuser, whose login (SSH and console) is
+  the SJB-OS CLI, not a Unix shell, and who has no sudo. SSH host keys, a
+  self-signed TLS certificate (web UI and tag API), a tag API key, and one
+  password for `admin` that works for SSH, the console and the web UI. Add
+  more users, each with a role, later (see [Users and roles](#users-and-roles)).
 - Root: only what you set at deploy time, `root_ssh_key` and/or
   `root_password` (see [Root access](#root-access)). Nothing else can log
   in as root.
@@ -132,17 +133,24 @@ Revisions, Administration).
   Upgrades wait until nothing is pending.
 - **Tags:** register and unregister hosts, with expiry. Applies at once, no
   commit.
-- **Revisions:** every commit with author (`web:admin` for UI commits), view
-  the config of any revision, roll back.
+- **Revisions:** every commit with its author (`web:alice` from the UI,
+  `cli:alice` from the CLI: the firewall records who was logged in, not what
+  a client claims), view the config of any revision, roll back.
 - **Logs:** the data-plane (traffic) and management (system) logs; see
   [Logs](#logs).
-- **Administration:** upgrades (below) and the password.
+- **Administration:** upgrades (below).
+- **Users** and **Roles** (superusers): see [Users and roles](#users-and-roles).
+- **My account** (top right): your password, your SSH keys and what your
+  role allows.
 
-`admin` has one password for the web UI, SSH and the console. Change it on
-System → Administration or with `passwd` in the CLI; either changes all three. After
-five wrong passwords from one address, logins from it are refused for a while
-(15 seconds, doubling up to 15 minutes). Sessions end after 8 hours idle and
-when ngfwd restarts.
+Each user has one password for the web UI, SSH and the console. Change
+yours on My account or with `passwd` in the CLI; either changes all three.
+Five wrong passwords in a row lock the account for 15 minutes; after five
+wrong passwords from one address, logins from it are also refused for a
+while (15 seconds, doubling up to 15 minutes). Sessions end after 8 hours
+idle, when ngfwd restarts, and at once when the user is disabled, deleted
+or has their password changed. Pages and buttons your role can't use are
+hidden; the firewall refuses those calls anyway.
 
 Saving from the UI rewrites the candidate YAML, so comments in it are not
 kept.
@@ -171,9 +179,10 @@ prefixes) is unchanged, so integrations and scripts never see a joke.
 ## The CLI
 
 SJB-OS gives operators a CLI rather than a Unix shell. SSH to
-the mgmt address as `admin` (or log in on the VMware console) and you get the
-`admin@<hostname>>` prompt. There is no bash, no sudo, no file transfer and
-no port forwarding. `help` lists the commands:
+the mgmt address as your user (or log in on the VMware console) and you get
+the `<user>@<hostname>>` prompt. There is no bash, no sudo, no file transfer and
+no port forwarding. `help` lists the commands your role can use (Tab and ?
+show the same):
 
 | Command | What it does |
 | --- | --- |
@@ -192,6 +201,10 @@ no port forwarding. `help` lists the commands:
 | `revert` | Discard uncommitted changes |
 | `commit [-m "MSG"] [-confirm 5m]`, `confirm`, `rollback N` | Apply, accept, go back |
 | `tags register IP TAG... [-ttl 1h]`, `tags unregister IP TAG...` | Tag hosts |
+| `show whoami`, `show ssh-keys` | Your user, role and what it allows; your SSH keys |
+| `ssh-key add`, `ssh-key delete N` | Add (paste) or delete your own SSH keys |
+| `show users`, `show user NAME`, `show roles`, `show role NAME` | Users and roles (superusers) |
+| `request user ...`, `request role ...` | Add, change and delete users and custom roles (superusers; see [Users and roles](#users-and-roles)) |
 | `ping HOST [COUNT]`, `passwd`, `sjb`, `exit` | |
 | `configure` | Configuration mode (below) |
 
@@ -563,6 +576,102 @@ may pass: the network behind an inside router is part of the inside zone,
 but rules that name `inside-net` as their source don't cover it until you
 add an address for it and include it.
 
+## Users and roles
+
+Every person who manages the firewall gets their own user. A user has one
+password for the web UI, SSH and the VMware console, optional SSH keys, and
+one role. Their SSH and console logins land in the CLI, never a shell, like
+`admin`'s. The firewall works out who is calling itself (the logged-in Unix
+user behind each CLI command, the web session's user) and checks every
+command and click against that user's role as it is now: changing a role,
+disabling a user or deleting one takes effect at once.
+
+**Built-in roles:**
+
+| Role | May |
+| --- | --- |
+| `superuser` | Everything: users and roles, upgrades, the decryption CA, tag API keys, and all the below |
+| `admin` | See everything except secrets; change and commit the config, roll back, confirm, tags, IPS signature updates |
+| `read-only` | See everything except secrets (tag API keys); change nothing |
+
+`admin` (the user) is a permanent superuser: it can't be deleted, disabled
+or given another role. Nobody can disable, delete or change the role of
+their own account.
+
+**Custom roles** pick, per area, none, view or change:
+
+| Area | Covers |
+| --- | --- |
+| `policy` | Rules, addresses, address groups, services, application groups, zones, NAT, App Identification on/off |
+| `network` | Interfaces, static routes, VRFs, BGP/OSPF, prefix lists, the hostname |
+| `dhcp` | DHCP servers, reservations and leases |
+| `ips` | IPS profiles, on/off, disabled signatures; signature updates |
+| `decryption` | Decryption rules, profiles and exclusions; the learned list |
+| `decryption-ca` | The decryption CA: generate or import |
+| `tags` | Tag registrations |
+| `monitoring` | Logs, statistics, applications, ARP, routing status, ping (view only) |
+| `revisions` | Commit history; change: confirm a commit, roll back |
+| `upgrades` | SJB-OS upgrades and upgrade rollback |
+
+Users and roles themselves are for superusers only; no custom role can be
+given them. A role with view on any config area sees the whole config (it
+holds no secrets). Config changes are checked by area: an edit, `load`,
+`revert`, commit or rollback that touches an area the role can't change is
+refused, naming the area. The candidate is shared, so a commit carries
+everyone's pending edits: if someone else's change touches an area you
+can't change, your commit is refused until a user who can commits or
+discards it.
+
+**In the web UI:** System → Users (add, edit role, disable, set a
+password, unlock, SSH keys, delete) and System → Roles (built-in roles to
+view; custom roles as an area-by-access grid).
+
+**In the CLI** (superusers):
+
+```
+admin@sjb-fw> request user add alice role admin
+New password for alice (10+ characters):
+Again:
+admin@sjb-fw> request role add policy-editor description "rules and objects"
+admin@sjb-fw> request role set policy-editor policy change
+admin@sjb-fw> request role set policy-editor revisions view
+admin@sjb-fw> request user set bob role policy-editor
+admin@sjb-fw> request user set carol disabled yes
+admin@sjb-fw> request user password alice
+admin@sjb-fw> request user unlock alice
+admin@sjb-fw> request user ssh-key add alice      (then paste the key)
+admin@sjb-fw> request user delete carol
+admin@sjb-fw> show users
+admin@sjb-fw> show role policy-editor
+```
+
+Everyone can see their own role (`show whoami`), change their password
+(`passwd`) and manage their own SSH keys (`ssh-key add`, `ssh-key delete N`,
+`show ssh-keys`, or My account in the web UI). Keys work for SSH straight
+away; `admin_ssh_key` from the deploy settings becomes admin's first key.
+
+**Lockout:** five wrong passwords in a row lock an account for 15
+minutes. The web UI and SSH/console count separately (so up to five of
+each). A superuser can unlock early (`request user unlock NAME`, or Unlock
+on the Users page). Root is never locked, and `admin` is never locked on the
+VMware console, so there is always a way in. There is no password expiry.
+
+**Audit:** commits and rollbacks record the user (`cli:alice`,
+`web:alice`, `root`); logins, failed logins, lockouts, tag changes, CA
+changes, upgrades and every user and role change are in the system log
+(`show log system`, Logs → System) with who did it.
+
+**Upgrading and rolling back:** the first start after the upgrade turns
+the old single user into `admin` the superuser, with the same password and
+key; nothing changes for you until you add users. A rollback to an older
+version (which knows only `admin`) locks every other user's login first, so
+nobody gets more rights than their role allowed; upgrading again brings
+them back as they were. Users and roles are kept apart from the config, so
+a config rollback never brings back a deleted user or an old password.
+
+Users are local to the appliance for now; signing in through a directory
+(LDAP, RADIUS, SAML or OIDC) is planned for a later phase.
+
 ## Root access
 
 Root is for recovery, not operations, and only you decide who has it: no
@@ -594,8 +703,9 @@ root key or password ships with SJB-OS, and the vendor has no way in.
 Root-only tasks for now: editing tag API keys (`/etc/ngfw/api-keys`, one
 `<name> <scopes> <key>` per line, scopes `tags:read`/`tags:write`, keys of
 24+ characters, then `systemctl restart ngfwd`), resetting a forgotten
-`admin` password (`fwctl web-passwd`, which sets SSH, console and web UI
-together and takes effect at once, no restart needed), and Debian updates (`apt update && apt upgrade`). The full
+password (`fwctl web-passwd -user NAME`, `admin` by default, which sets SSH,
+console and web UI together, clears any lockout and takes effect at once, no
+restart needed; superusers can do the same from the CLI or web UI), and Debian updates (`apt update && apt upgrade`). The full
 journal (`journalctl`) is there too, beyond what the Logs views show.
 
 ## Applications (App Identification)
@@ -1120,8 +1230,10 @@ unchanged. The full history lives in `/var/lib/ngfw/revisions/`.
   in that VRF has an address on the gateway's network: usually outside has
   no address (DHCP got no lease). Set one; see
   [Interface addresses](#interface-addresses).
-- **Locked out of the CLI.** Log in as root with your root key, or as root
-  on the VMware console, and reset `admin` with `fwctl web-passwd`. With no
+- **Locked out of the CLI.** If another superuser can log in, they can
+  unlock you or set your password. Otherwise `admin` can always log in on the
+  VMware console, or log in as root with your root key (or on the console)
+  and reset a password with `fwctl web-passwd -user NAME`. With no
   root access set up, see the recovery steps in [Root access](#root-access).
 
 ## Limits
@@ -1136,12 +1248,13 @@ unchanged. The full history lives in `/var/lib/ngfw/revisions/`.
   revocation checking; decrypted web traffic uses HTTP/1.1 where the client
   allows it.
 - The web UI and tag API certificate is self-signed (`curl -k`).
-- One web UI user (`admin`); no roles yet.
+- Users are local to the appliance: no LDAP, RADIUS, SAML or OIDC yet. The
+  web UI and SSH/console count failed logins separately.
 - Upgrades cover SJB-OS itself and the packages it ships (FRR, Kea,
   App Identification's libraries), not
   the kernel or other Debian packages (apt).
-- `admin` can log in over SSH with a password. For anything beyond a lab,
-  set `admin_ssh_key` at deploy time and use a strong password.
+- Users can log in over SSH with a password. For anything beyond a lab, give
+  each user an SSH key and a strong password.
 - No root key or password ships with SJB-OS; root has only what you set at
   deploy time.
 - Some admin tasks (API key edits, logs, Debian updates) still need root;

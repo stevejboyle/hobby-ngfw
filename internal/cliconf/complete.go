@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
 	"github.com/stevejboyle/hobby-ngfw/internal/logs"
 )
 
@@ -47,6 +48,7 @@ var operational = []Candidate{
 	{"request", "request ips update, request decryption ca generate..."},
 	{"ping", "ping a host through the forwarding table"},
 	{"passwd", "change your password (SSH, console, web UI)"},
+	{"ssh-key", "add or delete your own SSH keys"},
 	{"sjb", "a word from the border guard"},
 	{"help", "list commands"},
 	{"exit", "log out"},
@@ -76,7 +78,23 @@ var showWhat = []Candidate{
 	{"statistics", "traffic, applications, hosts and threats over 1h, 24h or 7d"},
 	{"api-keys", "tag API keys"},
 	{"log", "traffic (data plane), threat (IPS) or system (management) log"},
+	{"whoami", "your user name, role and what it allows"},
+	{"ssh-keys", "your SSH keys"},
+	{"users", "SJB-OS users (superusers)"},
+	{"user", "one user (superusers)"},
+	{"roles", "roles and who has them (superusers)"},
+	{"role", "one role's permissions (superusers)"},
 }
+
+func areaCandidates() []Candidate {
+	var out []Candidate
+	for _, a := range accounts.Areas {
+		out = append(out, Candidate{string(a.Area), a.Covers})
+	}
+	return out
+}
+
+var roleNames = []Candidate{{"superuser", "everything"}, {"admin", "config, commits, tags; not users or upgrades"}, {"read-only", "see, don't change"}, {"<role>", "a custom role (show roles)"}}
 
 var commitFlags = []Candidate{
 	{"-m", "commit message (quote it)"},
@@ -139,7 +157,35 @@ func OperationalCandidates(words []string) []Candidate {
 	case words[0] == "show" && len(words) == 2 && words[1] == "statistics":
 		return []Candidate{{"1h", "the last hour (default)"}, {"24h", "the last day"}, {"7d", "the last week"}}
 	case words[0] == "request" && len(words) == 1:
-		return []Candidate{{"ips", "the IPS"}, {"decryption", "TLS decryption"}}
+		return []Candidate{{"ips", "the IPS"}, {"decryption", "TLS decryption"}, {"user", "add, change or delete users (superusers)"}, {"role", "add, change or delete custom roles (superusers)"}}
+	case words[0] == "request" && len(words) == 2 && words[1] == "user":
+		return []Candidate{{"add", "add NAME role ROLE (asks for the password)"}, {"set", "set NAME role ROLE | disabled yes|no"}, {"password", "password NAME: set someone's password"},
+			{"unlock", "unlock NAME after failed logins"}, {"delete", "delete NAME"}, {"ssh-key", "ssh-key add|delete NAME ..."}}
+	case words[0] == "request" && len(words) == 3 && words[1] == "user" && words[2] == "ssh-key":
+		return []Candidate{{"add", "add NAME, then paste the key"}, {"delete", "delete NAME N|FINGERPRINT"}}
+	case words[0] == "request" && len(words) == 3 && words[1] == "user":
+		return []Candidate{{"<name>", "user name (show users)"}}
+	case words[0] == "request" && len(words) == 4 && words[1] == "user" && (words[2] == "add" || words[2] == "set"):
+		if words[2] == "add" {
+			return []Candidate{{"role", "the user's role"}}
+		}
+		return []Candidate{{"role", "give them another role"}, {"disabled", "yes: no logins; no: allowed again"}}
+	case words[0] == "request" && len(words) == 5 && words[1] == "user" && words[4] == "role":
+		return roleNames
+	case words[0] == "request" && len(words) == 5 && words[1] == "user" && words[4] == "disabled":
+		return []Candidate{{"yes", "lock the account and end its sessions"}, {"no", "allow logins again"}}
+	case words[0] == "request" && len(words) == 2 && words[1] == "role":
+		return []Candidate{{"add", "add NAME [description \"TEXT\"]"}, {"set", "set NAME AREA view|change|none, or NAME description \"TEXT\""}, {"delete", "delete NAME (nobody may have it)"}}
+	case words[0] == "request" && len(words) == 3 && words[1] == "role":
+		return []Candidate{{"<name>", "custom role name"}}
+	case words[0] == "request" && len(words) == 4 && words[1] == "role" && words[2] == "set":
+		return append(areaCandidates(), Candidate{"description", "what the role is for"})
+	case words[0] == "request" && len(words) == 5 && words[1] == "role" && words[2] == "set" && words[4] != "description":
+		return []Candidate{{"view", "see it"}, {"change", "see and change it"}, {"none", "neither"}}
+	case words[0] == "ssh-key" && len(words) == 1:
+		return []Candidate{{"add", "paste a public key (ssh-ed25519 AAAA... comment)"}, {"delete", "delete N or FINGERPRINT (show ssh-keys)"}}
+	case words[0] == "show" && len(words) == 2 && (words[1] == "user" || words[1] == "role"):
+		return []Candidate{{"<name>", ""}}
 	case words[0] == "request" && len(words) == 2 && words[1] == "decryption":
 		return []Candidate{{"ca", "the decryption CA"}, {"learned", "the learned (pinned) servers"}}
 	case words[0] == "request" && len(words) == 3 && words[1] == "decryption" && words[2] == "ca":

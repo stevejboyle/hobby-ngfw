@@ -95,3 +95,27 @@ func TestConfigModeOffline(t *testing.T) {
 		t.Fatalf("config completion: %+v", c)
 	}
 }
+
+func TestRoleHelp(t *testing.T) {
+	reader := &me{Name: "reader", Role: "read-only", ConfigView: true,
+		Permissions: map[string]string{"policy": "view", "monitoring": "view", "tags": "view", "revisions": "view"}}
+	h := roleHelp(reader, shellHelp)
+	for _, want := range []string{"show running", "show log traffic", "show tags", "passwd", "show whoami", "ssh-key add"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("read-only help lacks %q", want)
+		}
+	}
+	for _, not := range []string{"\n  commit [", "\n  configure ", "tags register", "request user add", "show users", "show api-keys",
+		"request ips update", "rollback N", "add a user (asks"} {
+		if strings.Contains(h, not) {
+			t.Errorf("read-only help shows %q", not)
+		}
+	}
+	su := &me{Superuser: true}
+	if roleHelp(su, shellHelp) != shellHelp {
+		t.Error("a superuser should see the whole help")
+	}
+	if !allowedCommand(reader, "show app catalog video") || allowedCommand(reader, "show api-keys") || !allowedCommand(nil, "commit") {
+		t.Error("allowedCommand")
+	}
+}

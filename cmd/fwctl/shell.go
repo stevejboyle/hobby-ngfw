@@ -1,6 +1,6 @@
 package main
 
-// The captive CLI. User admin gets this instead of a Unix shell, over SSH
+// The captive CLI. SJB-OS users get this instead of a Unix shell, over SSH
 // and on the console: a fixed set of firewall commands, no sudo, no file
 // transfer, no way out to bash. Each command maps onto an fwctl command or a
 // fixed, argument-checked system tool; nothing typed here reaches a shell.
@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -77,7 +78,15 @@ const shellHelp = `SJB-OS commands:
   show log decryption [N] [TEXT]
                               decryption log: what tlsd did with each
                               connection (decrypted, excluded, passed...)
-  show log system [N] [TEXT]  management log: commits, logins, tags, upgrades
+  show log system [N] [TEXT]  management log: commits, logins, tags, upgrades,
+                              user and role changes
+
+  show whoami                 your user name, role and what it allows
+  show ssh-keys               your SSH keys
+  show users                  SJB-OS users: role, status, last login
+  show user NAME              one user, with their SSH keys
+  show roles                  roles and who has them
+  show role NAME              what a role may view and change, by area
 
   load                        paste a whole config (YAML); finish with a line
                               containing only "end", or Ctrl-D
@@ -99,8 +108,26 @@ const shellHelp = `SJB-OS commands:
                               paste your own CA certificate and key (PEM)
   request decryption learned clear
                               decrypt the learned (pinned) servers again
+  request user add NAME role ROLE
+                              add a user (asks for the password); roles:
+                              superuser, admin, read-only or a custom one
+  request user set NAME role ROLE | set NAME disabled yes|no
+                              change a user's role, or stop their logins
+  request user password NAME  set someone's password (ends their sessions)
+  request user unlock NAME    unlock after 5 wrong passwords
+  request user delete NAME    delete a user (admin can't be deleted)
+  request user ssh-key add NAME | ssh-key delete NAME N
+                              manage someone's SSH keys
+  request role add NAME [description "TEXT"]
+                              a custom role, with no permissions yet
+  request role set NAME AREA view|change|none
+                              what the role may do in an area (show whoami
+                              lists the areas)
+  request role delete NAME    delete a custom role nobody has
   ping HOST [COUNT]           ping through the forwarding table
   passwd                      change your password (SSH, console and web UI)
+  ssh-key add | ssh-key delete N
+                              add (paste) or delete your own SSH keys
   configure                   configuration mode: set, delete, move, rename
   sjb                         a word from the border guard
   help                        this list
@@ -171,13 +198,21 @@ func (s *session) complete(head string) (string, []lineedit.Candidate) {
 	}
 	var out []lineedit.Candidate
 	for _, c := range cliconf.Filter(cands, partial) {
+		if s.cfg == nil && !c.IsHint() && !allowedCommand(currentMe, strings.Join(append(slices.Clone(words), c.Word), " ")) {
+			continue // the role can't use it
+		}
 		out = append(out, lineedit.Candidate{Word: c.Word, Help: c.Help})
 	}
 	return partial, out
 }
 
+// currentMe is who is logged in, as ngfwd sees them: help and Tab show
+// only what their role can use (ngfwd enforces it regardless).
+var currentMe *me
+
 func shellCmd(args []string) error {
 	s := &session{in: bufio.NewReader(os.Stdin)}
+	currentMe, _ = fetchMe()
 	if len(args) >= 2 && args[0] == "-c" {
 		_, err := s.run(strings.Join(args[1:], " "))
 		return err
@@ -252,6 +287,9 @@ func (s *session) run(line string) (quit bool, err error) {
 }
 
 func (s *session) enterConfig() error {
+	if currentMe != nil && !currentMe.ConfigEdit {
+		return fmt.Errorf("role %s can't change the config (show running shows it)", currentMe.Role)
+	}
 	out, err := call("GET", "/v1/config/candidate", nil)
 	if err != nil {
 		return err
@@ -389,7 +427,10 @@ func runShellLine(line string, in io.Reader) error {
 	cmd, rest := words[0], words[1:]
 	switch cmd {
 	case "help", "?":
-		fmt.Print(shellHelp)
+		if m, err := fetchMe(); err == nil {
+			currentMe = m
+		}
+		fmt.Print(roleHelp(currentMe, shellHelp))
 		return nil
 	case "exit", "quit", "logout":
 		return nil
@@ -404,7 +445,15 @@ func runShellLine(line string, in io.Reader) error {
 		return printJSON(call("POST", "/v1/config/revert", nil))
 	case "commit", "confirm", "rollback", "tags", "sjb":
 		return dispatch(cmd, rest)
+	case "ssh-key":
+		return sshKeyCmd(rest, in)
 	case "request":
+		if len(rest) > 0 && rest[0] == "user" {
+			return requestUser(rest[1:], in)
+		}
+		if len(rest) > 0 && rest[0] == "role" {
+			return requestRole(rest[1:])
+		}
 		switch strings.Join(rest, " ") {
 		case "ips update":
 			return requestIPSUpdate()
@@ -415,7 +464,7 @@ func runShellLine(line string, in io.Reader) error {
 		case "decryption learned clear":
 			return requestDecryptionLearnedClear()
 		}
-		return fmt.Errorf("request ips update | decryption ca generate | decryption ca import | decryption learned clear")
+		return fmt.Errorf("request ips update | decryption ca generate | decryption ca import | decryption learned clear | user ... | role ...")
 	case "ping":
 		return pingCmd(rest)
 	case "passwd":
@@ -455,6 +504,18 @@ func showCmd(args []string) error {
 		return dispatch("tags", rest)
 	case what == "log" && len(rest) >= 1:
 		return showLog(rest)
+	case what == "whoami" && len(rest) == 0:
+		return showWhoami()
+	case what == "ssh-keys" && len(rest) == 0:
+		return showSSHKeys()
+	case what == "users" && len(rest) == 0:
+		return showUsers()
+	case what == "user" && len(rest) == 1:
+		return showUser(rest[0])
+	case what == "roles" && len(rest) == 0:
+		return showRoles()
+	case what == "role" && len(rest) == 1:
+		return showRole(rest[0])
 	case what == "api-keys" && len(rest) == 0:
 		return printRaw(call("GET", "/v1/api-keys", nil))
 	case what == "interfaces" && len(rest) == 0:

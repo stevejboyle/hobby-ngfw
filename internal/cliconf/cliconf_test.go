@@ -185,7 +185,7 @@ func TestConfigCandidates(t *testing.T) {
 		{"set system", "", "hostname mgmt-interface app-identification ips ips-disabled-signatures decryption decryption-builtin-exclusions"},
 		{"move rule allow-web", "", "top bottom before after"},
 		{"move rule allow-web before", "", "block-quarantined block-p2p allow-dns"},
-		{"run show", "ro", "routes"},
+		{"run show", "ro", "routes roles role"},
 		{"rename address", "", "users-net dns-quad9"},
 	}
 	for _, tt := range tests {
@@ -194,7 +194,7 @@ func TestConfigCandidates(t *testing.T) {
 			t.Errorf("%q + %q: got %q, want %q", tt.line, tt.partial, got, tt.want)
 		}
 	}
-	if got := words(Filter(OperationalCandidates([]string{"show"}), "r")); got != "running ruleset revisions revision routes rib" {
+	if got := words(Filter(OperationalCandidates([]string{"show"}), "r")); got != "running ruleset revisions revision routes rib roles role" {
 		t.Errorf("operational show r: %q", got)
 	}
 }

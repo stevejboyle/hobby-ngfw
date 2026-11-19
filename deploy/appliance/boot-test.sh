@@ -406,6 +406,12 @@ code=$(curl -sk -o /dev/null -w '%{http_code}' -H 'Content-Type: application/jso
 [[ $out == *"Password changed"* && $code == 200 ]] &&
 	pass "password changed with the CLI's passwd works for the web UI" || fail "CLI passwd: $out (web login $code)"
 PW=$PW3
+# A password change ends the user's older web sessions (0.9.9-r09 on): check,
+# then log in again.
+code=$(ui -o /dev/null -w '%{http_code}' "$UI/ui/api/status")
+[[ $code == 401 ]] && pass "the password change ended the older web session" || fail "old web session after a password change: $code"
+login=$(curl -sk -c "$JAR" -H 'Content-Type: application/json' -d "{\"user\":\"$ADMIN\",\"password\":\"$PW\"}" "$UI/ui/api/login")
+CSRF=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("csrf",""))' <<<"$login" 2>/dev/null)
 
 # --- VRFs and VLAN subinterfaces ---------------------------------------------------
 before_vrf=$(ui "$UI/ui/api/config/candidate")

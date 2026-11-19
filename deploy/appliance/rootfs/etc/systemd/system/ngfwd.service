@@ -21,7 +21,11 @@ ExecStart=/usr/local/sbin/ngfwd \
     -roles /etc/ngfw/roles.json \
     -hostname-dir /etc \
     -bootstrap /etc/ngfw/initial.yaml
-ExecStartPost=/bin/sh -c 'for i in $(seq 50); do [ -S /run/ngfw/ngfwd.sock ] && exit 0; sleep 0.1; done; exit 1'
+# ngfwd opens its socket once the ruleset is loaded and the IPS and TLS
+# decryption are up, which takes seconds on a loaded appliance: allow a
+# minute (it used to be 5 s, which an appliance with decryption on could miss).
+ExecStartPost=/bin/sh -c 'for i in $(seq 600); do [ -S /run/ngfw/ngfwd.sock ] && exit 0; sleep 0.1; done; exit 1'
+TimeoutStartSec=120
 # Accounts and shells for the captive CLI (idempotent; see sjb-migrate).
 ExecStartPost=-/usr/local/sbin/sjb-migrate
 Restart=on-failure

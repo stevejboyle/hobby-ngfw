@@ -3,17 +3,18 @@ package webui
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
 	"github.com/stevejboyle/hobby-ngfw/internal/config"
 	"github.com/stevejboyle/hobby-ngfw/internal/conntrack"
 	"github.com/stevejboyle/hobby-ngfw/internal/daemon"
@@ -49,7 +50,7 @@ func (f *fakeUpgrader) Rollback() error { return nil }
 
 func setup(t *testing.T, up Upgrader) (http.Handler, *clock, *daemon.Daemon) {
 	t.Helper()
-	Iterations = 1000
+	accounts.Iterations = 1000
 	dir := t.TempDir()
 	st, err := store.Open(dir)
 	if err != nil {
@@ -65,12 +66,23 @@ func setup(t *testing.T, up Upgrader) (http.Handler, *clock, *daemon.Daemon) {
 	if err := d.Start(); err != nil {
 		t.Fatal(err)
 	}
-	users := &Users{Path: filepath.Join(dir, "web-users")}
-	if err := users.Set("admin", pw); err != nil {
+	withAdmin(t, dir, d)
+	h := New(d, Options{Upgrader: up, Now: clk.now, Interfaces: func(string) []string { return []string{"10.0.0.1/24"} }})
+	return h, clk, d
+}
+
+// withAdmin gives d a user database whose admin has password pw.
+func withAdmin(t *testing.T, dir string, d *daemon.Daemon) *accounts.Store {
+	t.Helper()
+	a := &accounts.Store{Path: filepath.Join(dir, "users.json"), RolesPath: filepath.Join(dir, "roles.json")}
+	if err := a.Open(); err != nil {
 		t.Fatal(err)
 	}
-	h := New(d, Options{Users: users, Upgrader: up, Now: clk.now, Interfaces: func(string) []string { return []string{"10.0.0.1/24"} }})
-	return h, clk, d
+	if err := a.SetPassword(accounts.Root, accounts.Admin, pw); err != nil {
+		t.Fatal(err)
+	}
+	d.SetAccounts(a)
+	return a
 }
 
 type client struct {
@@ -179,8 +191,10 @@ func TestAuth(t *testing.T) {
 func TestLoginBackoff(t *testing.T) {
 	h, clk, _ := setup(t, nil)
 	c := &client{t: t, h: h, addr: "192.0.2.30"}
+	// Guessing at names slows the address down (the account lockout is
+	// separate: TestAccountLockout).
 	for i := 0; i < freeFailures; i++ {
-		c.do("POST", "/ui/api/login", map[string]string{"user": "admin", "password": "guess"})
+		c.do("POST", "/ui/api/login", map[string]string{"user": "guess", "password": "guess"})
 	}
 	code, _, hdr := c.do("POST", "/ui/api/login", map[string]string{"user": "admin", "password": pw})
 	if code != 429 || hdr.Get("Retry-After") == "" {
@@ -193,6 +207,23 @@ func TestLoginBackoff(t *testing.T) {
 	clk.add(time.Minute)
 	if code, _, _ := c.do("POST", "/ui/api/login", map[string]string{"user": "admin", "password": pw}); code != 200 {
 		t.Fatalf("after lockout: %d", code)
+	}
+}
+
+func TestAccountLockout(t *testing.T) {
+	h, _, d := setup(t, nil)
+	for i := 0; i < accounts.LockoutFailures; i++ {
+		c := &client{t: t, h: h, addr: fmt.Sprintf("192.0.2.%d", 100+i)}
+		c.do("POST", "/ui/api/login", map[string]string{"user": "admin", "password": "guess"})
+	}
+	c := &client{t: t, h: h, addr: "192.0.2.99"}
+	code, out, _ := c.do("POST", "/ui/api/login", map[string]string{"user": "admin", "password": pw})
+	if code != 403 || !strings.Contains(out["error"].(string), "locked") {
+		t.Fatalf("locked account, right password: %d %v", code, out)
+	}
+	d.Accounts().Unlock(accounts.Root, accounts.Admin)
+	if code, _, _ := c.do("POST", "/ui/api/login", map[string]string{"user": "admin", "password": pw}); code != 200 {
+		t.Fatalf("after unlock: %d", code)
 	}
 }
 
@@ -339,54 +370,6 @@ func TestUpgradeRoutes(t *testing.T) {
 	}
 }
 
-func TestUsersFile(t *testing.T) {
-	Iterations = 1000
-	u := &Users{Path: filepath.Join(t.TempDir(), "web-users")}
-	if u.Verify("admin", pw) {
-		t.Fatal("verify with no file")
-	}
-	if err := u.Set("admin", pw); err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Stat(u.Path)
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("mode: %v %v", info.Mode(), err)
-	}
-	data, _ := os.ReadFile(u.Path)
-	if strings.Contains(string(data), pw) || !strings.Contains(string(data), "pbkdf2-sha256$1000$") {
-		t.Fatalf("file: %s", data)
-	}
-	if !u.Verify("admin", pw) || u.Verify("admin", pw+"x") || u.Verify("other", pw) {
-		t.Fatal("verify")
-	}
-}
-
-func TestPasswordChangeSetsSystemPassword(t *testing.T) {
-	Iterations = 1000
-	var got []string
-	u := &Users{Path: filepath.Join(t.TempDir(), "web-users"), System: func(name, pw string) error {
-		got = append(got, name+":"+pw)
-		return nil
-	}}
-	if err := u.Set("admin", "first password!"); err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 || got[0] != "admin:first password!" || !u.Verify("admin", "first password!") {
-		t.Fatalf("system password calls: %v", got)
-	}
-	// If the system password can't be set, the web password must not change.
-	u.System = func(string, string) error { return os.ErrPermission }
-	if err := u.Set("admin", "second password"); err == nil {
-		t.Fatal("expected the system error")
-	}
-	if !u.Verify("admin", "first password!") || u.Verify("admin", "second password") {
-		t.Fatal("web password changed although the system password did not")
-	}
-	if err := u.Set("admin", "line\nbreak password"); err == nil {
-		t.Fatal("line breaks must be refused")
-	}
-}
-
 type fakeLogs struct{ q string }
 
 func (f *fakeLogs) Traffic(n int, q string) ([]logs.Traffic, error) {
@@ -413,16 +396,14 @@ func TestLogRoutes(t *testing.T) {
 		t.Fatalf("no reader: %d %v", code, out)
 	}
 
-	Iterations = 1000
 	dir := t.TempDir()
 	st, _ := store.Open(dir)
 	reg, _ := tags.Open(filepath.Join(dir, "tags.json"))
 	d := daemon.New(st, reg, &nft.Fake{}, &conntrack.Fake{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	d.Start()
-	users := &Users{Path: filepath.Join(dir, "web-users")}
-	users.Set("admin", pw)
+	withAdmin(t, dir, d)
 	fl := &fakeLogs{}
-	h = New(d, Options{Users: users, Logs: fl})
+	h = New(d, Options{Logs: fl})
 	c = login(t, h)
 	req := httptest.NewRequest("GET", "/ui/api/logs/traffic?n=10&q=web", nil)
 	req.AddCookie(&http.Cookie{Name: cookieName, Value: c.cookie})

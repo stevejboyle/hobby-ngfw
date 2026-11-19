@@ -22,6 +22,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
 	"github.com/stevejboyle/hobby-ngfw/internal/config"
 	"github.com/stevejboyle/hobby-ngfw/internal/daemon"
 	"github.com/stevejboyle/hobby-ngfw/internal/logs"
@@ -46,7 +47,6 @@ type Upgrader interface {
 
 // Options configures the UI.
 type Options struct {
-	Users    *Users
 	Upgrader Upgrader
 	Logs     logs.Reader // nil: the Logs page says logs aren't available
 	Log      *slog.Logger
@@ -81,32 +81,32 @@ func New(d *daemon.Daemon, o Options) http.Handler {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /ui/api/login", s.login)
-	mux.HandleFunc("POST /ui/api/logout", s.auth(s.logout))
-	mux.HandleFunc("GET /ui/api/session", s.auth(s.whoami))
-	mux.HandleFunc("POST /ui/api/password", s.auth(s.password))
-	mux.HandleFunc("GET /ui/api/status", s.auth(s.status))
-	mux.HandleFunc("GET /ui/api/config/{which}", s.auth(s.getConfig))
-	mux.HandleFunc("PUT /ui/api/config/candidate", s.auth(s.putCandidate))
-	mux.HandleFunc("POST /ui/api/config/revert", s.auth(s.revert))
-	mux.HandleFunc("GET /ui/api/diff", s.auth(s.diff))
-	mux.HandleFunc("GET /ui/api/preview", s.auth(s.preview))
-	mux.HandleFunc("POST /ui/api/commit", s.auth(s.commit))
-	mux.HandleFunc("POST /ui/api/confirm", s.auth(s.confirm))
-	mux.HandleFunc("POST /ui/api/rollback", s.auth(s.rollback))
-	mux.HandleFunc("GET /ui/api/revisions", s.auth(s.revisions))
-	mux.HandleFunc("GET /ui/api/revisions/{n}", s.auth(s.revision))
-	mux.HandleFunc("GET /ui/api/routes", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+	mux.HandleFunc("POST /ui/api/logout", s.auth(accounts.Anyone, s.logout))
+	mux.HandleFunc("GET /ui/api/session", s.auth(accounts.Anyone, s.whoami))
+	mux.HandleFunc("POST /ui/api/password", s.auth(accounts.Anyone, s.password))
+	mux.HandleFunc("GET /ui/api/status", s.auth(accounts.Anyone, s.status))
+	mux.HandleFunc("GET /ui/api/config/{which}", s.auth(accounts.ConfigView, s.getConfig))
+	mux.HandleFunc("PUT /ui/api/config/candidate", s.auth(accounts.ConfigEdit, s.putCandidate))
+	mux.HandleFunc("POST /ui/api/config/revert", s.auth(accounts.ConfigEdit, s.revert))
+	mux.HandleFunc("GET /ui/api/diff", s.auth(accounts.ConfigView, s.diff))
+	mux.HandleFunc("GET /ui/api/preview", s.auth(accounts.ConfigView, s.preview))
+	mux.HandleFunc("POST /ui/api/commit", s.auth(accounts.ConfigEdit, s.commit))
+	mux.HandleFunc("POST /ui/api/confirm", s.auth(accounts.NeedChange(accounts.Revisions), s.confirm))
+	mux.HandleFunc("POST /ui/api/rollback", s.auth(accounts.NeedChange(accounts.Revisions), s.rollback))
+	mux.HandleFunc("GET /ui/api/revisions", s.auth(accounts.NeedView(accounts.Revisions), s.revisions))
+	mux.HandleFunc("GET /ui/api/revisions/{n}", s.auth(accounts.NeedView(accounts.Revisions), s.revision))
+	mux.HandleFunc("GET /ui/api/routes", s.auth(accounts.NeedView(accounts.Monitoring), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		reply(w, s.d.Routes(), nil)
 	}))
-	mux.HandleFunc("GET /ui/api/logs/{kind}", s.auth(s.logs))
-	mux.HandleFunc("GET /ui/api/logs/traffic/columns", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+	mux.HandleFunc("GET /ui/api/logs/{kind}", s.auth(accounts.NeedView(accounts.Monitoring), s.logs))
+	mux.HandleFunc("GET /ui/api/logs/traffic/columns", s.auth(accounts.NeedView(accounts.Monitoring), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		reply(w, map[string]any{"columns": logs.TrafficColumns, "default": logs.DefaultTrafficColumns,
 			"threat_columns": logs.ThreatColumns, "threat_default": logs.DefaultThreatColumns,
 			"decryption_columns": logs.DecryptionColumns, "decryption_default": logs.DefaultDecryptionColumns,
 			"fields": map[string]any{"traffic": logs.TrafficSchema.Fields(), "threat": logs.ThreatSchema.Fields(),
 				"decryption": logs.DecryptionSchema.Fields(), "system": logs.SystemSchema.Fields()}}, nil)
 	}))
-	mux.HandleFunc("GET /ui/api/stats", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+	mux.HandleFunc("GET /ui/api/stats", s.auth(accounts.NeedView(accounts.Monitoring), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		win := r.URL.Query().Get("window")
 		if win == "" {
 			win = "1h"
@@ -118,21 +118,22 @@ func New(d *daemon.Daemon, o Options) http.Handler {
 		}
 		reply(w, v, nil)
 	}))
-	mux.HandleFunc("GET /ui/api/ips", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+	mux.HandleFunc("GET /ui/api/ips", s.auth(accounts.NeedView(accounts.IPS), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		reply(w, s.d.IPS(), nil)
 	}))
-	mux.HandleFunc("POST /ui/api/ips/update", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+	mux.HandleFunc("POST /ui/api/ips/update", s.auth(accounts.NeedChange(accounts.IPS), func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+		s.o.Log.Info("IPS signature update requested", "by", s.author(ss))
 		v, err := s.d.UpdateIPS(r.Context())
 		reply(w, v, err)
 	}))
-	mux.HandleFunc("GET /ui/api/decryption", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+	mux.HandleFunc("GET /ui/api/decryption", s.auth(accounts.NeedView(accounts.Decryption), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		reply(w, s.d.Decryption(), nil)
 	}))
-	mux.HandleFunc("GET /ui/api/decryption/ca", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+	mux.HandleFunc("GET /ui/api/decryption/ca", s.auth(accounts.NeedView(accounts.DecryptionCA), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		reply(w, s.d.DecryptionCA(), nil)
 	}))
 	// The CA certificate as a file, to install on clients.
-	mux.HandleFunc("GET /ui/api/decryption/ca.crt", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+	mux.HandleFunc("GET /ui/api/decryption/ca.crt", s.auth(accounts.NeedView(accounts.DecryptionCA), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		ca := s.d.DecryptionCA()
 		if !ca.Present {
 			fail(w, http.StatusNotFound, "no decryption CA yet")
@@ -142,7 +143,7 @@ func New(d *daemon.Daemon, o Options) http.Handler {
 		w.Header().Set("Content-Disposition", `attachment; filename="sjb-os-decryption-ca.crt"`)
 		io.WriteString(w, ca.PEM)
 	}))
-	mux.HandleFunc("POST /ui/api/decryption/ca/generate", s.auth(func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+	mux.HandleFunc("POST /ui/api/decryption/ca/generate", s.auth(accounts.NeedChange(accounts.DecryptionCA), func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
 		v, err := s.d.GenerateDecryptionCA(s.author(ss))
 		if err != nil {
 			daemonFail(w, err)
@@ -150,7 +151,7 @@ func New(d *daemon.Daemon, o Options) http.Handler {
 		}
 		reply(w, v, nil)
 	}))
-	mux.HandleFunc("POST /ui/api/decryption/ca/import", s.auth(func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+	mux.HandleFunc("POST /ui/api/decryption/ca/import", s.auth(accounts.NeedChange(accounts.DecryptionCA), func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
 		var req struct {
 			Cert string `json:"cert"`
 			Key  string `json:"key"`
@@ -165,7 +166,7 @@ func New(d *daemon.Daemon, o Options) http.Handler {
 		}
 		reply(w, v, nil)
 	}))
-	mux.HandleFunc("GET /ui/api/decryption/learned", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+	mux.HandleFunc("GET /ui/api/decryption/learned", s.auth(accounts.NeedView(accounts.Decryption), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		v, err := s.d.DecryptionLearned()
 		if err != nil {
 			daemonFail(w, err)
@@ -173,7 +174,7 @@ func New(d *daemon.Daemon, o Options) http.Handler {
 		}
 		reply(w, v, nil)
 	}))
-	mux.HandleFunc("POST /ui/api/decryption/learned/clear", s.auth(func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+	mux.HandleFunc("POST /ui/api/decryption/learned/clear", s.auth(accounts.NeedChange(accounts.Decryption), func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
 		n, err := s.d.ClearDecryptionLearned(s.author(ss))
 		if err != nil {
 			daemonFail(w, err)
@@ -181,51 +182,52 @@ func New(d *daemon.Daemon, o Options) http.Handler {
 		}
 		reply(w, map[string]int{"cleared": n}, nil)
 	}))
-	mux.HandleFunc("GET /ui/api/routing/{what}", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+	mux.HandleFunc("GET /ui/api/routing/{what}", s.auth(accounts.NeedView(accounts.Monitoring), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		v, err := s.d.RoutingStatus(r.PathValue("what"), r.URL.Query().Get("vrf"))
 		reply(w, v, err)
 	}))
-	mux.HandleFunc("GET /ui/api/apps", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+	mux.HandleFunc("GET /ui/api/apps", s.auth(accounts.NeedView(accounts.Monitoring), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		reply(w, s.d.Apps(), nil)
 	}))
-	mux.HandleFunc("GET /ui/api/apps/categories", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+	mux.HandleFunc("GET /ui/api/apps/categories", s.auth(accounts.Anyone, func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		reply(w, s.d.AppCategories(), nil)
 	}))
-	mux.HandleFunc("GET /ui/api/apps/catalog", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+	mux.HandleFunc("GET /ui/api/apps/catalog", s.auth(accounts.Anyone, func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		v, err := s.d.AppCatalog(r.URL.Query().Get("q"))
 		reply(w, v, err)
 	}))
-	mux.HandleFunc("GET /ui/api/dhcp", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+	mux.HandleFunc("GET /ui/api/dhcp", s.auth(accounts.NeedView(accounts.DHCP), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		reply(w, s.d.DHCP(), nil)
 	}))
-	mux.HandleFunc("GET /ui/api/dhcp/leases", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+	mux.HandleFunc("GET /ui/api/dhcp/leases", s.auth(accounts.NeedView(accounts.DHCP), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		v, err := s.d.DHCPLeases(r.URL.Query().Get("interface"))
 		reply(w, v, err)
 	}))
-	mux.HandleFunc("GET /ui/api/netdev", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+	mux.HandleFunc("GET /ui/api/netdev", s.auth(accounts.NeedView(accounts.Monitoring), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		st := s.d.NetDevices()
 		if st == nil {
 			st = []netdev.State{}
 		}
 		reply(w, st, nil)
 	}))
-	mux.HandleFunc("GET /ui/api/nics", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+	mux.HandleFunc("GET /ui/api/nics", s.auth(accounts.NeedView(accounts.Monitoring), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		st := s.d.NICs()
 		if st == nil {
 			st = []nicaddr.State{}
 		}
 		reply(w, st, nil)
 	}))
-	mux.HandleFunc("GET /ui/api/arp", s.auth(func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+	mux.HandleFunc("GET /ui/api/arp", s.auth(accounts.NeedView(accounts.Monitoring), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		nb, err := s.d.Neighbors()
 		reply(w, nb, err)
 	}))
-	mux.HandleFunc("GET /ui/api/tags", s.auth(s.tags))
-	mux.HandleFunc("POST /ui/api/tags/{op}", s.auth(s.tagOp))
-	mux.HandleFunc("GET /ui/api/upgrade", s.auth(s.upgradeStatus))
-	mux.HandleFunc("POST /ui/api/upgrade", s.auth(s.upgradeUpload))
-	mux.HandleFunc("POST /ui/api/upgrade/start", s.auth(s.upgradeStart))
-	mux.HandleFunc("POST /ui/api/upgrade/rollback", s.auth(s.upgradeRollback))
+	mux.HandleFunc("GET /ui/api/tags", s.auth(accounts.NeedView(accounts.Tags), s.tags))
+	mux.HandleFunc("POST /ui/api/tags/{op}", s.auth(accounts.NeedChange(accounts.Tags), s.tagOp))
+	mux.HandleFunc("GET /ui/api/upgrade", s.auth(accounts.NeedView(accounts.Upgrades), s.upgradeStatus))
+	mux.HandleFunc("POST /ui/api/upgrade", s.auth(accounts.NeedChange(accounts.Upgrades), s.upgradeUpload))
+	mux.HandleFunc("POST /ui/api/upgrade/start", s.auth(accounts.NeedChange(accounts.Upgrades), s.upgradeStart))
+	mux.HandleFunc("POST /ui/api/upgrade/rollback", s.auth(accounts.NeedChange(accounts.Upgrades), s.upgradeRollback))
+	s.accountRoutes(mux)
 	mux.HandleFunc("/ui/api/", func(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, "no such API call")
 	})
@@ -248,8 +250,13 @@ func headers(h http.Handler) http.Handler {
 
 type ctxHandler func(w http.ResponseWriter, r *http.Request, ss *session, tok string)
 
-// auth requires a session, and the CSRF header on anything but GET.
-func (s *server) auth(h ctxHandler) http.HandlerFunc {
+// auth requires a session whose user still exists, isn't disabled and
+// hasn't changed password since; the CSRF header on anything but GET; and
+// that the user's current role meets need.
+func (s *server) auth(need accounts.Need, h ctxHandler) http.HandlerFunc {
+	if !need.Valid() {
+		panic("web route without a permission")
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(cookieName)
 		var ss *session
@@ -260,12 +267,32 @@ func (s *server) auth(h ctxHandler) http.HandlerFunc {
 			fail(w, http.StatusUnauthorized, "not logged in")
 			return
 		}
+		p, err := s.principal(ss)
+		if err != nil {
+			s.sess.drop(c.Value)
+			fail(w, http.StatusUnauthorized, "session ended: "+strings.TrimPrefix(err.Error(), accounts.ErrForbidden.Error()+": "))
+			return
+		}
 		if r.Method != http.MethodGet && r.Header.Get(csrfHeader) != ss.csrf {
 			fail(w, http.StatusForbidden, "missing or wrong "+csrfHeader+" header")
 			return
 		}
+		if err := p.Check(need); err != nil {
+			fail(w, http.StatusForbidden, strings.TrimPrefix(err.Error(), accounts.ErrForbidden.Error()+": "))
+			return
+		}
 		h(w, r, ss, c.Value)
 	}
+}
+
+// principal is the session user's current role.
+func (s *server) principal(ss *session) (accounts.Principal, error) {
+	if a := s.d.Accounts(); a != nil {
+		return a.Principal(ss.user, ss.since)
+	}
+	p := accounts.RootPrincipal()
+	p.Name = ss.user
+	return p, nil
 }
 
 func clientAddr(r *http.Request) string {
@@ -287,10 +314,23 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusTooManyRequests, fmt.Sprintf("too many failed logins; try again in %ds", int(d.Seconds())+1))
 		return
 	}
-	if !s.o.Users.Verify(req.User, req.Password) {
-		s.limit.fail(addr)
-		s.o.Log.Warn("web login failed", "user", req.User, "from", addr)
-		fail(w, http.StatusUnauthorized, "wrong user name or password")
+	a := s.d.Accounts()
+	if a == nil {
+		fail(w, http.StatusServiceUnavailable, "no user database on this system")
+		return
+	}
+	if _, err := a.Authenticate(req.User, req.Password, addr); err != nil {
+		switch {
+		case errors.Is(err, accounts.ErrLocked), errors.Is(err, accounts.ErrDisabled):
+			s.o.Log.Warn("web login refused", "user", req.User, "from", addr, "why", err.Error())
+			fail(w, http.StatusForbidden, err.Error())
+		case errors.Is(err, accounts.ErrBadLogin):
+			s.limit.fail(addr)
+			s.o.Log.Warn("web login failed", "user", req.User, "from", addr)
+			fail(w, http.StatusUnauthorized, "wrong user name or password")
+		default:
+			fail(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 	s.limit.ok(addr)
@@ -300,7 +340,7 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode, MaxAge: int(SessionIdle.Seconds()),
 	})
 	s.o.Log.Info("web login", "user", req.User, "from", addr)
-	reply(w, map[string]string{"user": ss.user, "csrf": ss.csrf}, nil)
+	s.whoami(w, r, ss, tok)
 }
 
 func (s *server) logout(w http.ResponseWriter, r *http.Request, ss *session, tok string) {
@@ -310,7 +350,13 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request, ss *session, tok
 }
 
 func (s *server) whoami(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
-	reply(w, map[string]string{"user": ss.user, "csrf": ss.csrf}, nil)
+	me, err := s.d.Me(ss.caller())
+	if err != nil {
+		daemonFail(w, err)
+		return
+	}
+	reply(w, map[string]any{"user": ss.user, "csrf": ss.csrf, "role": me.Role, "superuser": me.Superuser,
+		"permissions": me.Permissions, "config_view": me.ConfigView, "config_edit": me.ConfigEdit, "areas": me.Areas}, nil)
 }
 
 func (s *server) password(w http.ResponseWriter, r *http.Request, ss *session, tok string) {
@@ -321,20 +367,20 @@ func (s *server) password(w http.ResponseWriter, r *http.Request, ss *session, t
 	if !decode(w, r, &req) {
 		return
 	}
-	if !s.o.Users.Verify(ss.user, req.Current) {
-		fail(w, http.StatusBadRequest, "current password is wrong")
+	if err := s.d.ChangeOwnPassword(ss.caller(), req.Current, req.New); err != nil {
+		daemonFail(w, err)
 		return
 	}
-	if err := s.o.Users.Set(ss.user, req.New); err != nil {
-		fail(w, http.StatusBadRequest, err.Error())
-		return
-	}
+	// Other sessions of this user end; this one carries on.
 	s.sess.dropUser(ss.user, tok)
+	if u, err := s.d.Accounts().User(ss.user); err == nil && u.PasswordChanged != nil {
+		s.sess.setSince(tok, *u.PasswordChanged)
+	}
 	s.o.Log.Info("web password changed", "user", ss.user)
 	reply(w, map[string]bool{"ok": true}, nil)
 }
 
-func (s *server) author(ss *session) string { return "web:" + ss.user }
+func (s *server) author(ss *session) string { return ss.caller().Author() }
 
 // --- status --------------------------------------------------------------
 
@@ -452,7 +498,7 @@ func (s *server) putCandidate(w http.ResponseWriter, r *http.Request, ss *sessio
 		fail(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := s.d.SetCandidate(data); err != nil {
+	if err := s.d.SetCandidateAs(ss.caller(), data); err != nil {
 		daemonFail(w, err)
 		return
 	}
@@ -461,7 +507,7 @@ func (s *server) putCandidate(w http.ResponseWriter, r *http.Request, ss *sessio
 }
 
 func (s *server) revert(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
-	err := s.d.RevertCandidate()
+	err := s.d.RevertCandidateAs(ss.caller())
 	reply(w, map[string]bool{"ok": err == nil}, err)
 }
 
@@ -495,7 +541,7 @@ func (s *server) commit(w http.ResponseWriter, r *http.Request, ss *session, _ s
 		fail(w, http.StatusBadRequest, "confirm_minutes must be 0-60")
 		return
 	}
-	res, err := s.d.Commit(s.author(ss), req.Message, time.Duration(req.ConfirmMinutes)*time.Minute)
+	res, err := s.d.CommitAs(ss.caller(), req.Message, time.Duration(req.ConfirmMinutes)*time.Minute)
 	if err != nil {
 		daemonFail(w, err)
 		return
@@ -503,8 +549,8 @@ func (s *server) commit(w http.ResponseWriter, r *http.Request, ss *session, _ s
 	reply(w, res, nil)
 }
 
-func (s *server) confirm(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
-	if err := s.d.Confirm(); err != nil {
+func (s *server) confirm(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+	if err := s.d.ConfirmAs(ss.caller()); err != nil {
 		daemonFail(w, err)
 		return
 	}
@@ -518,7 +564,7 @@ func (s *server) rollback(w http.ResponseWriter, r *http.Request, ss *session, _
 	if !decode(w, r, &req) {
 		return
 	}
-	res, err := s.d.Rollback(req.Revision, s.author(ss))
+	res, err := s.d.RollbackAs(ss.caller(), req.Revision)
 	if err != nil {
 		daemonFail(w, err)
 		return
@@ -598,9 +644,9 @@ func (s *server) tagOp(w http.ResponseWriter, r *http.Request, ss *session, _ st
 			fail(w, http.StatusBadRequest, "ttl must be >= 0")
 			return
 		}
-		err = s.d.RegisterTags(ip, req.Tags, time.Duration(req.TTL)*time.Second)
+		err = s.d.RegisterTagsAs(ss.caller(), ip, req.Tags, time.Duration(req.TTL)*time.Second)
 	case "unregister":
-		err = s.d.UnregisterTags(ip, req.Tags)
+		err = s.d.UnregisterTagsAs(ss.caller(), ip, req.Tags)
 	default:
 		fail(w, http.StatusNotFound, "tags/register or tags/unregister")
 		return
@@ -609,7 +655,6 @@ func (s *server) tagOp(w http.ResponseWriter, r *http.Request, ss *session, _ st
 		daemonFail(w, err)
 		return
 	}
-	s.o.Log.Info("web tag change", "author", s.author(ss), "op", r.PathValue("op"), "ip", ip, "tags", req.Tags)
 	reply(w, map[string]bool{"ok": true}, nil)
 }
 
@@ -767,8 +812,13 @@ func fail(w http.ResponseWriter, code int, msg string) {
 // daemonFail maps daemon errors: validation problems are 400 with each
 // problem listed separately so the UI can show them against fields.
 func daemonFail(w http.ResponseWriter, err error) {
-	if !errors.Is(err, daemon.ErrInvalid) {
-		fail(w, http.StatusInternalServerError, err.Error())
+	code := daemon.HTTPStatus(err)
+	if code != http.StatusBadRequest {
+		msg := err.Error()
+		for _, e := range []error{accounts.ErrForbidden, accounts.ErrNotFound} {
+			msg = strings.TrimPrefix(msg, e.Error()+": ")
+		}
+		fail(w, code, msg)
 		return
 	}
 	msg := strings.TrimPrefix(err.Error(), daemon.ErrInvalid.Error()+": ")

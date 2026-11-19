@@ -4,11 +4,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -18,11 +16,13 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
 	"github.com/stevejboyle/hobby-ngfw/internal/appid"
 	"github.com/stevejboyle/hobby-ngfw/internal/conntrack"
 	"github.com/stevejboyle/hobby-ngfw/internal/daemon"
@@ -67,7 +67,10 @@ func main() {
 	flag.StringVar(&hostnameDir, "hostname-dir", "", "apply system.hostname to the system: the hostname and hosts files in this directory, and the live hostname (the appliance passes /etc; empty: leave the hostname alone)")
 	bootstrap := flag.String("bootstrap", "", "config file to commit as revision 1 if nothing has been committed yet")
 	uiListen := flag.String("ui-listen", "", "address for the web UI, e.g. :443 (disabled if empty; needs -tls-cert)")
-	webUsers := flag.String("web-users", "/etc/ngfw/web-users", "web UI user file (see fwctl web-passwd)")
+	webUsers := flag.String("web-users", "/etc/ngfw/web-users", "the web user file of versions before multiple users: imported once, then kept with admin's password for rollbacks")
+	usersDB := flag.String("users", "/etc/ngfw/users.json", "user database (see fwctl web-passwd)")
+	rolesDB := flag.String("roles", "/etc/ngfw/roles.json", "custom roles")
+	unixAccounts := flag.Bool("unix-accounts", true, "manage each user's Unix login (SSH, console); off for development")
 	root := flag.String("root", "/", "root filesystem for appliance upgrades")
 	fwctlPath := flag.String("fwctl", "/usr/local/sbin/fwctl", "fwctl binary, used to run upgrades")
 	uiDevHTTP := flag.Bool("ui-dev-http", false, "development only: serve the web UI over plain HTTP; refused unless -ui-listen is a loopback address")
@@ -75,7 +78,8 @@ func main() {
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	mgmtGroup = *socketGroup
-	ui := uiOpts{listen: *uiListen, users: *webUsers, root: *root, fwctl: *fwctlPath, devHTTP: *uiDevHTTP}
+	ui := uiOpts{listen: *uiListen, users: *webUsers, usersDB: *usersDB, rolesDB: *rolesDB, unixAccounts: *unixAccounts,
+		root: *root, fwctl: *fwctlPath, devHTTP: *uiDevHTTP}
 	if err := run(log, *stateDir, *socket, *apiListen, *apiKeys, *tlsCert, *tlsKey, *nftPath, *ctPath, *bootstrap, ui); err != nil {
 		log.Error("ngfwd exiting", "err", err)
 		os.Exit(1)
@@ -83,8 +87,8 @@ func main() {
 }
 
 type uiOpts struct {
-	listen, users, root, fwctl string
-	devHTTP                    bool
+	listen, users, usersDB, rolesDB, root, fwctl string
+	devHTTP, unixAccounts                        bool
 }
 
 func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey, nftPath, ctPath, bootstrap string, ui uiOpts) error {
@@ -138,6 +142,21 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 		d.SetDecrypt(decrypt.Exec{Binary: tlsdPath, Socket: tlsdSocket}, decryptCA, decryptPolicy)
 		go d.RunDecryptHealth(context.Background())
 	}
+	// Users and roles: one password per user for SSH, the console and the
+	// web UI; every change goes to the Unix login and the user database
+	// together.
+	acct := &accounts.Store{Path: ui.usersDB, RolesPath: ui.rolesDB, Legacy: ui.users, Log: log}
+	if ui.unixAccounts {
+		acct.Sys = accounts.DefaultExec()
+		if u, err := user.Lookup(accounts.Admin); err == nil && u.HomeDir != "" {
+			acct.AdminKeys = filepath.Join(u.HomeDir, ".ssh", "authorized_keys")
+		}
+	}
+	if err := acct.Open(); err != nil {
+		return fmt.Errorf("user database: %w", err)
+	}
+	acct.Reconcile()
+	d.SetAccounts(acct)
 	if err := d.Start(); err != nil {
 		return err
 	}
@@ -184,81 +203,17 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 			log.Info("management socket shared with group", "group", mgmtGroup)
 		}
 	}
-	// One password for admin everywhere: changes go to the web user file
-	// and the Unix account (SSH, console) together.
-	users := &webui.Users{Path: ui.users, System: webui.SetUnixPassword}
 	d.SetAppID(appid.Source{StatsFile: appidStats})
 	logReader := logs.Journal{Path: journalctlPath, ZoneOf: d.ZoneOf, RuleName: d.RuleName}
+	d.SetLogs(logReader)
+	d.SetAPIKeysFile(apiKeys)
 	mgmt := http.NewServeMux()
-	mgmt.HandleFunc("GET /v1/logs/{kind}", func(w http.ResponseWriter, r *http.Request) {
-		n, _ := strconv.Atoi(r.URL.Query().Get("n"))
-		q := r.URL.Query().Get("q")
-		var v any
-		var err error
-		switch r.PathValue("kind") {
-		case "traffic":
-			v, err = logReader.Traffic(n, q)
-		case "system":
-			v, err = logReader.System(n, q)
-		case "threat":
-			v, err = logReader.Threat(n, q)
-		case "decryption":
-			v, err = logReader.Decryption(n, q)
-		default:
-			http.Error(w, `{"error":"logs are traffic, threat, decryption or system"}`, http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if errors.Is(err, logs.ErrQuery) {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-			return
-		}
-		if err != nil {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-			return
-		}
-		json.NewEncoder(w).Encode(v)
-	})
-	// The CLI's passwd: the caller proves the current password.
-	mgmt.HandleFunc("POST /v1/password", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			User    string `json:"user"`
-			Current string `json:"current"`
-			New     string `json:"new"`
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "bad JSON"})
-			return
-		}
-		if !users.Verify(req.User, req.Current) {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": "current password is wrong"})
-			return
-		}
-		if err := users.Set(req.User, req.New); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-			return
-		}
-		log.Info("password changed from the CLI", "user", req.User)
-		json.NewEncoder(w).Encode(map[string]string{"status": "password changed"})
-	})
 	mgmt.Handle("/", d.MgmtHandler())
-	// The tag API keys file is root-only; CLI admins read it through here.
-	mgmt.HandleFunc("GET /v1/api-keys", func(w http.ResponseWriter, r *http.Request) {
-		data, err := os.ReadFile(apiKeys)
-		if err != nil {
-			http.Error(w, `{"error":"no tag API key file"}`, http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Write(data)
-	})
-	servers := []*http.Server{{Handler: mgmt, ReadHeaderTimeout: 10 * time.Second}}
+	// The caller is the socket peer's Unix user, as the kernel reports it.
+	servers := []*http.Server{{Handler: mgmt, ReadHeaderTimeout: 10 * time.Second,
+		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+			return daemon.WithCaller(ctx, socketCaller(c))
+		}}}
 	errc := make(chan error, 3)
 	go func() { errc <- servers[0].Serve(ln) }()
 	log.Info("management API listening", "socket", socket)
@@ -291,8 +246,7 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 			return errors.New("-ui-listen needs -tls-cert and -tls-key: the web UI is HTTPS only")
 		}
 		h := webui.New(d, webui.Options{
-			Users: users,
-			Logs:  logReader,
+			Logs: logReader,
 			Upgrader: &webui.SystemdUpgrader{
 				Installer: &upgrade.Installer{Root: ui.root},
 				Fwctl:     ui.fwctl,
@@ -328,6 +282,28 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 		s.Shutdown(ctx)
 	}
 	return nil
+}
+
+// socketCaller names the management socket's caller from its Unix user:
+// root is root (a superuser, for recovery); anyone else is the SJB-OS user
+// of the same name, and the user database decides what they may do.
+func socketCaller(c net.Conn) accounts.Caller {
+	uid, err := peerUID(c)
+	if err != nil {
+		return accounts.Caller{Name: "unknown", Via: "cli"}
+	}
+	if uid == 0 {
+		return accounts.Root
+	}
+	u, err := user.LookupId(strconv.Itoa(uid))
+	if err != nil {
+		return accounts.Caller{Name: "uid-" + strconv.Itoa(uid), Via: "cli"}
+	}
+	if runtime.GOOS != "linux" {
+		// Development: the user running ngfwd (see peerUID).
+		return accounts.Caller{Name: u.Username, Via: "root"}
+	}
+	return accounts.Caller{Name: u.Username, Via: "cli"}
 }
 
 // mgmtGroup may use the management socket (set by -socket-group).

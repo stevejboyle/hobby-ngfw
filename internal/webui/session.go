@@ -2,7 +2,9 @@ package webui
 
 import (
 	"crypto/rand"
+
 	"encoding/base64"
+	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
 	"sync"
 	"time"
 )
@@ -18,7 +20,13 @@ type session struct {
 	user     string
 	csrf     string
 	lastSeen time.Time
+	// since is when the session's password was proved: a password change
+	// after it ends the session. Wall-clock time, as the user database
+	// records password changes.
+	since time.Time
 }
+
+func (ss *session) caller() accounts.Caller { return accounts.Caller{Name: ss.user, Via: "web"} }
 
 type sessions struct {
 	mu  sync.Mutex
@@ -37,7 +45,7 @@ func (s *sessions) create(user string) (string, *session) {
 	defer s.mu.Unlock()
 	s.expire()
 	t := token()
-	ss := &session{user: user, csrf: token(), lastSeen: s.now()}
+	ss := &session{user: user, csrf: token(), lastSeen: s.now(), since: time.Now()}
 	s.m[t] = ss
 	return t, ss
 }
@@ -55,6 +63,15 @@ func (s *sessions) get(t string) *session {
 	}
 	ss.lastSeen = s.now()
 	return ss
+}
+
+// setSince moves a session's password time (after its own password change).
+func (s *sessions) setSince(t string, since time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ss, ok := s.m[t]; ok {
+		ss.since = since
+	}
 }
 
 func (s *sessions) drop(t string) {

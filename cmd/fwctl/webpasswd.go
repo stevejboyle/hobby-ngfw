@@ -6,17 +6,27 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
+	"path/filepath"
 	"strings"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/webui"
+	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
 )
 
+// webPasswd is root's recovery command: it sets a user's one password
+// (SSH, console, web UI) and clears any lockout, straight in the user
+// database, so it works even when ngfwd doesn't. First boot uses it to set
+// admin's password.
 func webPasswd(args []string) error {
 	fl := flag.NewFlagSet("web-passwd", flag.ExitOnError)
-	user := fl.String("user", "admin", "user")
-	file := fl.String("file", "/etc/ngfw/web-users", "web user file")
+	name := fl.String("user", accounts.Admin, "user")
+	file := fl.String("file", "/etc/ngfw/web-users", "the old web user file (imported once; then kept with admin's password for rollbacks)")
+	db := fl.String("users", "", "user database (default: users.json next to -file)")
 	webOnly := fl.Bool("web-only", false, "development: set only the web UI password, not the account's SSH/console password")
 	fl.Parse(args)
+	if *db == "" {
+		*db = filepath.Join(filepath.Dir(*file), "users.json")
+	}
 
 	var pw string
 	if isTerminal() {
@@ -39,15 +49,26 @@ func webPasswd(args []string) error {
 		}
 		pw = strings.TrimRight(line, "\r\n")
 	}
-	users := &webui.Users{Path: *file, System: webui.SetUnixPassword}
+	st := &accounts.Store{Path: *db, RolesPath: filepath.Join(filepath.Dir(*db), "roles.json"), Legacy: *file}
 	what := "SSH, console and web UI"
 	if *webOnly {
-		users.System, what = nil, "web UI"
+		what = "web UI"
+	} else {
+		st.Sys = accounts.DefaultExec()
+		if u, err := user.Lookup(accounts.Admin); err == nil && u.HomeDir != "" {
+			st.AdminKeys = filepath.Join(u.HomeDir, ".ssh", "authorized_keys")
+		}
 	}
-	if err := users.Set(*user, pw); err != nil {
+	if err := st.Open(); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "%s password for %s set\n", what, *user)
+	if err := st.SetPassword(accounts.Root, *name, pw); err != nil {
+		return err
+	}
+	if err := st.Unlock(accounts.Root, *name); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "%s password for %s set (and any lockout cleared)\n", what, *name)
 	return nil
 }
 

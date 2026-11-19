@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
 	"github.com/stevejboyle/hobby-ngfw/internal/appid"
 	"github.com/stevejboyle/hobby-ngfw/internal/compiler"
 	"github.com/stevejboyle/hobby-ngfw/internal/config"
@@ -22,6 +23,7 @@ import (
 	"github.com/stevejboyle/hobby-ngfw/internal/dhcp"
 	"github.com/stevejboyle/hobby-ngfw/internal/diff"
 	"github.com/stevejboyle/hobby-ngfw/internal/frr"
+	"github.com/stevejboyle/hobby-ngfw/internal/logs"
 	"github.com/stevejboyle/hobby-ngfw/internal/netdev"
 	"github.com/stevejboyle/hobby-ngfw/internal/nfqueue"
 	"github.com/stevejboyle/hobby-ngfw/internal/nft"
@@ -89,6 +91,10 @@ type Daemon struct {
 	// ruleset, or an auto-rollback failed). Status reports it; the next
 	// successful commit or rollback clears it.
 	recovery string
+
+	accounts    *accounts.Store // nil: no access control (tests, development)
+	logs        logs.Reader
+	apiKeysFile string
 }
 
 type pending struct {

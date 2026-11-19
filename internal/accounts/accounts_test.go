@@ -47,7 +47,11 @@ func (f *fakeSys) Ensure(n string, en bool) error {
 	}
 	return nil
 }
-func (f *fakeSys) Remove(n string) error { delete(f.accounts, n); f.ended = append(f.ended, n); return nil }
+func (f *fakeSys) Remove(n string) error {
+	delete(f.accounts, n)
+	f.ended = append(f.ended, n)
+	return nil
+}
 func (f *fakeSys) SetPassword(n, pw string) error {
 	if f.failPW {
 		return errors.New("chpasswd failed")

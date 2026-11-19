@@ -2,7 +2,36 @@
 // DOM calls (never innerHTML with data) so config text can't inject markup.
 "use strict";
 
-const state = { csrf: "", user: "", status: null, cand: null, clockSkew: 0, staged: null };
+const state = { csrf: "", user: "", me: null, status: null, cand: null, clockSkew: 0, staged: null };
+
+// ---- what the user's role allows ----------------------------------------------
+// ngfwd checks every call; the UI only hides what the role can't use.
+const can = (area, level = "view") => {
+  const m = state.me || {};
+  if (m.superuser) return true;
+  const l = (m.permissions || {})[area];
+  return l === "change" || (level === "view" && l === "view");
+};
+const isSuper = () => !!(state.me && state.me.superuser);
+// Config sections by area (as internal/accounts maps them).
+const areaOfKey = {
+  zones: "policy", addresses: "policy", address_groups: "policy", services: "policy", rules: "policy", application_groups: "policy", nat: "policy",
+  interfaces: "network", routes: "network", vrfs: "network", routing: "network", bgp_neighbors: "network", ospf_interfaces: "network", prefix_lists: "network",
+  dhcp_servers: "dhcp", dhcp_reservations: "dhcp", ips_profiles: "ips", decryption_rules: "decryption", decryption_profiles: "decryption", decryption_exclusions: "decryption",
+};
+// Pages by what they need to be seen.
+const pageNeeds = {
+  policy: () => can("policy"), nat: () => can("policy"), objects: () => can("policy"), network: () => can("network"), routing: () => can("network"),
+  dhcp: () => can("dhcp"), apps: () => can("monitoring"), ips: () => can("ips"), decryption: () => can("decryption"), tags: () => can("tags"),
+  revisions: () => can("revisions"), logs: () => can("monitoring"), users: isSuper, roles: isSuper,
+};
+function applyNav() {
+  for (const a of document.querySelectorAll("#nav a, .who a")) {
+    const need = pageNeeds[a.getAttribute("href").slice(1)];
+    a.classList.toggle("hidden", !!need && !need());
+  }
+  for (const m of document.querySelectorAll("#nav .menu")) m.classList.toggle("hidden", !m.querySelector("a:not(.hidden)"));
+}
 
 // ---- tiny DOM helper -------------------------------------------------------
 function h(tag, attrs, ...kids) {
@@ -140,6 +169,8 @@ $("#logout").addEventListener("click", async () => {
 async function enter(s) {
   state.csrf = s.csrf;
   state.user = s.user;
+  state.me = s;
+  applyNav();
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
   await refresh();
@@ -148,12 +179,12 @@ async function enter(s) {
 
 // ---- shared state ----------------------------------------------------------
 async function refresh() {
-  const [st, cand] = await Promise.all([api("GET", "status"), api("GET", "config/candidate")]);
+  const [st, cand] = await Promise.all([api("GET", "status"), state.me && !state.me.config_view ? {} : api("GET", "config/candidate")]);
   state.status = st;
   state.cand = normalise(cand);
   state.clockSkew = Date.parse(st.now) - Date.now();
   $("#version").textContent = st.version ? "v" + st.version : "";
-  $("#host").textContent = `${state.user}@${st.hostname || "sjb-fw"}`;
+  $("#host").textContent = `${state.user}@${st.hostname || "sjb-fw"}` + (state.me ? ` (${state.me.role})` : "");
   renderBars();
 }
 
@@ -188,7 +219,7 @@ function renderBars() {
       h("strong", { class: "action-deny" }, "Needs attention"),
       h("span", {}, st.recovery),
       h("span", { class: "spacer" }),
-      h("span", { class: "buttons" }, h("button", { class: "primary", onclick: commitDialog }, "Commit…")),
+      state.me.config_edit ? h("span", { class: "buttons" }, h("button", { class: "primary", onclick: commitDialog }, "Commit…")) : null,
     );
     pend.classList.remove("hidden");
   } else if (st.uncommitted_changes) {
@@ -198,10 +229,11 @@ function renderBars() {
       h("span", { class: "spacer" }),
       h("span", { class: "buttons" },
         h("button", { onclick: showDiff }, "Review diff"),
+        !state.me.config_edit ? null : [
         h("button", { onclick: () => confirmDialog("Discard changes?", "The candidate goes back to the running config.", async () => { await api("POST", "config/revert", {}); await refresh(); route(); toast("Changes discarded."); }, "Discard") }, "Discard"),
-        h("button", { class: "primary", onclick: commitDialog }, "Commit…")),
+        h("button", { class: "primary", onclick: commitDialog }, "Commit…")]),
     );
-    pend.classList.remove("hidden");
+    pend.classList.toggle("hidden", !state.me.config_view);
   } else pend.classList.add("hidden");
 
   clearInterval(confirmTimer);
@@ -214,7 +246,7 @@ function renderBars() {
         h("strong", {}, `Revision ${st.running_revision} rolls back in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`),
         h("span", {}, "unless you confirm it. Check the firewall still does what you expect first."),
         h("span", { class: "spacer" }),
-        h("button", { class: "primary", onclick: doConfirm }, "Confirm"),
+        can("revisions", "change") ? h("button", { class: "primary", onclick: doConfirm }, "Confirm") : null,
       );
       if (left === 0) { clearInterval(confirmTimer); setTimeout(async () => { await refresh(); route(); }, 2000); }
     };
@@ -322,6 +354,7 @@ const serviceNames = () => state.cand.services.map((s) => s.name);
 // spec: {key, title, singular, columns: [[header, row => node]], form(item) -> {node, get}, orderable}
 function listSection(spec) {
   const items = state.cand[spec.key];
+  const ro = !can(areaOfKey[spec.key] || "policy", "change");
   const edit = (i) => {
     const isNew = i < 0;
     const f = spec.form(isNew ? spec.blank() : clone(items[i]));
@@ -353,17 +386,17 @@ function listSection(spec) {
   const rows = items.map((it, i) => h("tr", {},
     spec.orderable ? h("td", { class: "num" }, i + 1) : null,
     spec.columns.map(([, f]) => h("td", {}, f(it))),
-    h("td", { class: "actions" },
+    h("td", { class: "actions" }, ro ? null : [
       spec.orderable ? [
         h("button", { class: "icon", title: "Move up", "aria-label": `Move ${it.name} up`, disabled: i === 0, onclick: () => move(i, -1) }, "↑"),
         h("button", { class: "icon", title: "Move down", "aria-label": `Move ${it.name} down`, disabled: i === items.length - 1, onclick: () => move(i, 1) }, "↓"),
       ] : null,
       h("button", { class: "link", onclick: () => edit(i) }, "Edit"),
-      h("button", { class: "link danger", onclick: () => del(i) }, "Delete"))));
+      h("button", { class: "link danger", onclick: () => del(i) }, "Delete")])));
 
   return h("section", { class: "panel" },
     h("div", { class: "page-head" }, h("h2", {}, spec.title), spec.note ? h("span", { class: "muted small" }, spec.note) : null,
-      h("span", { class: "spacer" }), h("button", { class: "primary", onclick: () => edit(-1) }, `Add ${spec.singular}`)),
+      h("span", { class: "spacer" }), ro ? h("span", { class: "muted small" }, "view only") : h("button", { class: "primary", onclick: () => edit(-1) }, `Add ${spec.singular}`)),
     items.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, head), h("tbody", {}, rows)))
       : h("p", { class: "empty" }, `No ${spec.title.toLowerCase()} yet.`));
 }
@@ -851,7 +884,7 @@ function pageDashboard() {
       card("Quarantined hosts", quarantined, `${totalTags} tag registrations in all`),
       card("SJB-OS", st.version || "dev", st.hostname || ""),
     ),
-    dashboardCharts(),
+    can("monitoring") ? dashboardCharts() : null,
     h("section", { class: "panel" }, h("h2", {}, "Interfaces"),
       h("div", { class: "table-wrap" }, h("table", {},
         h("thead", {}, h("tr", {}, h("th", {}, "Interface"), h("th", {}, "Zone"), h("th", {}, "Addresses"))),
@@ -1011,7 +1044,7 @@ async function pageDecryption() {
   const counts = st.counts || {};
   const decisions = ["decrypted", "would-decrypt", "excluded", "learned", "passed", "blocked", "failed"];
   return h("div", {},
-    h("div", { class: "page-head" }, h("h1", {}, "Decryption"), h("span", { class: "spacer" }), imp, gen),
+    h("div", { class: "page-head" }, h("h1", {}, "Decryption"), h("span", { class: "spacer" }), can("decryption-ca", "change") ? [imp, gen] : null),
     h("p", { class: "tagline" }, "Sealed parcels are opened at the border, then sealed again."),
     h("div", { class: "cards" },
       card("State", stateBadge(st.state), st.state_detail || ""),
@@ -1037,7 +1070,7 @@ async function pageDecryption() {
         h("tbody", {}, h("tr", {}, decisions.map((d) => h("td", { class: "mono" }, String(counts[d] || 0))))))),
       h("p", { class: "muted small" }, "Each connection is in Logs → Decryption: the server name and what happened, never what was inside.")),
     h("section", { class: "panel" }, h("div", { class: "page-head" }, h("h2", {}, "Learned (pinned) servers"), h("span", { class: "spacer" }),
-      learned.length ? h("button", { onclick: () => confirmDialog("Decrypt these servers again?", "Their clients may fail again, and be learned again.",
+      learned.length && can("decryption", "change") ? h("button", { onclick: () => confirmDialog("Decrypt these servers again?", "Their clients may fail again, and be learned again.",
         async () => { const r = await api("POST", "decryption/learned/clear", {}); toast(`${r.cleared} forgotten`); route(); }, "Clear") }, "Clear") : null),
       learned.length ? h("div", { class: "table-wrap" }, h("table", {},
         h("thead", {}, h("tr", {}, ["Server name", "Address", "Passed through until"].map((t) => h("th", {}, t)))),
@@ -1153,14 +1186,14 @@ async function pageTags() {
   const fmt = (s) => (s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m` : s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`);
   return h("div", {},
     h("div", { class: "page-head" }, h("h1", {}, "Tags"), h("span", { class: "muted small" }, "Tag registrations change dynamic address groups immediately and cut the host's existing sessions.")),
-    h("section", { class: "panel" }, h("h2", {}, "Register a host"), h("div", { class: "row" }, ip.node, tags.node, ttl.node, add)),
+    can("tags", "change") ? h("section", { class: "panel" }, h("h2", {}, "Register a host"), h("div", { class: "row" }, ip.node, tags.node, ttl.node, add)) : null,
     h("section", { class: "panel" }, h("h2", {}, "Registrations"),
       rows.length ? h("div", { class: "table-wrap" }, h("table", {},
         h("thead", {}, h("tr", {}, h("th", {}, "IP"), h("th", {}, "Tag"), h("th", {}, "Expires"), h("th", {}, ""))),
         h("tbody", {}, rows.map((r) => h("tr", {},
           h("td", { class: "mono" }, r.ip), h("td", {}, h("span", { class: "chip" }, r.tag)),
           h("td", {}, r.expires ? `in ${fmt(r.remaining_seconds)}` : h("span", { class: "muted" }, "never")),
-          h("td", { class: "actions" }, h("button", { class: "link danger", onclick: () => confirmDialog(`Unregister ${r.ip} from ${r.tag}?`, "It leaves the tag's address group immediately.", async () => {
+          h("td", { class: "actions" }, !can("tags", "change") ? null : h("button", { class: "link danger", onclick: () => confirmDialog(`Unregister ${r.ip} from ${r.tag}?`, "It leaves the tag's address group immediately.", async () => {
             await api("POST", "tags/unregister", { ip: r.ip, tags: [r.tag] }); await refresh(); route(); toast("Unregistered.");
           }, "Unregister") }, "Unregister"))))))) : h("p", { class: "empty" }, "No hosts are registered. All quiet at the border.")));
 }
@@ -1182,7 +1215,7 @@ async function pageRevisions() {
         h("td", {}, h("strong", {}, v.n), v.n === r.running ? h("span", { class: "chip" }, "running") : null),
         h("td", {}, new Date(v.time).toLocaleString()), h("td", {}, v.author), h("td", {}, v.message || h("span", { class: "muted" }, "—")),
         h("td", { class: "actions" }, h("button", { class: "link", onclick: () => view(v.n) }, "View"),
-          v.n !== r.running ? h("button", { class: "link", onclick: () => rollback(v.n) }, "Roll back") : null)))))));
+          v.n !== r.running && can("revisions", "change") ? h("button", { class: "link", onclick: () => rollback(v.n) }, "Roll back") : null)))))));
 }
 
 // ---- routing ---------------------------------------------------------------
@@ -1732,7 +1765,7 @@ async function pageIPS() {
   });
   const gb = st.mem_total ? st.mem_total / 2 ** 30 : 0;
   return h("div", {},
-    h("div", { class: "page-head" }, h("h1", {}, "IPS"), btn),
+    h("div", { class: "page-head" }, h("h1", {}, "IPS"), can("ips", "change") ? btn : null),
     h("p", { class: "tagline" }, "Known troublemakers are stopped at the border."),
     h("div", { class: "cards" },
       card("Inspection", stateBadge(st.state), st.state_detail || ""),
@@ -1753,7 +1786,7 @@ async function pageIPS() {
 
 async function pageSystem() {
   let up = null;
-  try { up = await api("GET", "upgrade"); } catch (e) { up = { error: e.message }; }
+  if (can("upgrades")) { try { up = await api("GET", "upgrade"); } catch (e) { up = { error: e.message }; } }
   const file = h("input", { type: "file", accept: ".upgrade" });
   const status = h("div", { class: "muted" });
   const install = h("button", { class: "primary hidden" }, "Install");
@@ -1776,32 +1809,25 @@ async function pageSystem() {
     } catch (e) { status.textContent = e.message; }
   });
 
-  const cur = h("input", { type: "password", autocomplete: "current-password" });
-  const nw = h("input", { type: "password", autocomplete: "new-password", minlength: 10 });
-  const pw = h("button", { class: "primary", onclick: async () => {
-    try { await api("POST", "password", { current: cur.value, new: nw.value }); cur.value = nw.value = ""; toast("Password changed for the web UI, SSH and the console. Other web sessions were logged out."); }
-    catch (e) { toast(e.message); }
-  } }, "Change password");
-
   const history = (up && up.history) || [];
   return h("div", {},
     h("div", { class: "page-head" }, h("h1", {}, "Administration")),
-    h("section", { class: "panel" }, h("h2", {}, "Upgrade"),
+    !up ? null : h("section", { class: "panel" }, h("h2", {}, "Upgrade"),
       up.error ? h("p", { class: "error" }, up.error) : h("div", {},
         h("p", {}, `Installed: SJB-OS ${up.version}.`, up.in_progress ? h("strong", {}, " An upgrade is in progress.") : null),
         h("p", { class: "muted small" }, "Upgrades are signed bundles (.upgrade files from the GitHub release). Config, tags and revisions are kept. If ngfwd does not come back healthy, the previous version is restored automatically."),
-        h("div", { class: "row" }, h("label", {}, "Bundle", file), upload, install), status,
-        up.rollback_to ? h("p", {}, h("button", { onclick: () => confirmDialog(`Roll back to SJB-OS ${up.rollback_to}?`, "The files the last upgrade replaced are restored and ngfwd restarts.", async () => {
+        can("upgrades", "change") ? [h("div", { class: "row" }, h("label", {}, "Bundle", file), upload, install), status] : h("p", { class: "muted small" }, "Your role can see upgrades but not install them."),
+        up.rollback_to && can("upgrades", "change") ? h("p", {}, h("button", { onclick: () => confirmDialog(`Roll back to SJB-OS ${up.rollback_to}?`, "The files the last upgrade replaced are restored and ngfwd restarts.", async () => {
           await api("POST", "upgrade/rollback", {}); toast("Rolling back…"); waitForUpgrade(up.version);
         }, "Roll back") }, `Roll back to ${up.rollback_to}`)) : null,
         history.length ? h("div", { class: "table-wrap" }, h("table", {},
           h("thead", {}, h("tr", {}, h("th", {}, "When"), h("th", {}, "Action"), h("th", {}, "From → to"), h("th", {}, "Result"))),
           h("tbody", {}, history.slice().reverse().map((e) => h("tr", {}, h("td", {}, new Date(e.time).toLocaleString()), h("td", {}, e.action),
             h("td", {}, `${e.from} → ${e.to}`), h("td", {}, h("span", { class: e.result === "ok" ? "action-allow" : e.result === "in-progress" ? "" : "action-deny" }, e.result), e.error ? h("div", { class: "muted small" }, e.error) : null)))))) : null)),
-    h("section", { class: "panel" }, h("h2", {}, "Password"),
-      h("p", { class: "muted small" }, "One password for " + state.user + ": the web UI, SSH and the VMware console. Changing it here changes all three, as does passwd in the CLI."),
-      h("div", { class: "row" }, h("label", {}, "Current password", cur), h("label", {}, "New password (10+ characters)", nw), pw)),
-    h("section", { class: "panel" }, h("h2", {}, "Candidate config as YAML"),
+    h("section", { class: "panel" }, h("h2", {}, "Your account"),
+      h("p", {}, "Your password and SSH keys are on ", h("a", { href: "#account" }, "My account"), ".",
+        isSuper() ? [" Other users and roles: ", h("a", { href: "#users" }, "Users"), " and ", h("a", { href: "#roles" }, "Roles"), "."] : null)),
+    !state.me.config_view ? null :     h("section", { class: "panel" }, h("h2", {}, "Candidate config as YAML"),
       h("p", { class: "muted small" }, "What fwctl show prints. Saving from this UI rewrites the file, so YAML comments are not kept."),
       h("button", { onclick: async () => {
         const res = await fetch("/ui/api/config/candidate?format=yaml", { credentials: "same-origin" });
@@ -1830,10 +1856,198 @@ function waitForUpgrade(from) {
   setTimeout(poll, 2000);
 }
 
+// ---- users, roles and your own account --------------------------------------
+const fmtWhen = (t) => (t ? new Date(t).toLocaleString() : "never");
+const pwField = (label, auto = "new-password") => {
+  const input = h("input", { type: "password", autocomplete: auto, minlength: auto === "new-password" ? 10 : null });
+  return { node: h("label", {}, label, input), get: () => input.value, input };
+};
+function userStatus(u) {
+  const s = u.disabled ? h("span", { class: "action-deny" }, "disabled")
+    : u.locked ? h("span", { class: "action-reset" }, `locked until ${new Date(u.locked_until).toLocaleTimeString()}`)
+    : h("span", { class: "action-allow" }, "active");
+  return [s, !u.password_set ? h("span", { class: "muted small" }, " no password") : null, u.permanent ? [" ", h("span", { class: "chip" }, "permanent")] : null];
+}
+
+// A user's SSH keys, with add and delete. onChange redraws.
+function keysPanel(u, onChange) {
+  const add = () => {
+    const key = textArea("Public key", "", { placeholder: "ssh-ed25519 AAAA... you@laptop", rows: 3 });
+    modal(`Add an SSH key for ${u.name}`, h("div", {},
+      h("p", { class: "muted small" }, "One line from the .pub file (for example ~/.ssh/id_ed25519.pub). It works for SSH logins straight away."), key.node),
+    { submit: "Add", wide: true, onSubmit: async () => {
+      const k = await api("POST", `users/${encodeURIComponent(u.name)}/ssh-keys`, { key: key.get() });
+      toast(`Key ${k.fingerprint.slice(0, 20)}… added.`); onChange();
+    } });
+  };
+  const del = (k) => confirmDialog(`Delete this key of ${u.name}?`, `${k.type} ${k.fingerprint} ${k.comment || ""}: SSH logins with it stop working.`, async () => {
+    await api("DELETE", `users/${encodeURIComponent(u.name)}/ssh-keys/${encodeURIComponent(k.fingerprint)}`);
+    toast("Key deleted."); onChange();
+  }, "Delete");
+  return h("section", { class: "panel" },
+    h("div", { class: "page-head" }, h("h2", {}, "SSH keys"), h("span", { class: "spacer" }), h("button", { class: "primary", onclick: add }, "Add key")),
+    u.ssh_keys.length ? h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ["Type", "Fingerprint", "Comment", ""].map((t) => h("th", {}, t)))),
+      h("tbody", {}, u.ssh_keys.map((k) => h("tr", {}, h("td", {}, k.type), h("td", { class: "mono small" }, k.fingerprint), h("td", {}, k.comment || ""),
+        h("td", { class: "actions" }, h("button", { class: "link danger", onclick: () => del(k) }, "Delete")))))))
+      : h("p", { class: "empty" }, "No SSH keys: password logins only."));
+}
+
+function permsTable(perms, superuser) {
+  const areas = (state.me && state.me.areas) || [];
+  return h("div", { class: "table-wrap" }, h("table", {},
+    h("thead", {}, h("tr", {}, h("th", {}, "Area"), h("th", {}, "Access"), h("th", {}, "Covers"))),
+    h("tbody", {}, areas.map((a) => {
+      const l = superuser ? (a.view_only ? "view" : "change") : (perms || {})[a.area] || "";
+      return h("tr", {}, h("td", {}, a.title), h("td", {}, l ? h("span", { class: l === "change" ? "action-allow" : "" }, l) : h("span", { class: "muted" }, "none")), h("td", { class: "muted small" }, a.covers));
+    }))));
+}
+
+async function pageAccount() {
+  const u = await api("GET", "me");
+  const m = state.me;
+  const cur = pwField("Current password", "current-password"), nw = pwField("New password (10+ characters)"), again = pwField("Again");
+  const change = h("button", { class: "primary", onclick: async () => {
+    if (nw.get() !== again.get()) return toast("The new passwords don't match.");
+    try {
+      await api("POST", "password", { current: cur.get(), new: nw.get() });
+      cur.input.value = nw.input.value = again.input.value = "";
+      toast("Password changed for the web UI, SSH and the console. Your other sessions were logged out.");
+    } catch (e) { toast(e.message); }
+  } }, "Change password");
+  return h("div", {},
+    h("div", { class: "page-head" }, h("h1", {}, "My account")),
+    h("div", { class: "cards" },
+      card("User", u.name, u.permanent ? "permanent superuser" : ""),
+      card("Role", m.role, m.superuser ? "everything, including users and roles" : ""),
+      card("Last web login", fmtWhen(u.last_login)),
+    ),
+    h("section", { class: "panel" }, h("h2", {}, "Password"),
+      h("p", { class: "muted small" }, "One password for the web UI, SSH and the VMware console. Changing it here changes all three, as does passwd in the CLI. Five wrong passwords in a row lock the account for 15 minutes."),
+      h("div", { class: "row" }, cur.node, nw.node, again.node, change)),
+    keysPanel(u, route),
+    h("section", { class: "panel" }, h("h2", {}, "What your role allows"), permsTable(m.permissions, m.superuser)));
+}
+
+async function pageUsers() {
+  const [users, roles] = await Promise.all([api("GET", "users"), api("GET", "roles")]);
+  const roleOpts = roles.map((r) => ({ value: r.name, label: r.builtin ? r.name : `${r.name} (custom)` }));
+  const add = () => {
+    const name = textField("User name", "", { required: true, placeholder: "alice", hint: "Lower-case letters, digits, - or _" });
+    const role = selectField("Role", "read-only", roleOpts);
+    const p1 = pwField("Password (10+ characters)"), p2 = pwField("Again");
+    modal("Add a user", h("div", {}, h("div", { class: "grid2" }, name.node, role.node, p1.node, p2.node),
+      h("p", { class: "muted small" }, "The user logs in to the web UI, SSH and the VMware console with this one password, and lands in the CLI, never a shell.")),
+    { submit: "Add", onSubmit: async () => {
+      if (p1.get() !== p2.get()) throw new Error("The passwords don't match.");
+      await api("POST", "users", { name: name.get(), role: role.get(), password: p1.get() });
+      toast(`User ${name.get()} added.`); route();
+    } });
+  };
+  const edit = (u) => {
+    const role = selectField("Role", u.role, roleOpts, { hint: u.permanent ? "admin is always a superuser" : "" });
+    const dis = checkField("Disabled: no logins, and open sessions end", u.disabled);
+    if (u.permanent || u.name === state.user) { role.node.querySelector("select").disabled = true; dis.node.querySelector("input").disabled = true; }
+    modal(`Edit ${u.name}`, h("div", {}, role.node, dis.node), { onSubmit: async () => {
+      const body = {};
+      if (role.get() !== u.role) body.role = role.get();
+      if (dis.get() !== u.disabled) body.disabled = dis.get();
+      if (Object.keys(body).length) await api("PATCH", `users/${encodeURIComponent(u.name)}`, body);
+      toast(`${u.name} saved.`); route();
+    } });
+  };
+  const setPw = (u) => {
+    const p1 = pwField("New password (10+ characters)"), p2 = pwField("Again");
+    modal(`Set the password of ${u.name}`, h("div", {}, h("p", { class: "muted small" }, "For the web UI, SSH and the console. Their open sessions end."), h("div", { class: "grid2" }, p1.node, p2.node)),
+      { submit: "Set password", onSubmit: async () => {
+        if (p1.get() !== p2.get()) throw new Error("The passwords don't match.");
+        await api("POST", `users/${encodeURIComponent(u.name)}/password`, { password: p1.get() });
+        toast(`Password of ${u.name} set.`); route();
+      } });
+  };
+  const keys = (u) => {
+    const body = h("div");
+    const draw = async () => {
+      const fresh = (await api("GET", "users")).find((x) => x.name === u.name);
+      body.replaceChildren(keysPanel(fresh, draw));
+    };
+    body.append(keysPanel(u, draw));
+    modal(`SSH keys of ${u.name}`, body, { submit: null, wide: true });
+  };
+  const unlock = async (u) => { await api("POST", `users/${encodeURIComponent(u.name)}/unlock`, {}); toast(`${u.name} unlocked.`); route(); };
+  const del = (u) => confirmDialog(`Delete user ${u.name}?`, "Their login, SSH keys and sessions go. Revisions they committed keep their name.", async () => {
+    await api("DELETE", `users/${encodeURIComponent(u.name)}`); toast(`User ${u.name} deleted.`); route();
+  }, "Delete");
+  return h("div", {},
+    h("div", { class: "page-head" }, h("h1", {}, "Users"), h("span", { class: "spacer" }), h("button", { class: "primary", onclick: add }, "Add user")),
+    h("p", { class: "tagline" }, "Everyone through the gate signs the book."),
+    h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ["User", "Role", "Status", "Last web login", "SSH keys", "Changed", ""].map((t) => h("th", {}, t)))),
+      h("tbody", {}, users.map((u) => h("tr", {},
+        h("td", {}, h("strong", {}, u.name), u.name === state.user ? h("span", { class: "muted small" }, " (you)") : null),
+        h("td", {}, u.role), h("td", {}, userStatus(u)), h("td", {}, fmtWhen(u.last_login)), h("td", { class: "num" }, u.ssh_keys.length),
+        h("td", { class: "muted small" }, u.changed ? `${new Date(u.changed).toLocaleDateString()} by ${u.changed_by}` : ""),
+        h("td", { class: "actions" },
+          h("button", { class: "link", onclick: () => edit(u) }, "Edit"),
+          h("button", { class: "link", onclick: () => setPw(u) }, "Password"),
+          h("button", { class: "link", onclick: () => keys(u) }, "Keys"),
+          u.locked ? h("button", { class: "link", onclick: () => unlock(u) }, "Unlock") : null,
+          u.permanent || u.name === state.user ? null : h("button", { class: "link danger", onclick: () => del(u) }, "Delete"))))))),
+    h("p", { class: "muted small" }, "Roles decide what each user may see and change: ", h("a", { href: "#roles" }, "Roles"), ". admin is permanent: it can't be deleted, disabled or given another role."));
+}
+
+async function pageRoles() {
+  const roles = await api("GET", "roles");
+  const areas = state.me.areas || [];
+  const editor = (r) => {
+    const isNew = !r;
+    r = r || { name: "", description: "", permissions: {} };
+    const name = textField("Name", r.name, { required: true, placeholder: "policy-editor" });
+    if (!isNew) name.node.querySelector("input").disabled = true;
+    const desc = textField("Description", r.description, { placeholder: "What the role is for" });
+    const picks = {};
+    const grid = h("table", {}, h("thead", {}, h("tr", {}, ["Area", "None", "View", "Change", "Covers"].map((t) => h("th", {}, t)))),
+      h("tbody", {}, areas.map((a) => {
+        const cur = (r.permissions || {})[a.area] || "";
+        const radio = (v) => {
+          const el = h("input", { type: "radio", name: "perm-" + a.area, value: v, checked: cur === v, disabled: v === "change" && a.view_only, "aria-label": `${a.title}: ${v || "none"}` });
+          el.addEventListener("change", () => { picks[a.area] = v; });
+          return h("td", {}, el);
+        };
+        picks[a.area] = cur;
+        return h("tr", {}, h("td", {}, a.title), radio(""), radio("view"), radio("change"), h("td", { class: "muted small" }, a.covers));
+      })));
+    modal(isNew ? "New role" : `Edit role ${r.name}`, h("div", {}, h("div", { class: "grid2" }, name.node, desc.node),
+      h("div", { class: "table-wrap" }, grid),
+      h("p", { class: "muted small" }, "Config areas are checked on every edit and commit: a commit that touches an area the role can't change is refused. Users and roles are for superusers only.")),
+    { wide: true, onSubmit: async () => {
+      const perms = {};
+      for (const [k, v] of Object.entries(picks)) if (v) perms[k] = v;
+      await api("PUT", `roles/${encodeURIComponent(name.get())}`, { description: desc.get(), permissions: perms });
+      toast(`Role ${name.get()} saved. Users who have it get it on their next click.`); route();
+    } });
+  };
+  const view = (r) => modal(`Role ${r.name}`, h("div", {}, h("p", {}, r.description), permsTable(r.permissions, r.superuser)), { submit: null, wide: true });
+  const del = (r) => confirmDialog(`Delete role ${r.name}?`, "Only roles nobody has can be deleted.", async () => {
+    await api("DELETE", `roles/${encodeURIComponent(r.name)}`); toast(`Role ${r.name} deleted.`); route();
+  }, "Delete");
+  return h("div", {},
+    h("div", { class: "page-head" }, h("h1", {}, "Roles"), h("span", { class: "spacer" }), h("button", { class: "primary", onclick: () => editor(null) }, "Add role")),
+    h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ["Role", "Kind", "Users", "Description", ""].map((t) => h("th", {}, t)))),
+      h("tbody", {}, roles.map((r) => h("tr", {},
+        h("td", {}, h("strong", {}, r.name)), h("td", {}, r.builtin ? "built-in" : "custom"),
+        h("td", {}, r.users.length ? chips(r.users) : h("span", { class: "muted" }, "nobody")), h("td", {}, r.description),
+        h("td", { class: "actions" }, h("button", { class: "link", onclick: () => view(r) }, "View"),
+          r.builtin ? null : [h("button", { class: "link", onclick: () => editor(r) }, "Edit"), h("button", { class: "link danger", onclick: () => del(r) }, "Delete")])))))),
+    h("p", { class: "muted small" }, "Built-in roles: superuser (everything, including users, roles, upgrades and the decryption CA), admin (config, commits, rollbacks, tags, IPS updates) and read-only (sees everything except secrets)."));
+}
+
 // ---- router ----------------------------------------------------------------
 const pages = {
   dashboard: pageDashboard, policy: pagePolicy, nat: pageNat, objects: pageObjects,
   network: pageNetwork, routing: pageRouting, dhcp: pageDHCP, apps: pageApps, ips: pageIPS, decryption: pageDecryption, tags: pageTags, revisions: pageRevisions, logs: pageLogs, system: pageSystem,
+  account: pageAccount, users: pageUsers, roles: pageRoles,
 };
 
 async function route() {
@@ -1841,7 +2055,11 @@ async function route() {
   clearInterval(state.logTimer);
   clearInterval(state.dashTimer);
   const name = location.hash.slice(1) || "dashboard";
-  const page = pages[name] || pageDashboard;
+  let page = pages[name] || pageDashboard;
+  if (pageNeeds[name] && !pageNeeds[name]()) {
+    page = () => h("div", { class: "panel" }, h("h1", {}, "Not for your role"),
+      h("p", {}, `Role ${state.me.role} can't see this page. Ask a superuser if you need it.`));
+  }
   for (const a of document.querySelectorAll("#nav a")) a.classList.toggle("active", a.getAttribute("href") === "#" + name);
   for (const m of document.querySelectorAll("#nav .menu")) m.querySelector(".menu-btn").classList.toggle("active", !!m.querySelector("a.active"));
   try {
@@ -1850,7 +2068,7 @@ async function route() {
   } catch (e) {
     if (e.status !== 401) $("#main").replaceChildren(h("div", { class: "panel" }, errorBox(e)));
   }
-  const titles = { dhcp: "DHCP", apps: "Applications", ips: "IPS", decryption: "Decryption", network: "Interfaces", system: "Administration" };
+  const titles = { dhcp: "DHCP", apps: "Applications", ips: "IPS", decryption: "Decryption", network: "Interfaces", system: "Administration", account: "My account" };
   document.title = `SJB-OS · ${titles[name] || name[0].toUpperCase() + name.slice(1)}`;
 }
 

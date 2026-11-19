@@ -44,7 +44,7 @@ expect() { # expect ok|blocked DESCRIPTION CHECK
 start_ngfwd() {
 	# Call ip directly, not the in_fw function: backgrounding a function
 	# forks a subshell, and $! would be its PID instead of ngfwd's.
-	ip netns exec ngfw-fw "$BIN/ngfwd" -state "$WORK/state" -socket "$SOCK" \
+	ip netns exec ngfw-fw "$BIN/ngfwd" -state "$WORK/state" -socket "$SOCK" -users "$WORK/users.json" -roles "$WORK/roles.json" -web-users "$WORK/web-users" -unix-accounts=false \
 		-api-listen 127.0.0.1:8080 -api-keys "$WORK/keys" >>"$WORK/ngfwd.log" 2>&1 &
 	NGFWD_PID=$!
 	for _ in $(seq 50); do

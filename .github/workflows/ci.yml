@@ -52,3 +52,5 @@ jobs:
         run: sudo make lab-gate-decrypt
       - name: TLS decryption gate (observe mode)
         run: sudo MODE=observe make lab-gate-decrypt
+      - name: Users gate (logins, roles, lockout, rollback; Debian 13 in a container)
+        run: make lab-gate-users

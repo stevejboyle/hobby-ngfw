@@ -1,4 +1,4 @@
-.PHONY: build test validate lab-up lab-down lab-status lab-smoke lab-gate1 lab-gate-sessions lab-gate-decrypt clean
+.PHONY: build test validate lab-up lab-down lab-status lab-smoke lab-gate1 lab-gate-sessions lab-gate-decrypt lab-gate-users clean
 
 build:
 	go build -o bin/ ./cmd/...
@@ -36,6 +36,13 @@ lab-gate-sessions:
 # MODE=observe checks observe mode.
 lab-gate-decrypt:
 	./lab/gate-decrypt.sh
+
+# Users and roles on a real Debian system. It creates accounts and rewrites
+# PAM, so it runs in a throwaway container (Docker; Linux binaries in bin/).
+lab-gate-users:
+	docker run --rm --privileged -v "$$PWD":/src:ro -w /src debian:trixie bash -c \
+	  'apt-get update -qq && apt-get install -y -qq openssh-server pamtester procps >/dev/null && ./lab/gate-users.sh'
+
 
 clean:
 	rm -rf bin

@@ -115,7 +115,7 @@ EOF
 client() { ip netns exec ngfw-users python3 "$WORK/client.py" "$@"; }
 
 # --- ngfwd and tlsd -----------------------------------------------------------
-in_fw "$BIN/ngfwd" -state "$WORK/state" -socket "$SOCK" -ips-dir "" -frr "" -kea "" -ip "" \
+in_fw "$BIN/ngfwd" -state "$WORK/state" -socket "$SOCK" -users "$WORK/users.json" -roles "$WORK/roles.json" -web-users "$WORK/web-users" -unix-accounts=false -ips-dir "" -frr "" -kea "" -ip "" \
 	-tlsd "$BIN/tlsd" -decryption-ca "$WORK/ca" -decryption-policy "$WORK/policy.json" -tlsd-socket "$WORK/tlsd.sock" \
 	>>"$WORK/ngfwd.log" 2>&1 &
 PIDS+=($!)

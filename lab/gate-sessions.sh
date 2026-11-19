@@ -137,7 +137,7 @@ for port in 80 8080 9090; do
 done
 # -ips-dir "": no IPS engine here. Rules with a profile still queue to it,
 # with bypass, so traffic flows and the ct mark shows the IPS tag.
-ip netns exec ngfw-fw "$BIN/ngfwd" -state "$WORK/state" -socket "$SOCK" -ips-dir "" >>"$WORK/ngfwd.log" 2>&1 &
+ip netns exec ngfw-fw "$BIN/ngfwd" -state "$WORK/state" -socket "$SOCK" -users "$WORK/users.json" -roles "$WORK/roles.json" -web-users "$WORK/web-users" -unix-accounts=false -ips-dir "" >>"$WORK/ngfwd.log" 2>&1 &
 PIDS+=($!)
 for _ in $(seq 50); do fw status >/dev/null 2>&1 && break; sleep 0.1; done
 

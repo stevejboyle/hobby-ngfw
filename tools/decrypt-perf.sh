@@ -51,7 +51,7 @@ EOF
 ip netns exec ngfw-inet python3 "$WORK/srv.py" "$WORK" >/dev/null 2>&1 &
 PIDS+=($!)
 
-ip netns exec ngfw-fw "$BIN/ngfwd" -state "$WORK/state" -socket "$SOCK" -ips-dir "" -frr "" -kea "" -ip "" \
+ip netns exec ngfw-fw "$BIN/ngfwd" -state "$WORK/state" -socket "$SOCK" -users "$WORK/users.json" -roles "$WORK/roles.json" -web-users "$WORK/web-users" -unix-accounts=false -ips-dir "" -frr "" -kea "" -ip "" \
 	-tlsd "$BIN/tlsd" -decryption-ca "$WORK/sjbca" -decryption-policy "$WORK/policy.json" -tlsd-socket "$WORK/tlsd.sock" >"$WORK/ngfwd.log" 2>&1 &
 PIDS+=($!)
 for _ in $(seq 50); do fw status >/dev/null 2>&1 && break; sleep 0.1; done

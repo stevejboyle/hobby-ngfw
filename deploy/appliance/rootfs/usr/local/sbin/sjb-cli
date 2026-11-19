@@ -1,5 +1,5 @@
 #!/bin/sh
-# Entry to the SJB-OS captive CLI for user admin: sshd's ForceCommand and,
+# Entry to the SJB-OS captive CLI for SJB-OS users (admin and the others): sshd's ForceCommand and,
 # through /usr/lib/sjb-os/login-shell, the console login shell.
 # `ssh admin@fw 'show status'` runs one command; `ssh admin@fw load < fw.yaml`
 # loads a config from stdin.

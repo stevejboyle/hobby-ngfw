@@ -11,6 +11,12 @@ SHARE=/usr/share/sjb-os
 SHIM=/usr/lib/sjb-os/login-shell
 SOCK=/run/ngfw/ngfwd.sock
 ROOT_KEYS=/etc/ngfw/root_authorized_keys
+USER_KEYS=/etc/ssh/sjb-keys
+# Unix accounts ngfwd creates for SJB-OS users carry this comment.
+MARKER="SJB-OS user"
+# Multiple users and roles arrived in this version.
+RBAC_VERSION=0.9.9-r09
+FAILLOCK="deny=5 unlock_time=900"
 log() { echo "sjb-migrate: $*"; }
 
 # version_lt A B: A sorts before B (Debian version rules: 0.7.0-r01 < 0.8.0).
@@ -24,12 +30,51 @@ apply() {
 		chgrp "$GROUP" "${SOCK%/*}" "$SOCK" && chmod 750 "${SOCK%/*}" && chmod 660 "$SOCK"
 	fi
 
-	# The admin's login shell is a stable shim outside the upgradable paths,
+	# SJB-OS users' SSH keys: ngfwd writes one root-owned file per user here;
+	# sshd reads it (as the user, so the folder is world-readable).
+	install -d -m 755 "$USER_KEYS"
+
+	# SSH and console lockout: five wrong passwords in a row lock an account
+	# for 15 minutes (pam_faillock; root is never locked, and admin never on
+	# the VMware console). Each stack replaces Debian's common-auth include.
+	if compgen -G "/usr/lib/*/security/pam_faillock.so" >/dev/null; then
+		cat >/etc/pam.d/sjb-auth.new <<PAM
+# SJB-OS: password check with lockout (written by sjb-migrate).
+auth	required	pam_faillock.so preauth $FAILLOCK
+auth	[success=1 default=bad]	pam_unix.so
+auth	[default=die]	pam_faillock.so authfail $FAILLOCK
+auth	sufficient	pam_faillock.so authsucc $FAILLOCK
+auth	requisite	pam_deny.so
+PAM
+		cat >/etc/pam.d/sjb-auth-console.new <<PAM
+# SJB-OS: console password check with lockout, except admin, so the VMware
+# console always gets admin in (written by sjb-migrate).
+auth	[success=ignore default=1]	pam_succeed_if.so quiet user = admin
+auth	[success=done default=die]	pam_unix.so
+auth	required	pam_faillock.so preauth $FAILLOCK
+auth	[success=1 default=bad]	pam_unix.so
+auth	[default=die]	pam_faillock.so authfail $FAILLOCK
+auth	sufficient	pam_faillock.so authsucc $FAILLOCK
+auth	requisite	pam_deny.so
+PAM
+		mv /etc/pam.d/sjb-auth.new /etc/pam.d/sjb-auth
+		mv /etc/pam.d/sjb-auth-console.new /etc/pam.d/sjb-auth-console
+		if grep -qx '@include common-auth' /etc/pam.d/sshd; then
+			sed -i 's/^@include common-auth$/@include sjb-auth/' /etc/pam.d/sshd && log "SSH logins lock after 5 wrong passwords"
+		fi
+		if grep -qx '@include common-auth' /etc/pam.d/login; then
+			sed -i 's/^@include common-auth$/@include sjb-auth-console/' /etc/pam.d/login && log "console logins lock after 5 wrong passwords (not admin)"
+		fi
+	else
+		log "pam_faillock not found: SSH and console logins won't lock after failures"
+	fi
+
+	# The users' login shell is a stable shim outside the upgradable paths,
 	# so its path never changes; it runs the captive CLI.
 	install -d -m 755 "${SHIM%/*}"
 	cat >"$SHIM.new" <<'SH'
 #!/bin/sh
-# Login shell of user admin: the SJB-OS captive CLI. Written by sjb-migrate.
+# Login shell of SJB-OS users: the captive CLI. Written by sjb-migrate.
 [ -x /usr/local/sbin/sjb-cli ] && exec /usr/local/sbin/sjb-cli
 echo "SJB-OS CLI missing; ask an administrator (root) to repair the appliance." >&2
 exit 1
@@ -118,6 +163,35 @@ undo() {
 	if systemctl -q is-enabled sjb-tlsd 2>/dev/null || systemctl -q is-active sjb-tlsd 2>/dev/null; then
 		systemctl disable --now --quiet sjb-tlsd || true
 		log "TLS decryption (sjb-tlsd) stopped"
+	fi
+	# Before multiple users, only admin may log in: lock every other SJB-OS
+	# user's login (older versions would give them full rights through
+	# sjbadm), give admin's SSH keys back to its home folder (where older
+	# versions' sshd looks) and take the lockout out of PAM. Upgrading again
+	# brings them back (ngfwd re-enables the users at start).
+	if version_lt "$target" "$RBAC_VERSION"; then
+		local u
+		while IFS=: read -r u _ _ _ gecos _; do
+			[[ $gecos == "$MARKER" ]] || continue
+			usermod --lock --expiredate 1 -- "$u" >/dev/null 2>&1 || true
+			gpasswd --delete "$u" "$GROUP" >/dev/null 2>&1 || true
+			loginctl terminate-user "$u" >/dev/null 2>&1 || true
+			log "SJB-OS user $u locked for $target (only admin can log in there)"
+		done </etc/passwd
+		local home
+		home=$(getent passwd "$USER_NAME" | cut -d: -f6)
+		if [[ -n $home && -d $home ]]; then
+			install -d -m 700 -o "$USER_NAME" -g "$USER_NAME" "$home/.ssh"
+			if [[ -s $USER_KEYS/$USER_NAME ]]; then
+				install -m 600 -o "$USER_NAME" -g "$USER_NAME" "$USER_KEYS/$USER_NAME" "$home/.ssh/authorized_keys"
+			else
+				rm -f "$home/.ssh/authorized_keys"
+			fi
+			log "admin's SSH keys put back in $home/.ssh for $target"
+		fi
+		sed -i 's/^@include sjb-auth$/@include common-auth/' /etc/pam.d/sshd
+		sed -i 's/^@include sjb-auth-console$/@include common-auth/' /etc/pam.d/login
+		rm -f /etc/pam.d/sjb-auth /etc/pam.d/sjb-auth-console
 	fi
 	# Before 0.9.9 sshd read root's key from $SHARE/root-keys: put it back.
 	if version_lt "$target" 0.9.9 && [[ -s $ROOT_KEYS && ! -e $SHARE/root-keys/authorized_keys ]]; then

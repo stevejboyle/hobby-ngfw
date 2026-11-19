@@ -156,20 +156,24 @@ if [[ -z $PW ]]; then
 	PW=$(tr -dc 'A-HJ-NP-Za-km-z2-9' </dev/urandom | head -c 16)
 	PW_SHOWN=yes
 fi
-# One password for SSH, the console and the web UI: fwctl web-passwd sets the
-# account password (chpasswd) and the web UI's PBKDF2 hash together. Later
-# changes (web UI, CLI passwd) keep them in step.
-install -d -m 700 /etc/ngfw
-if ! printf '%s\n' "$PW" | /usr/local/sbin/fwctl web-passwd -user admin -file /etc/ngfw/web-users; then
-	# Never leave admin without a password: at least SSH and the console work.
-	log "could not set the web UI password; setting the SSH/console password only"
-	echo "admin:$PW" | chpasswd
-fi
+# admin's deploy-time SSH key: written first, so creating the user
+# database below imports it (from then on keys live there, managed in the
+# CLI and web UI).
 if [[ -n ${CFG[admin_ssh_key]} ]]; then
 	install -d -m 700 -o admin -g admin /home/admin/.ssh
 	echo "${CFG[admin_ssh_key]}" >/home/admin/.ssh/authorized_keys
 	chown admin:admin /home/admin/.ssh/authorized_keys
 	chmod 600 /home/admin/.ssh/authorized_keys
+fi
+# One password for SSH, the console and the web UI: fwctl web-passwd creates
+# the user database with admin (a superuser) and sets the account password
+# (chpasswd) and the web UI's PBKDF2 hash together. Later changes (web UI,
+# CLI passwd) keep them in step.
+install -d -m 700 /etc/ngfw
+if ! printf '%s\n' "$PW" | /usr/local/sbin/fwctl web-passwd -user admin -file /etc/ngfw/web-users; then
+	# Never leave admin without a password: at least SSH and the console work.
+	log "could not set the web UI password; setting the SSH/console password only"
+	echo "admin:$PW" | chpasswd
 fi
 ssh-keygen -A >/dev/null
 

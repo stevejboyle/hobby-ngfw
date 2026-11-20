@@ -81,6 +81,11 @@ type Networkd struct {
 	pending map[string]bool // NICs networkd hasn't applied yet (deferred or failed)
 }
 
+// TrunkOnly, as a NIC's wanted address, makes it a trunk: an override with
+// no address at all, so the deployment's address (or DHCP) goes away and
+// the NIC only carries its VLAN subinterfaces.
+const TrunkOnly = "trunk-only"
+
 // FileName is the override file for nic.
 func FileName(nic string) string { return "10-" + nic + "-sjb.network" }
 
@@ -121,6 +126,10 @@ func Render(nic, addr string, deployment []byte) []byte {
 			b.WriteString(line + "\n")
 		}
 	}
+	if addr == TrunkOnly {
+		b.WriteString("# A trunk: no address; it only carries VLAN subinterfaces.\n")
+		return b.Bytes()
+	}
 	// Address conflict detection (RFC 5227): networkd probes that nobody
 	// else has the address, then announces it with gratuitous ARPs, so
 	// neighbours with a stale entry (a router that saw the address on
@@ -156,7 +165,7 @@ func (n *Networkd) Sync(want map[string]string, mode Mode) ([]State, error) {
 		exists := err == nil
 		addr := want[nic]
 		dep, _ := os.ReadFile(filepath.Join(n.Dir, "20-"+nic+".network"))
-		if addr == "" || deploymentHas(dep, addr) {
+		if addr == "" || (addr != TrunkOnly && deploymentHas(dep, addr)) {
 			// Nothing configured, or the deployment already gives the NIC
 			// exactly this address (inside's usual case): no override.
 			if exists {
@@ -229,7 +238,7 @@ func (n *Networkd) Sync(want map[string]string, mode Mode) ([]State, error) {
 		switch {
 		case failed[nic] != "":
 			st.Error = failed[nic] + "; ngfwd keeps trying"
-		case n.HasAddr == nil:
+		case n.HasAddr == nil || st.Address == TrunkOnly:
 			st.Applied = !n.pending[nic]
 			if !st.Applied {
 				st.Error = "being applied"

@@ -158,14 +158,20 @@ func wantedRoutes(cfg *config.Config) []routes.Route {
 }
 
 // wantedNICs returns the addresses the config sets on physical NICs other
-// than the management interface (whose address stays with the deployment).
+// than the management interface (whose address stays with the deployment);
+// a trunk gets nicaddr.TrunkOnly (no address).
 func wantedNICs(cfg *config.Config) map[string]string {
 	out := map[string]string{}
 	for _, in := range cfg.Interfaces {
-		if _, _, vlan := config.ParseVLAN(in.Name); vlan || in.Address == "" || in.Name == cfg.System.MgmtInterface {
+		if _, _, vlan := config.ParseVLAN(in.Name); vlan || in.Name == cfg.System.MgmtInterface {
 			continue
 		}
-		out[in.Name] = in.Address
+		switch {
+		case cfg.IsTrunk(in.Name):
+			out[in.Name] = nicaddr.TrunkOnly
+		case in.Address != "":
+			out[in.Name] = in.Address
+		}
 	}
 	return out
 }

@@ -171,3 +171,33 @@ func TestStartDefersApplying(t *testing.T) {
 		t.Fatalf("applied twice: %q", f.calls)
 	}
 }
+
+func TestTrunkOverrideHasNoAddress(t *testing.T) {
+	f := setup(t)
+	// inside's deployment file sets 10.10.1.1/24; as a trunk it gets none.
+	st, err := f.syncer().Sync(map[string]string{"inside": TrunkOnly}, Commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(f.dir, "10-inside-sjb.network"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "Name=inside") || !strings.Contains(string(body), "DHCP=no") ||
+		strings.Contains(string(body), "Address=") {
+		t.Errorf("trunk override:\n%s", body)
+	}
+	if len(st) != 1 || !st[0].Applied {
+		t.Errorf("states: %+v", st)
+	}
+	if strings.Join(f.calls, ",") != "reload,reconfigure inside" {
+		t.Errorf("networkctl calls: %v", f.calls)
+	}
+	// Back to a zone with no address: the deployment's settings return.
+	if _, err := f.syncer().Sync(map[string]string{}, Commit); err != nil {
+		t.Fatal(err)
+	}
+	if HasOverride(f.dir, "inside") {
+		t.Error("override left behind")
+	}
+}

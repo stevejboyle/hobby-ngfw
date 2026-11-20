@@ -34,8 +34,9 @@
 # is non-zero when anything failed. Afterwards, on the firewall:
 # 'show log traffic', 'show log threat', 'show log decryption'.
 #
-# Needs bash, curl, openssl, awk, timeout and ip; dig (or python3) for DNS,
-# python3 for NTP, ping for ICMP; their checks are skipped when missing.
+# Needs bash, curl, openssl, awk, timeout and ip (not for -r outside, which
+# also runs on a Mac); dig (or python3) for DNS, python3 for NTP, ping for
+# ICMP; their checks are skipped when missing.
 set -u
 
 ROLE="" WEB=192.168.151.10 CLIENT=""
@@ -52,7 +53,7 @@ while getopts "r:w:c:D:L:x:C:lh" o; do
 	x) EXTRA_EXCL+=("$OPTARG") ;;
 	C) CA_FILE=$OPTARG ;;
 	l) LIST=1 ;;
-	*) sed -n '2,39p' "$0"; exit 0 ;;
+	*) awk 'NR > 1 && /^#/ { print; next } NR > 1 { exit }' "$0"; exit 0 ;;
 	esac
 done
 case $ROLE in inside | dmz | outside) ;; *) echo "usage: $0 -r inside|dmz|outside [options] (-h for help)" >&2; exit 2 ;; esac
@@ -88,7 +89,7 @@ if [[ $LIST == 1 ]]; then
 		echo "  allow-list, must stay closed: TCP ${BLOCKED_PORTS[*]} (portquiz.net); DNS to ${OTHER_RESOLVERS[*]}; DNS over TLS"
 		echo "  risky applications: DNS over HTTPS; ${RISKY_SITES[*]%%|*}"
 		echo "  IPS: SJB-IPS-TEST-CRITICAL and -MINOR over HTTP and (decrypted) HTTPS"
-		echo "  decryption: decrypted ${DECRYPT_SITES[*]}; not decrypted ${EXCLUDED_SITES[*]} ${EXTRA_EXCL[*]} ${LAN_HOST}; bad certificates blocked; QUIC blocked" ;;
+		echo "  decryption: decrypted ${DECRYPT_SITES[*]}; not decrypted ${EXCLUDED_SITES[*]} ${EXTRA_EXCL[*]+${EXTRA_EXCL[*]}} ${LAN_HOST}; bad certificates blocked; QUIC blocked" ;;
 	dmz)
 		echo "address in 192.168.151.0/24, gateway $FW_DMZ; this server's own web page"
 		echo "firewall: ping $FW_DMZ; TCP 22 and 443 closed"
@@ -104,6 +105,12 @@ if [[ $LIST == 1 ]]; then
 fi
 
 have() { command -v "$1" >/dev/null 2>&1; }
+# macOS has no timeout(1): use coreutils' gtimeout, or perl.
+if ! have timeout; then
+	if have gtimeout; then timeout() { gtimeout "$@"; }
+	elif have perl; then timeout() { perl -e 'alarm shift; exec @ARGV' "$@"; }
+	fi
+fi
 for t in curl openssl timeout; do have "$t" || { echo "needs $t" >&2; exit 2; }; done
 PY=$(command -v python3 || true)
 UA="Mozilla/5.0 (X11; Linux x86_64) sjb-lab-test"
@@ -322,7 +329,7 @@ decryption() {
 		*) result "decrypt $h" FAIL "not decrypted (issuer: $(cn "$P_ISSUER"))" ;;
 		esac
 	done
-	for h in "${EXCLUDED_SITES[@]}" "${EXTRA_EXCL[@]}" "${LAN_HOST}"; do
+	for h in "${EXCLUDED_SITES[@]}" ${EXTRA_EXCL[@]+"${EXTRA_EXCL[@]}"} "${LAN_HOST}"; do
 		[[ -n $h ]] || continue
 		if ! peer "$h"; then result "exclude $h" skip "no TLS answer"; continue; fi
 		case $(kind "$P_ISSUER") in
@@ -360,10 +367,14 @@ decryption() {
 
 # ---------------------------------------------------------------- lab checks
 
-have ip || { echo "needs ip (iproute2)" >&2; exit 2; }
+[[ $ROLE == outside ]] || have ip || { echo "needs ip (iproute2)" >&2; exit 2; }
 
 # pings ADDRESS: one reply within 3 s.
-pings() { ping -4 -c 1 -W 3 "$1" >/dev/null 2>&1 || ping -c 1 -W 3 "$1" >/dev/null 2>&1; }
+if [[ $(uname -s) == Darwin ]]; then
+	pings() { ping -c 1 -t 3 "$1" >/dev/null 2>&1; } # macOS: -t is the timeout in seconds
+else
+	pings() { ping -4 -c 1 -W 3 "$1" >/dev/null 2>&1 || ping -c 1 -W 3 "$1" >/dev/null 2>&1; }
+fi
 # body URL: the page, or nothing.
 body() { curl -4 -s -m 8 -A "$UA" "$1" 2>/dev/null; }
 # my_addr PREFIX: this machine's address starting PREFIX (e.g. 192.168.150.).

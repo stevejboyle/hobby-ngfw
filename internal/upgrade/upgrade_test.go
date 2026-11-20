@@ -304,7 +304,7 @@ func TestKeyRoundTrip(t *testing.T) {
 }
 
 func TestVersionOrder(t *testing.T) {
-	order := []string{"0.6.0", "0.6.1-boottest", "0.6.1-rc1", "0.6.1-rc2", "0.6.1", "0.6.1-r01", "0.6.1-r2", "0.6.1-r10", "0.6.2-boottest", "0.6.2"}
+	order := []string{"0.6.0", "0.6.1-boottest", "0.6.1-rc1", "0.6.1-rc2", "0.6.1", "0.6.1-r01", "0.6.1-r2", "0.6.1-r10", "0.6.2-boottest", "0.6.2", "0.9.9-r10", "0.9.10", "0.9.10-r01"}
 	for i := range order {
 		for j := range order {
 			a, _ := ParseVersion(order[i])

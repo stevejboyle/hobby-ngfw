@@ -237,6 +237,21 @@ out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=n
 [[ $out == *"committed revision"* && $(cli_run show running) != *cli-* ]] &&
 	pass "configure mode: rename and delete, committed" || fail "configure cleanup: $out"
 
+# --- publishing a server (port forward, static NAT) -------------------------------
+script=$'configure\nset address nat-srv cidr 10.10.1.77\nset address nat-pub cidr 192.0.2.88\nset nat bt-fwd type port-forward interface outside protocol tcp public-port 8443 server nat-srv server-port 443\nset nat bt-static type static interface outside public-address nat-pub server nat-srv\ncommit -m "boot test: nat"\nexit\nexit\n'
+out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
+pre=$(root_run nft list chain inet ngfw prerouting_nat 2>&1)
+oa=$(root_run "ip -4 -o addr show dev outside")
+[[ $out == *"committed revision"* && $out == *'nat "bt-fwd": no allow rule'* && $pre == *"dnat ip to 10.10.1.77:443"* && $pre == *"dnat ip to 10.10.1.77 "* ]] &&
+	pass "port forward and static NAT committed in configure mode (warned: no allow rule)" || fail "nat commit: pre=[$pre] out=${out: -300}"
+[[ $oa == *"192.0.2.88/32"*"outside:nat"* ]] && pass "static NAT's public address put on outside (label outside:nat)" || fail "nat address: [$oa]"
+sn=$(cli_run show nat)
+[[ $sn == *bt-fwd*tcp/8443* && $sn == *bt-static*on* ]] && pass "show nat lists the port forward and the static NAT" || fail "show nat: $sn"
+script=$'configure\ndelete nat bt-fwd\ndelete nat bt-static\ndelete address nat-srv\ndelete address nat-pub\ncommit -m "boot test: nat cleanup"\nexit\nexit\n'
+out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
+oa=$(root_run "ip -4 -o addr show dev outside")
+[[ $out == *"committed revision"* && $oa != *192.0.2.88* ]] && pass "NAT entries deleted: the public address is off outside" || fail "nat cleanup: [$oa] ${out: -200}"
+
 # --- web UI -----------------------------------------------------------------------
 JAR=$WORK/cookies
 UI="https://127.0.0.1:$UI_PORT"

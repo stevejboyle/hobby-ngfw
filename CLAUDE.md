@@ -241,7 +241,7 @@ drops what the rule's profile blocks and sets the denied bit; ngfwd turns
 Suricata's EVE alerts into "ngfw-threat" journal lines (rule and action from
 the connection's ct mark via conntrack -G). Traffic to the firewall itself is fixed policy, not configurable:
 zoned interfaces may ping it and nothing else; unzoned interfaces (mgmt) are
-unfiltered. NAT (0.9.9-r11): masquerade, port-forward and static (1:1,
+unfiltered. NAT (0.9.10-r01): masquerade, port-forward and static (1:1,
 bidirectional by default) entries in one `nat` list. Published servers are
 translated in chain prerouting_nat (the kernel NATs at dstnat whatever
 a NAT chain's priority says, so chain decrypt's tproxy runs at dstnat + 10,

@@ -18,7 +18,7 @@ MARKER="SJB-OS user"
 RBAC_VERSION=0.9.9-r09
 # First version with port forwarding and static NAT (public addresses that
 # ngfwd puts on interfaces, labelled <dev>:nat).
-NAT_VERSION=0.9.9-r11
+NAT_VERSION=0.9.10-r01
 FAILLOCK="deny=5 unlock_time=900"
 log() { echo "sjb-migrate: $*"; }
 

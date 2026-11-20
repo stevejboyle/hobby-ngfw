@@ -40,7 +40,7 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 ## The evidence
 
 - **Time:** nine days of calendar time (2026-11-08 to 2026-11-16) and
-  28.8 hours of Steve's own time in total, measured from the session
+  28.9 hours of Steve's own time in total, measured from the session
   transcripts release by release (all but a 0.5-hour estimate for his
   ChatGPT review): [docs/effort-log.md](docs/effort-log.md). Of that,
   22.9 hours took it to its first full release (0.9.9-r03), and TLS
@@ -74,7 +74,7 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 | --- | --- | --- |
 | Time to build | About a year | 9 days, Nov 8 to 16, 2026 |
 | People | One specialist, or about six engineers | One person directing AI |
-| Human hours | 2,400 to 12,300 engineering hours | 28.8 hours, everything to date |
+| Human hours | 2,400 to 12,300 engineering hours | 28.9 hours, everything to date |
 | Cost | $350,000 to $1.1 million in salary and benefits | A $20/month Claude Pro plan ($510 of tokens at API list prices) |
 
 The left column is an estimate, not a measurement:
@@ -169,7 +169,7 @@ a QEMU boot test of every release with VMware's device models; it also runs
 on Steve's own ESXi lab):
 
 - Commit, rollback and commit-confirmed; zones and rules compiled to
-  nftables; source NAT, port forwarding and 1:1 static NAT (0.9.9-r11) for
+  nftables; source NAT, port forwarding and 1:1 static NAT (0.9.10-r01) for
   publishing servers; a policy change re-evaluates existing
   connections.
 - Host tags through a REST API (and XML user-ID messages for existing

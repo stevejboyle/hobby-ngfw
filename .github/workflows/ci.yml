@@ -50,6 +50,8 @@ jobs:
         run: sudo make lab-gate-sessions
       - name: NAT gate (port forwarding, static NAT)
         run: sudo make lab-gate-nat
+      - name: Trunk gate (VLANs only, untagged dropped)
+        run: sudo make lab-gate-trunk
       - name: TLS decryption gate (decrypting)
         run: sudo make lab-gate-decrypt
       - name: TLS decryption gate (observe mode)

@@ -238,21 +238,7 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	natNames := map[string]bool{}
-	for i, n := range c.NAT {
-		p := fmt.Sprintf("nat[%d] %q", i, n.Name)
-		v.checkName(p, n.Name)
-		if natNames[n.Name] {
-			v.add(p, "duplicate nat rule name")
-		}
-		natNames[n.Name] = true
-		v.refs(p, "from", n.From, "zone", func(s string) bool { return zones[s] })
-		v.refs(p, "to", n.To, "zone", func(s string) bool { return zones[s] })
-		v.refs(p, "source", n.Source, "address or group", func(s string) bool { return addrs[s] })
-		if n.Type != "masquerade" {
-			v.add(p, "type must be masquerade, got %q", n.Type)
-		}
-	}
+	v.nat(c, zones, addrs)
 
 	routeNames := map[string]bool{}
 	routeDests := map[string]bool{}

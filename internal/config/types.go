@@ -125,15 +125,49 @@ const (
 	TableMgmt = "mgmt"
 )
 
-// NATRule is a source NAT rule. Only masquerade (rewrite the source to the
-// egress interface's address) is supported.
+// NATRule is one NAT entry. Type masquerade is source NAT (rewrite the
+// source to the egress interface's address) and uses From, To and Source.
+// Types port-forward and static publish an inside server (destination NAT)
+// and use Interface, PublicAddress, Server and, for port-forward, Protocol,
+// PublicPort and ServerPort; static may also be bidirectional.
 type NATRule struct {
 	Name   string   `yaml:"name" json:"name"`
-	From   []string `yaml:"from" json:"from"`               // ingress zones
-	To     []string `yaml:"to" json:"to"`                   // egress zones
-	Source []string `yaml:"source,omitempty" json:"source"` // address or group names; empty = any
-	Type   string   `yaml:"type" json:"type"`               // masquerade
+	From   []string `yaml:"from,omitempty" json:"from"`     // ingress zones (masquerade)
+	To     []string `yaml:"to,omitempty" json:"to"`         // egress zones (masquerade)
+	Source []string `yaml:"source,omitempty" json:"source"` // address or group names; empty = any (masquerade)
+	Type   string   `yaml:"type" json:"type"`               // masquerade, port-forward or static
+
+	// Interface is where published traffic arrives (port-forward, static).
+	Interface string `yaml:"interface,omitempty" json:"interface"`
+	// PublicAddress names a host address object: the address the outside
+	// uses. Empty (port-forward only) means the interface's own address.
+	PublicAddress string `yaml:"public_address,omitempty" json:"public_address"`
+	Protocol      string `yaml:"protocol,omitempty" json:"protocol"`       // tcp or udp (port-forward)
+	PublicPort    string `yaml:"public_port,omitempty" json:"public_port"` // "443" or "8000-8010" (port-forward)
+	// Server names a host address object: the inside server.
+	Server string `yaml:"server,omitempty" json:"server"`
+	// ServerPort is the server's port (port-forward); empty = the public
+	// port. A range can only map to the same range.
+	ServerPort string `yaml:"server_port,omitempty" json:"server_port"`
+	// Bidirectional (static): "on" (also when unset) sends the server's own
+	// outbound traffic from its public address; "off" leaves it to the
+	// source NAT rules.
+	Bidirectional string `yaml:"bidirectional,omitempty" json:"bidirectional"`
 }
+
+// NAT types.
+const (
+	NATMasquerade  = "masquerade"
+	NATPortForward = "port-forward"
+	NATStatic      = "static"
+)
+
+// Published reports whether the entry publishes a server (destination NAT).
+func (n NATRule) Published() bool { return n.Type == NATPortForward || n.Type == NATStatic }
+
+// BidirectionalOn reports whether a static entry also translates the
+// server's outbound traffic.
+func (n NATRule) BidirectionalOn() bool { return n.Type == NATStatic && n.Bidirectional != "off" }
 
 // System holds device-wide settings.
 type System struct {

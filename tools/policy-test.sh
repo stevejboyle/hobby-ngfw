@@ -14,6 +14,11 @@
 #                                            exclusions) isn't decrypted; repeat
 #   ./policy-test.sh -C ca.crt               the decryption CA, to recognise an
 #                                            imported one
+#   ./policy-test.sh -I 198.51.100.7:443     inbound only, from a client OUTSIDE
+#                                            the firewall: a published server
+#                                            (port forward) answers on its public
+#                                            address and port, and nothing else on
+#                                            that address does; repeat for more
 #   ./policy-test.sh -l                      list the checks, send nothing
 #
 # What it checks, each against a working control so a failure is evidence:
@@ -32,7 +37,7 @@
 #   - TLS decryption: ordinary sites decrypted, excluded ones not, bad
 #     certificates blocked, QUIC blocked
 #
-# Not checked from here: inbound denial (needs a client outside) and
+# Not checked from here: inbound (run again with -I from a client outside) and
 # quarantine (tag this VM with the tag API, run again: everything should
 # fail; untag it afterwards).
 #
@@ -49,14 +54,16 @@ set -u
 DNS_OK="9.9.9.9,149.112.112.112,1.1.1.2,1.0.0.2"
 LAN_HOST="" CA_FILE="" LIST=0
 EXTRA_EXCL=()
-while getopts "D:L:x:C:lh" o; do
+INBOUND=()
+while getopts "D:L:x:C:I:lh" o; do
 	case $o in
 	D) DNS_OK=$OPTARG ;;
 	L) LAN_HOST=$OPTARG ;;
 	x) EXTRA_EXCL+=("$OPTARG") ;;
 	C) CA_FILE=$OPTARG ;;
+	I) INBOUND+=("$OPTARG") ;;
 	l) LIST=1 ;;
-	*) sed -n '2,46p' "$0"; exit 0 ;;
+	*) sed -n '2,51p' "$0"; exit 0 ;;
 	esac
 done
 IFS=',' read -r -a RESOLVERS <<<"$DNS_OK"
@@ -72,6 +79,13 @@ EXCLUDED_SITES=(www.chase.com www.irs.gov www.apple.com login.microsoftonline.co
 BAD_CERT_SITES=(expired.badssl.com self-signed.badssl.com wrong.host.badssl.com)
 RISKY_SITES=("NordVPN|https://nordvpn.com/" "Psiphon|https://psiphon.ca/" "TeamViewer|https://www.teamviewer.com/" "AnyDesk|https://anydesk.com/")
 
+# Ports a published address must not answer on (besides its own port).
+INBOUND_CLOSED=(22 23 445 3389 8080)
+
+if [[ $LIST == 1 && ${#INBOUND[@]} -gt 0 ]]; then
+	echo "inbound, from outside: each of ${INBOUND[*]} answers; TCP ${INBOUND_CLOSED[*]} and the next port up don't"
+	exit 0
+fi
 if [[ $LIST == 1 ]]; then
 	echo "allowed: http/https, DNS to ${RESOLVERS[*]}, NTP (pool.ntp.org), SMTP 587 and 465, IMAPS 993, ping 1.1.1.1"
 	echo "allow-list, must stay closed: TCP ${BLOCKED_PORTS[*]} (portquiz.net); DNS to ${OTHER_RESOLVERS[*]}; DNS over TLS (1.1.1.1:853)"
@@ -135,6 +149,33 @@ EOF
 		echo skip
 	fi
 }
+
+# ---------------------------------------------------------------- inbound (-I)
+# Run from outside: published servers answer on their public address and
+# port; nothing else on that address gets through (default deny inbound).
+if [[ ${#INBOUND[@]} -gt 0 ]]; then
+	echo "inbound (published servers):"
+	for hp in "${INBOUND[@]}"; do
+		ip=${hp%:*} port=${hp##*:}
+		if [[ ! $ip =~ ^[0-9.]+$ || ! $port =~ ^[0-9]+$ ]]; then
+			echo "-I wants ADDRESS:PORT, got $hp" >&2; exit 2
+		fi
+		st=$(tcp "$ip" "$port")
+		if [[ $st == open ]]; then result "published $ip:$port" ok "answers"
+		else result "published $ip:$port" FAIL "$st: check the port forward, the allow rule (it names the server's inside address) and the server itself"; fi
+		for p in "${INBOUND_CLOSED[@]}" $((port + 1)); do
+			[[ $p == "$port" ]] && continue
+			st=$(tcp "$ip" "$p")
+			if [[ $st == open ]]; then result "closed $ip:$p" FAIL "open: something besides the published port gets in"
+			else result "closed $ip:$p" ok "$st"; fi
+		done
+	done
+	echo
+	echo "done: $ok ok, $bad failed, $skip skipped"
+	echo "On the firewall: 'show nat' (connections per entry), 'show log traffic'."
+	((bad == 0))
+	exit
+fi
 
 # ---------------------------------------------------------------- TLS helpers
 
@@ -338,7 +379,7 @@ echo "Outbound allow-list:"; allow_list
 echo "Risky applications on allowed ports:"; risky
 echo "IPS:"; ips
 echo "TLS decryption:"; decryption
-echo "  (Not checked here: inbound denial, and quarantine: tag this VM's address"
+echo "  (Not checked here: inbound, run with -I from outside; and quarantine: tag this VM's address"
 echo "   'quarantine' with the tag API and run again; everything should fail.)"
 echo
 echo "done: $ok ok, $bad failed, $skip skipped"

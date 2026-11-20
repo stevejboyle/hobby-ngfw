@@ -94,14 +94,15 @@ EOF
 ip netns exec ngfw-inet python3 "$WORK/server.py" "$WORK" >/dev/null 2>&1 &
 PIDS+=($!)
 
-# client NAME ADDR CA-FILE PATH: GET https://NAME/PATH at ADDR, trusting
+# client NAME ADDR[:PORT] CA-FILE PATH: GET https://NAME/PATH at ADDR, trusting
 # CA-FILE; prints the answer, or ERROR: reason.
 cat >"$WORK/client.py" <<'EOF'
 import socket, ssl, sys
 name, addr, ca, path = sys.argv[1:5]
+addr, _, port = addr.partition(":")
 ctx = ssl.create_default_context(cafile=ca)
 try:
-    with socket.create_connection((addr, 443), timeout=6) as raw:
+    with socket.create_connection((addr, int(port or 443)), timeout=6) as raw:
         with ctx.wrap_socket(raw, server_hostname=name) as s:
             issuer = dict(x[0] for x in s.getpeercert()["issuer"]).get("commonName", "?")
             s.sendall(f"GET {path} HTTP/1.1\r\nHost: {name}\r\nConnection: close\r\n\r\n".encode())
@@ -149,6 +150,20 @@ interfaces:
 addresses:
   - name: denied-server
     cidr: 203.0.113.11
+  - name: web-server
+    cidr: 203.0.113.10
+# A published server, the other way round: users reach the internet-side
+# server through a port forward on the firewall's users-side address. The
+# port forward translates before the decryption hand-over, so the
+# decryption rule and tlsd see the server's real address and port.
+nat:
+  - name: fwd-https
+    type: port-forward
+    interface: veth-users
+    protocol: tcp
+    public_port: "8443"
+    server: web-server
+    server_port: "443"
 services:
   - name: https
     protocol: tcp
@@ -209,6 +224,10 @@ else
 	[[ $out == *"seen from 203.0.113.1 path /SJB-IPS-TEST-CRITICAL"*"issuer: SJB-OS Decryption CA"* ]] && pass "decrypted: client trusts the SJB-OS CA ($out)" || fail "decrypt: $out"
 	lastlog | grep -q '"decision":"decrypted".*"server_name":"shop.example"' && pass "decryption log: decrypted shop.example" || fail "log: $(lastlog)"
 	(($(plaintext) > 0)) && pass "plaintext request crossed the forward chain ($(plaintext) packet)" || fail "no plaintext on the loop"
+
+	out=$(client shop.example 10.10.1.1:8443 "$WORK/sjb-ca.crt" /published)
+	[[ $out == *"path /published"*"issuer: SJB-OS Decryption CA"* ]] && pass "port forward, then decryption: translated before the hand-over ($out)" || fail "published + decrypt: $out"
+	lastlog | grep -q '"decision":"decrypted".*"server_name":"shop.example"' && pass "decryption log: the forwarded connection decrypted" || fail "log: $(lastlog)"
 
 	out=$(client www.bank.example 203.0.113.10 "$WORK/testca.crt" /)
 	[[ $out == *"issuer: Lab Public Root"* ]] && pass "excluded name keeps the server's own certificate" || fail "exclusion: $out"

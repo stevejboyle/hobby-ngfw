@@ -1,4 +1,4 @@
-.PHONY: build test validate lab-up lab-down lab-status lab-smoke lab-gate1 lab-gate-sessions lab-gate-decrypt lab-gate-users clean
+.PHONY: build test validate lab-up lab-down lab-status lab-smoke lab-gate1 lab-gate-sessions lab-gate-decrypt lab-gate-nat lab-gate-users clean
 
 build:
 	go build -o bin/ ./cmd/...
@@ -36,6 +36,10 @@ lab-gate-sessions:
 # MODE=observe checks observe mode.
 lab-gate-decrypt:
 	./lab/gate-decrypt.sh
+
+# NAT gate: port forwarding and 1:1 static NAT (publishing a server).
+lab-gate-nat:
+	./lab/gate-nat.sh
 
 # Users and roles on a real Debian system. It creates accounts and rewrites
 # PAM, so it runs in a throwaway container (Docker; Linux binaries in bin/).

@@ -16,6 +16,10 @@
 #     government sites, nor the services listed under decryption_exclusions.
 #     Sites with bad certificates are blocked rather than warned about.
 #
+# Publishing a server (a web server behind the firewall): see the
+# commented-out web-in entries under nat and rules. NAT only translates; the
+# allow rule names the server's inside address, and inspects and logs.
+#
 # What it doesn't have: addresses on your networks, routes, VLANs, VRFs,
 # DHCP or dynamic routing. It loads as-is on any SJB-OS appliance (the
 # three standard interfaces, deployment addresses), but `load` replaces the
@@ -189,6 +193,16 @@ rules:
     to: [outside]
     action: deny
     log: true
+  # The published web server's allow rule, above deny-inbound: its inside
+  # address, inspected by the IPS and logged.
+  # - name: web-in
+  #   from: [outside]
+  #   to: [inside]
+  #   destination: [web-server]
+  #   service: [https]
+  #   action: allow
+  #   log: true
+  #   ips_profile: default
   - name: deny-inbound
     from: [outside]
     to: [inside]
@@ -200,6 +214,14 @@ nat:
     from: [inside]
     to: [outside]
     type: masquerade
+  # Publishing a server: the outside address's port 443 to an inside web
+  # server (add an address object web-server with its inside address first).
+  # - name: web-in
+  #   type: port-forward
+  #   interface: outside
+  #   protocol: tcp
+  #   public_port: "443"
+  #   server: web-server
 
 decryption_profiles:
   # Refuse sites whose own certificate is bad instead of letting users

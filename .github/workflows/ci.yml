@@ -48,6 +48,8 @@ jobs:
         run: sudo make lab-gate1
       - name: Sessions gate (connections across policy commits)
         run: sudo make lab-gate-sessions
+      - name: NAT gate (port forwarding, static NAT)
+        run: sudo make lab-gate-nat
       - name: TLS decryption gate (decrypting)
         run: sudo make lab-gate-decrypt
       - name: TLS decryption gate (observe mode)

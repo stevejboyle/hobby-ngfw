@@ -3,139 +3,166 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-/* Layout: one column; the topology drawing first, then reference tables (addressing, policy, BGP, deployment). */
+/* Layout: SJB brand band on top (logo, product, tagline), one column of panels (topology drawing, addressing and routing, policy, checklist), brand footer. One deliberate light look, as on the SJB-OS product brief. */
 :root {
-  --bg: #F7F5F1;
-  --surface: #FFFFFF;
-  --fg: #1B2430;
-  --muted: #55606D;
+  color-scheme: light;
+  --navy: #15212F;        /* SJB navy */
+  --navy-line: #2E3D50;
+  --gold: #C2884A;        /* SJB copper-gold */
+  --gold-text: #8A5A26;   /* gold dark enough for text on white */
+  --gold-soft: #F6EEE3;
+  --cream: #F6F3EE;
+  --paper: #FFFFFF;
+  --ink: #1B2430;
+  --muted: #4A5562;
   --line: #D9D3C9;
-  --navy: #15212F;
-  --copper: #A86F33;
-  --copper-soft: #F1E5D5;
-  --inside: #2F6B8F;
-  --inside-soft: #E3EEF5;
-  --dmz: #A86F33;
-  --dmz-soft: #F6EADB;
-  --deny: #B23B3B;
-  --ok: #2E7D4F;
+  --on-navy: #FFFFFF;
+  --on-navy-muted: #C9D1DB;
+  --inside-soft: #E7EBF1;
+  --deny: #A93A32;
+  --ok: #2E6E4A;
   --sans: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
 }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #0F1720; --surface: #16212D; --fg: #E6EAEF; --muted: #9AA6B3; --line: #2C3A4A;
-    --navy: #22344A; --copper: #D49A5A; --copper-soft: #3A2C1D;
-    --inside: #7DB3D6; --inside-soft: #1B2E3D; --dmz: #D49A5A; --dmz-soft: #33281C;
-    --deny: #E07A7A; --ok: #6FC594; color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #0F1720; --surface: #16212D; --fg: #E6EAEF; --muted: #9AA6B3; --line: #2C3A4A;
-  --navy: #22344A; --copper: #D49A5A; --copper-soft: #3A2C1D;
-  --inside: #7DB3D6; --inside-soft: #1B2E3D; --dmz: #D49A5A; --dmz-soft: #33281C;
-  --deny: #E07A7A; --ok: #6FC594; color-scheme: dark;
-}
-body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.5; }
-.wrap { max-width: 1040px; margin: 0 auto; padding-block: 32px 56px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 28px; }
-header { display: flex; flex-direction: column; gap: 6px; }
-.eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--copper); }
-h1 { margin: 0; font-size: 30px; font-weight: 600; text-wrap: balance; }
-h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--copper); }
-p { margin: 0; max-width: 68ch; }
+body { background: var(--cream); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.5; }
+.inner { max-width: 1040px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.band { background: var(--navy); color: var(--on-navy); }
+.band .inner { padding-block: 22px; display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.brand { display: flex; flex-direction: column; gap: 2px; flex-grow: 1; }
+.brand-name { font-size: 32px; font-weight: 700; letter-spacing: 0.5px; line-height: 1.05; }
+.brand-tag { font-size: 15px; font-weight: 500; color: var(--gold); }
+.band-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; font-size: 13px; color: var(--on-navy-muted); text-align: right; }
+.chip { font-family: var(--mono); font-size: 12px; color: var(--on-navy); border: 1px solid var(--gold); border-radius: 4px; padding: 2px 8px; }
+.rule { height: 4px; background: var(--gold); }
+main.inner { padding-block: 28px 48px; display: flex; flex-direction: column; gap: 24px; }
+.intro { display: flex; flex-direction: column; gap: 8px; }
+h1 { margin: 0; font-size: 28px; line-height: 1.2; font-weight: 600; color: var(--navy); text-wrap: balance; }
+h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase; color: var(--gold-text); }
+p { margin: 0; max-width: 70ch; }
 .lead { color: var(--muted); }
-.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 20px; min-width: 0; }
+.panel { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 20px; min-width: 0; }
 .diagram { overflow-x: auto; }
-.diagram svg { display: block; min-width: 760px; width: 100%; height: auto; }
-svg text { font-family: var(--sans); fill: var(--fg); }
-svg .mono { font-family: var(--mono); }
-svg .muted { fill: var(--muted); }
-svg .on-navy { fill: #FFFFFF; }
-svg .copper-t { fill: var(--copper); }
+.diagram svg { display: block; min-width: 680px; width: 100%; height: auto; }
+.diagram svg text { font-family: var(--sans); fill: var(--ink); }
+.diagram svg .mono { font-family: var(--mono); }
+.diagram svg .muted { fill: var(--muted); }
+.diagram svg .on-navy { fill: var(--on-navy); }
+.diagram svg .on-navy-muted { fill: var(--on-navy-muted); }
+.diagram svg .gold-t { fill: var(--gold-text); }
+.diagram svg .navy-t { fill: var(--navy); }
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
-@media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } .band-meta { align-items: flex-start; text-align: left; } }
 .tbl { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 14px; }
 th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
-th { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+thead th { background: var(--cream); }
+th { font-size: 12px; font-weight: 600; color: var(--gold-text); letter-spacing: 0.06em; text-transform: uppercase; }
 td.mono, .mono { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; }
 .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; }
-.allow { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
-.deny { background: color-mix(in srgb, var(--deny) 16%, transparent); color: var(--deny); }
+.allow { background: #E3F0E8; color: var(--ok); }
+.deny { background: #F6E3E1; color: var(--deny); }
 .zone { display: inline-block; padding: 0 7px; border-radius: 4px; font-size: 12.5px; font-weight: 600; }
-.z-inside { background: var(--inside-soft); color: var(--inside); }
-.z-dmz { background: var(--dmz-soft); color: var(--dmz); }
-.z-outside { background: var(--copper-soft); color: var(--fg); }
+.z-inside { background: var(--inside-soft); color: var(--navy); }
+.z-dmz { background: var(--gold-soft); color: var(--gold-text); }
+.z-outside { background: var(--navy); color: var(--on-navy); }
 .z-none { background: transparent; color: var(--muted); border: 1px solid var(--line); }
 ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+li::marker { color: var(--gold); }
 code { font-family: var(--mono); font-size: 13px; }
+footer.band .inner { padding-block: 14px; justify-content: space-between; font-size: 13px; color: var(--on-navy-muted); gap: 12px; }
+.foot-brand { display: flex; align-items: center; gap: 10px; }
+.foot-brand .dash { width: 18px; height: 3px; background: var(--gold); }
+.foot-brand strong { color: var(--on-navy); font-weight: 600; }
 </style>
 
-<div class="wrap">
-  <header>
-    <div class="eyebrow">SJB-OS 0.9.10-r02 · lab design</div>
+<header class="band">
+  <div class="inner">
+    <svg width="56" height="56" viewBox="0 0 240 240" role="img" aria-label="SJB logo">
+      <rect width="240" height="240" fill="#15212F" rx="28"/>
+      <rect x="4" y="4" width="232" height="232" rx="26" fill="none" stroke="#2E3D50" stroke-width="2"/>
+      <path d="M 96,52 L 52,52 L 52,96" fill="none" stroke="#C2884A" stroke-width="9"/>
+      <path d="M 144,188 L 188,188 L 188,144" fill="none" stroke="#C2884A" stroke-width="9"/>
+      <text x="120" y="122" font-family="IBM Plex Sans, Helvetica Neue, Arial, sans-serif" font-weight="600" font-size="58" fill="#FFFFFF" text-anchor="middle" dominant-baseline="central" letter-spacing="2">SJB</text>
+    </svg>
+    <div class="brand">
+      <div class="brand-name">SJB-OS</div>
+      <div class="brand-tag">Stops Junk at the Border</div>
+    </div>
+    <div class="band-meta">
+      <div class="chip">Lab design</div>
+      <div>Version 0.9.10-r02</div>
+      <div>SJB Consulting</div>
+    </div>
+  </div>
+</header>
+<div class="rule" aria-hidden="true"></div>
+
+<main class="inner">
+  <div class="intro">
     <h1>Lab topology: inside, DMZ and outside with eBGP</h1>
     <p class="lead">SJB-OS (AS 65244) peers with the upstream router (AS 65534) on outside and announces only the DMZ. Inside stays private and leaves NATed; the DMZ is routed by its real addresses. Config: <code>examples/lab-dmz-bgp.yaml</code>.</p>
-  </header>
+  </div>
 
   <section class="panel diagram" aria-label="Topology diagram">
     <svg viewBox="0 0 960 600" role="img" aria-label="Upstream router at the top on 192.168.149.0/24; SJB-OS in the middle with mgmt to the left; inside VLAN 150 and DMZ VLAN 151 below on the inside trunk; an eBGP session announces only 192.168.151.0/24.">
       <!-- upstream router -->
-      <rect x="340" y="16" width="280" height="74" rx="8" fill="var(--surface)" stroke="var(--fg)" stroke-width="1.5"/>
+      <rect x="340" y="16" width="280" height="74" rx="8" fill="var(--paper)" stroke="var(--navy)" stroke-width="1.5"/>
       <text x="480" y="44" text-anchor="middle" font-size="16" font-weight="600">Upstream router</text>
       <text x="480" y="66" text-anchor="middle" font-size="13" class="mono muted">AS 65534 · 192.168.149.1</text>
 
       <!-- outside segment -->
-      <line x1="140" y1="150" x2="820" y2="150" stroke="var(--copper)" stroke-width="4" stroke-linecap="round"/>
-      <line x1="480" y1="90" x2="480" y2="150" stroke="var(--fg)" stroke-width="2"/>
+      <line x1="140" y1="150" x2="820" y2="150" stroke="var(--gold)" stroke-width="5" stroke-linecap="round"/>
+      <line x1="480" y1="90" x2="480" y2="150" stroke="var(--navy)" stroke-width="2"/>
       <text x="830" y="146" font-size="13" font-weight="600">outside</text>
       <text x="830" y="164" font-size="12" class="mono muted">192.168.149.0/24</text>
 
       <!-- eBGP session (drawn beside the physical link) -->
-      <path d="M 560 90 C 640 120, 640 190, 600 222" fill="none" stroke="var(--dmz)" stroke-width="2" stroke-dasharray="6 5"/>
-      <rect x="638" y="172" width="250" height="66" rx="6" fill="var(--dmz-soft)" stroke="var(--dmz)" stroke-width="1"/>
-      <text x="652" y="192" font-size="12.5" font-weight="600" class="copper-t">eBGP 65244 ↔ 65534</text>
-      <text x="652" y="211" font-size="12" class="mono">sends 192.168.151.0/24 only</text>
-      <text x="652" y="228" font-size="12" class="mono">receives 0.0.0.0/0</text>
+      <path d="M 560 90 C 640 120, 650 190, 612 222" fill="none" stroke="var(--gold)" stroke-width="2" stroke-dasharray="6 5"/>
+      <rect x="656" y="172" width="250" height="66" rx="6" fill="var(--gold-soft)" stroke="var(--gold)" stroke-width="1.2"/>
+      <text x="670" y="192" font-size="12.5" font-weight="600" class="gold-t">eBGP 65244 ↔ 65534</text>
+      <text x="670" y="211" font-size="12" class="mono">sends 192.168.151.0/24 only</text>
+      <text x="670" y="228" font-size="12" class="mono">receives 0.0.0.0/0</text>
 
       <!-- SJB-OS -->
-      <line x1="480" y1="150" x2="480" y2="222" stroke="var(--fg)" stroke-width="2"/>
-      <rect x="330" y="222" width="300" height="120" rx="10" fill="var(--navy)"/>
+      <line x1="480" y1="150" x2="480" y2="222" stroke="var(--navy)" stroke-width="2"/>
+      <rect x="316" y="222" width="328" height="120" rx="10" fill="var(--navy)"/>
+      <path d="M 348 234 L 328 234 L 328 254" fill="none" stroke="var(--gold)" stroke-width="3"/>
+      <path d="M 612 330 L 632 330 L 632 310" fill="none" stroke="var(--gold)" stroke-width="3"/>
       <text x="480" y="256" text-anchor="middle" font-size="18" font-weight="700" class="on-navy">SJB-OS · sjb-fw</text>
-      <text x="480" y="278" text-anchor="middle" font-size="12.5" class="on-navy mono">AS 65244 · router ID 192.168.149.254</text>
-      <text x="480" y="300" text-anchor="middle" font-size="12.5" class="on-navy">default deny · IPS on web to DMZ</text>
-      <text x="480" y="320" text-anchor="middle" font-size="12" class="on-navy mono">default route learned over BGP</text>
+      <text x="480" y="278" text-anchor="middle" font-size="12" class="on-navy mono">AS 65244 · router ID 192.168.149.254</text>
+      <text x="480" y="300" text-anchor="middle" font-size="12.5" class="on-navy-muted">default deny · IPS on web to DMZ</text>
+      <text x="480" y="320" text-anchor="middle" font-size="12" class="on-navy-muted mono">default route learned over BGP</text>
       <!-- interface labels -->
       <text x="490" y="196" font-size="12" class="mono">outside · .254</text>
 
       <!-- mgmt -->
-      <line x1="200" y1="282" x2="330" y2="282" stroke="var(--muted)" stroke-width="2" stroke-dasharray="3 4"/>
+      <line x1="200" y1="282" x2="316" y2="282" stroke="var(--muted)" stroke-width="2" stroke-dasharray="3 4"/>
       <text x="236" y="274" font-size="12" class="mono muted">mgmt · .75</text>
-      <rect x="16" y="236" width="184" height="96" rx="8" fill="var(--surface)" stroke="var(--muted)" stroke-width="1.2"/>
+      <rect x="16" y="236" width="184" height="96" rx="8" fill="var(--paper)" stroke="var(--muted)" stroke-width="1.2"/>
       <text x="30" y="262" font-size="14" font-weight="600">Management</text>
       <text x="30" y="282" font-size="12" class="mono">192.168.1.0/24</text>
       <text x="30" y="300" font-size="12" class="mono muted">gw 192.168.1.1</text>
       <text x="30" y="318" font-size="12" class="muted">no zone · never filtered</text>
 
       <!-- inside trunk -->
-      <line x1="480" y1="342" x2="480" y2="400" stroke="var(--fg)" stroke-width="2"/>
-      <line x1="250" y1="400" x2="710" y2="400" stroke="var(--fg)" stroke-width="3"/>
+      <line x1="480" y1="342" x2="480" y2="400" stroke="var(--navy)" stroke-width="2"/>
+      <line x1="250" y1="400" x2="710" y2="400" stroke="var(--navy)" stroke-width="3"/>
       <text x="492" y="376" font-size="12" class="mono">inside trunk · VLANs 150, 151</text>
       <text x="492" y="392" font-size="11.5" class="muted">no zone, no address · untagged dropped</text>
-      <line x1="250" y1="400" x2="250" y2="438" stroke="var(--inside)" stroke-width="2.5"/>
-      <line x1="710" y1="400" x2="710" y2="438" stroke="var(--dmz)" stroke-width="2.5"/>
+      <line x1="250" y1="400" x2="250" y2="438" stroke="var(--navy)" stroke-width="2.5"/>
+      <line x1="710" y1="400" x2="710" y2="438" stroke="var(--gold)" stroke-width="2.5"/>
 
       <!-- inside zone -->
-      <rect x="80" y="438" width="340" height="140" rx="8" fill="var(--inside-soft)" stroke="var(--inside)" stroke-width="1.5"/>
-      <text x="100" y="466" font-size="16" font-weight="600" fill="var(--inside)">Inside</text>
+      <rect x="80" y="438" width="340" height="140" rx="8" fill="var(--inside-soft)" stroke="var(--navy)" stroke-width="1.5"/>
+      <text x="100" y="466" font-size="16" font-weight="600" class="navy-t">Inside</text>
       <text x="100" y="488" font-size="12.5" class="mono">inside.150 · 192.168.150.1</text>
       <text x="100" y="506" font-size="12.5" class="mono">192.168.150.0/24</text>
       <text x="100" y="530" font-size="12.5">NATed to 192.168.149.254</text>
       <text x="100" y="550" font-size="12.5">never announced over BGP</text>
 
       <!-- dmz zone -->
-      <rect x="540" y="438" width="340" height="140" rx="8" fill="var(--dmz-soft)" stroke="var(--dmz)" stroke-width="1.5"/>
-      <text x="560" y="466" font-size="16" font-weight="600" class="copper-t">DMZ</text>
+      <rect x="540" y="438" width="340" height="140" rx="8" fill="var(--gold-soft)" stroke="var(--gold)" stroke-width="1.5"/>
+      <text x="560" y="466" font-size="16" font-weight="600" class="gold-t">DMZ</text>
       <text x="560" y="488" font-size="12.5" class="mono">inside.151 · 192.168.151.1</text>
       <text x="560" y="506" font-size="12.5" class="mono">192.168.151.0/24</text>
       <text x="560" y="530" font-size="12.5">routed by real address, announced</text>
@@ -144,7 +171,7 @@ code { font-family: var(--mono); font-size: 13px; }
       <!-- dmz → inside blocked -->
       <line x1="534" y1="508" x2="430" y2="508" stroke="var(--deny)" stroke-width="2"/>
       <path d="M 438 502 L 428 508 L 438 514" fill="none" stroke="var(--deny)" stroke-width="2"/>
-      <circle cx="482" cy="508" r="11" fill="var(--surface)" stroke="var(--deny)" stroke-width="2"/>
+      <circle cx="482" cy="508" r="11" fill="var(--paper)" stroke="var(--deny)" stroke-width="2"/>
       <line x1="475" y1="501" x2="489" y2="515" stroke="var(--deny)" stroke-width="2"/>
     </svg>
   </section>
@@ -204,4 +231,11 @@ code { font-family: var(--mono); font-size: 13px; }
       <li>In the CLI: <code>load</code>, paste the file, then <code>commit -confirm 5m</code> and confirm once BGP is up (<code>show bgp</code>).</li>
     </ul>
   </section>
-</div>
+</main>
+
+<footer class="band">
+  <div class="inner">
+    <div class="foot-brand"><span class="dash" aria-hidden="true"></span><span><strong>SJB Consulting</strong> · sjbconsulting.ai</span></div>
+    <div>SJB-OS lab design · for lab use</div>
+  </div>
+</footer>

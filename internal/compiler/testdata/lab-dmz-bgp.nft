@@ -2,42 +2,112 @@
 table inet ngfw
 delete table inet ngfw
 table inet ngfw {
+	set dag_no_decrypt {
+		type ipv4_addr
+		flags timeout
+		comment "tag:no-decrypt"
+	}
+
+	set dag_quarantine {
+		type ipv4_addr
+		flags timeout
+		comment "tag:quarantine"
+		elements = { 10.10.1.20, 10.10.1.66 timeout 5400s }
+	}
+
 	chain appid {
 		type filter hook forward priority filter - 10; policy accept;
 		meta nfproto ipv4 meta l4proto { tcp, udp } ct mark and 0x1000 == 0 queue flags bypass,fanout to 0-1 comment "app-identification"
 	}
 
+	chain allowed {
+		# App policy: an allowed connection becomes final (fast path) once its
+		# application is settled, or at once if App Identification doesn't classify it.
+		ct mark and 0x1000 == 0x1000 ct mark set ct mark or 0x2000 accept
+		meta l4proto != { tcp, udp } ct mark set ct mark or 0x2000 accept
+		accept
+	}
+
 	chain forward {
 		type filter hook forward priority filter; policy drop;
-		ct mark and 0x4000 == 0x4000 drop comment "ips: blocked connection"
-		ct state established,related accept
+		ct mark and 0x4000 == 0x4000 drop comment "app-identification: denied once identified"
+		ct state established ct mark and 0x2000 == 0x2000 accept
+		ct state established ct direction reply accept
+		ct state related ct mark set ct mark or 0x2000 accept
 		ct state invalid drop
 		iifname "inside" counter drop comment "trunk: untagged"
 		oifname "inside" counter drop comment "trunk: untagged"
-		iifname "inside.150" oifname "outside" ip saddr 192.168.150.0/24 counter log prefix "ngfw inside-out allow " ct mark set ct mark and 0x0000f7ff or 0x00010800 accept comment "rule:inside-out"
-		iifname "inside.150" oifname "inside.151" ip saddr 192.168.150.0/24 ip daddr 192.168.151.0/24 counter log prefix "ngfw inside-to-dmz allow " ct mark set ct mark and 0x0000f7ff or 0x00020800 accept comment "rule:inside-to-dmz"
-		iifname "inside.151" oifname "outside" ip saddr 192.168.151.0/24 counter log prefix "ngfw dmz-out allow " ct mark set ct mark and 0x0000f7ff or 0x00030800 accept comment "rule:dmz-out"
-		iifname "inside.151" oifname "inside.150" counter log prefix "ngfw dmz-to-inside deny " drop comment "rule:dmz-to-inside"
-		iifname "outside" oifname "inside.151" ip daddr 192.168.151.0/24 meta l4proto tcp th dport { 80, 443 } counter log prefix "ngfw web-to-dmz allow " ct mark set ct mark and 0x0000f7ff or 0x00050800 accept comment "rule:web-to-dmz"
-		counter log prefix "ngfw deny-all deny " drop comment "rule:deny-all"
+		iifname "inside.150" ip saddr @dag_quarantine counter log prefix "ngfw block-quarantined deny " ct mark set ct mark or 0x4000 drop comment "rule:block-quarantined"
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" ip saddr @dag_quarantine counter log prefix "ngfw block-quarantined deny " ct mark set ct mark or 0x4000 drop comment "rule:block-quarantined"
+		iifname "inside.150" oifname "outside" meta l4proto tcp ct mark and 0x7ff { 24, 35, 36, 37, 42, 55, 79, 88, 89, 115, 116, 117, 131, 148, 159, 161, 163, 172, 196, 206, 209, 215, 252, 259, 277, 290, 299, 300, 303, 304, 339, 344, 348, 384, 426, 427, 428, 429, 444, 445, 451, 454, 476, 477, 487, 488 } counter log prefix "ngfw block-risky-apps reset " ct mark set ct mark or 0x4000 reject with tcp reset comment "rule:block-risky-apps"
+		iifname "inside.150" oifname "outside" ct mark and 0x7ff { 24, 35, 36, 37, 42, 55, 79, 88, 89, 115, 116, 117, 131, 148, 159, 161, 163, 172, 196, 206, 209, 215, 252, 259, 277, 290, 299, 300, 303, 304, 339, 344, 348, 384, 426, 427, 428, 429, 444, 445, 451, 454, 476, 477, 487, 488 } counter log prefix "ngfw block-risky-apps reset " ct mark set ct mark or 0x4000 reject with icmpx type admin-prohibited comment "rule:block-risky-apps"
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "outside" meta l4proto tcp ct mark and 0x7ff { 24, 35, 36, 37, 42, 55, 79, 88, 89, 115, 116, 117, 131, 148, 159, 161, 163, 172, 196, 206, 209, 215, 252, 259, 277, 290, 299, 300, 303, 304, 339, 344, 348, 384, 426, 427, 428, 429, 444, 445, 451, 454, 476, 477, 487, 488 } counter log prefix "ngfw block-risky-apps reset " ct mark set ct mark or 0x4000 reject with tcp reset comment "rule:block-risky-apps"
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "outside" ct mark and 0x7ff { 24, 35, 36, 37, 42, 55, 79, 88, 89, 115, 116, 117, 131, 148, 159, 161, 163, 172, 196, 206, 209, 215, 252, 259, 277, 290, 299, 300, 303, 304, 339, 344, 348, 384, 426, 427, 428, 429, 444, 445, 451, 454, 476, 477, 487, 488 } counter log prefix "ngfw block-risky-apps reset " ct mark set ct mark or 0x4000 reject with icmpx type admin-prohibited comment "rule:block-risky-apps"
+		iifname "inside.150" oifname "outside" ip daddr { 192.168.1.97, 192.168.1.98 } meta l4proto udp th dport 53 ct mark and 0x8000 == 0 log prefix "ngfw dns-to-approved-resolvers allow " ct mark set ct mark or 0x8000
+		iifname "inside.150" oifname "outside" ip daddr { 192.168.1.97, 192.168.1.98 } meta l4proto udp th dport 53 counter ct mark set ct mark and 0x0000f7ff or 0x00030800 jump allowed comment "rule:dns-to-approved-resolvers"
+		iifname "inside.150" oifname "outside" ip daddr { 192.168.1.97, 192.168.1.98 } meta l4proto tcp th dport 53 ct mark and 0x8000 == 0 log prefix "ngfw dns-to-approved-resolvers allow " ct mark set ct mark or 0x8000
+		iifname "inside.150" oifname "outside" ip daddr { 192.168.1.97, 192.168.1.98 } meta l4proto tcp th dport 53 counter ct mark set ct mark and 0x0000f7ff or 0x00030800 jump allowed comment "rule:dns-to-approved-resolvers"
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "outside" ip daddr { 192.168.1.97, 192.168.1.98 } meta l4proto udp th dport 53 ct mark and 0x8000 == 0 log prefix "ngfw dns-to-approved-resolvers allow " ct mark set ct mark or 0x8000
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "outside" ip daddr { 192.168.1.97, 192.168.1.98 } meta l4proto udp th dport 53 counter ct mark set ct mark and 0x0000f7ff or 0x00030800 jump allowed comment "rule:dns-to-approved-resolvers"
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "outside" ip daddr { 192.168.1.97, 192.168.1.98 } meta l4proto tcp th dport 53 ct mark and 0x8000 == 0 log prefix "ngfw dns-to-approved-resolvers allow " ct mark set ct mark or 0x8000
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "outside" ip daddr { 192.168.1.97, 192.168.1.98 } meta l4proto tcp th dport 53 counter ct mark set ct mark and 0x0000f7ff or 0x00030800 jump allowed comment "rule:dns-to-approved-resolvers"
+		iifname "inside.150" oifname "outside" meta l4proto udp th dport 53 counter log prefix "ngfw block-other-dns reset " ct mark set ct mark or 0x4000 reject with icmpx type admin-prohibited comment "rule:block-other-dns"
+		iifname "inside.150" oifname "outside" meta l4proto tcp th dport 53 counter log prefix "ngfw block-other-dns reset " ct mark set ct mark or 0x4000 reject with tcp reset comment "rule:block-other-dns"
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "outside" meta l4proto udp th dport 53 counter log prefix "ngfw block-other-dns reset " ct mark set ct mark or 0x4000 reject with icmpx type admin-prohibited comment "rule:block-other-dns"
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "outside" meta l4proto tcp th dport 53 counter log prefix "ngfw block-other-dns reset " ct mark set ct mark or 0x4000 reject with tcp reset comment "rule:block-other-dns"
+		iifname "inside.150" oifname "outside" meta l4proto tcp th dport { 80, 443 } ct mark and 0x8000 == 0 log prefix "ngfw web allow " ct mark set ct mark or 0x8000
+		iifname "inside.150" oifname "outside" meta l4proto tcp th dport { 80, 443 } counter ct mark set ct mark and 0x0000f7ff or 0x00050800 jump allowed comment "rule:web"
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "outside" meta l4proto tcp th dport { 80, 443 } ct mark and 0x8000 == 0 log prefix "ngfw web allow " ct mark set ct mark or 0x8000
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "outside" meta l4proto tcp th dport { 80, 443 } counter ct mark set ct mark and 0x0000f7ff or 0x00050800 jump allowed comment "rule:web"
+		iifname "inside.150" oifname "outside" meta l4proto udp th dport 123 ct mark and 0x8000 == 0 log prefix "ngfw time allow " ct mark set ct mark or 0x8000
+		iifname "inside.150" oifname "outside" meta l4proto udp th dport 123 counter ct mark set ct mark and 0x0000f7ff or 0x00060800 jump allowed comment "rule:time"
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "outside" meta l4proto udp th dport 123 ct mark and 0x8000 == 0 log prefix "ngfw time allow " ct mark set ct mark or 0x8000
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "outside" meta l4proto udp th dport 123 counter ct mark set ct mark and 0x0000f7ff or 0x00060800 jump allowed comment "rule:time"
+		iifname "inside.150" oifname "outside" meta l4proto tcp th dport { 465, 587, 993 } ct mark and 0x8000 == 0 log prefix "ngfw mail allow " ct mark set ct mark or 0x8000
+		iifname "inside.150" oifname "outside" meta l4proto tcp th dport { 465, 587, 993 } counter ct mark set ct mark and 0x0000f7ff or 0x00070800 jump allowed comment "rule:mail"
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "outside" meta l4proto tcp th dport { 465, 587, 993 } ct mark and 0x8000 == 0 log prefix "ngfw mail allow " ct mark set ct mark or 0x8000
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "outside" meta l4proto tcp th dport { 465, 587, 993 } counter ct mark set ct mark and 0x0000f7ff or 0x00070800 jump allowed comment "rule:mail"
+		iifname "inside.150" oifname "outside" meta l4proto icmp ct mark and 0x8000 == 0 log prefix "ngfw ping-out allow " ct mark set ct mark or 0x8000
+		iifname "inside.150" oifname "outside" meta l4proto icmp counter ct mark set ct mark and 0x0000f7ff or 0x00080800 jump allowed comment "rule:ping-out"
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "outside" meta l4proto icmp ct mark and 0x8000 == 0 log prefix "ngfw ping-out allow " ct mark set ct mark or 0x8000
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "outside" meta l4proto icmp counter ct mark set ct mark and 0x0000f7ff or 0x00080800 jump allowed comment "rule:ping-out"
+		iifname "inside.150" oifname "outside" counter log prefix "ngfw deny-other-outbound deny " ct mark set ct mark or 0x4000 drop comment "rule:deny-other-outbound"
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "outside" counter log prefix "ngfw deny-other-outbound deny " ct mark set ct mark or 0x4000 drop comment "rule:deny-other-outbound"
+		iifname "inside.150" oifname "inside.151" ip saddr 192.168.150.0/24 ip daddr 192.168.151.0/24 ct mark and 0x8000 == 0 log prefix "ngfw inside-to-dmz allow " ct mark set ct mark or 0x8000
+		iifname "inside.150" oifname "inside.151" ip saddr 192.168.150.0/24 ip daddr 192.168.151.0/24 counter ct mark set ct mark and 0x0000f7ff or 0x000a0800 jump allowed comment "rule:inside-to-dmz"
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "inside.151" ip saddr 192.168.150.0/24 ip daddr 192.168.151.0/24 ct mark and 0x8000 == 0 log prefix "ngfw inside-to-dmz allow " ct mark set ct mark or 0x8000
+		iifname "sjbd-c" ip dscp 1 oifname "sjbd-s" fib daddr oifname "inside.151" ip saddr 192.168.150.0/24 ip daddr 192.168.151.0/24 counter ct mark set ct mark and 0x0000f7ff or 0x000a0800 jump allowed comment "rule:inside-to-dmz"
+		iifname "inside.151" oifname "inside.150" counter log prefix "ngfw dmz-to-inside deny " ct mark set ct mark or 0x4000 drop comment "rule:dmz-to-inside"
+		iifname "sjbd-c" ip dscp 3 oifname "sjbd-s" fib daddr oifname "inside.150" counter log prefix "ngfw dmz-to-inside deny " ct mark set ct mark or 0x4000 drop comment "rule:dmz-to-inside"
+		iifname "inside.151" oifname "outside" ip saddr 192.168.151.0/24 ct mark and 0x8000 == 0 log prefix "ngfw dmz-out allow " ct mark set ct mark or 0x8000
+		iifname "inside.151" oifname "outside" ip saddr 192.168.151.0/24 counter ct mark set ct mark and 0x0000f7ff or 0x000c0800 jump allowed comment "rule:dmz-out"
+		iifname "sjbd-c" ip dscp 3 oifname "sjbd-s" fib daddr oifname "outside" ip saddr 192.168.151.0/24 ct mark and 0x8000 == 0 log prefix "ngfw dmz-out allow " ct mark set ct mark or 0x8000
+		iifname "sjbd-c" ip dscp 3 oifname "sjbd-s" fib daddr oifname "outside" ip saddr 192.168.151.0/24 counter ct mark set ct mark and 0x0000f7ff or 0x000c0800 jump allowed comment "rule:dmz-out"
+		iifname "outside" oifname "inside.151" ip daddr 192.168.151.0/24 meta l4proto tcp th dport { 80, 443 } ct mark and 0x8000 == 0 log prefix "ngfw web-to-dmz allow " ct mark set ct mark or 0x8000
+		iifname "outside" oifname "inside.151" ip daddr 192.168.151.0/24 meta l4proto tcp th dport { 80, 443 } counter ct mark set ct mark and 0x0000f7ff or 0x000d0800 jump allowed comment "rule:web-to-dmz"
+		iifname "sjbd-c" ip dscp 2 oifname "sjbd-s" fib daddr oifname "inside.151" ip daddr 192.168.151.0/24 meta l4proto tcp th dport { 80, 443 } ct mark and 0x8000 == 0 log prefix "ngfw web-to-dmz allow " ct mark set ct mark or 0x8000
+		iifname "sjbd-c" ip dscp 2 oifname "sjbd-s" fib daddr oifname "inside.151" ip daddr 192.168.151.0/24 meta l4proto tcp th dport { 80, 443 } counter ct mark set ct mark and 0x0000f7ff or 0x000d0800 jump allowed comment "rule:web-to-dmz"
+		iifname "outside" oifname "inside.150" counter log prefix "ngfw deny-inbound deny " ct mark set ct mark or 0x4000 drop comment "rule:deny-inbound"
+		iifname "sjbd-c" ip dscp 2 oifname "sjbd-s" fib daddr oifname "inside.150" counter log prefix "ngfw deny-inbound deny " ct mark set ct mark or 0x4000 drop comment "rule:deny-inbound"
+		counter log prefix "ngfw deny-all deny " ct mark set ct mark or 0x4000 drop comment "rule:deny-all"
 		counter comment "default-deny"
 	}
 
 	chain ips {
 		type filter hook forward priority filter + 10; policy accept;
-		meta nfproto ipv4 ct mark and 0xffff0000 == 0x00050000 queue flags bypass,fanout to 2-3 comment "ips"
+		meta nfproto ipv4 ct mark and 0xffff0000 { 0x00030000, 0x00050000, 0x00060000, 0x00070000, 0x000d0000 } queue flags bypass,fanout to 2-3 comment "ips"
 	}
 
 	chain ips_p0 {
-		comment "ips profile default"
-		meta mark and 0x01000000 != 0 ct mark set ct mark or 0x4000 counter drop comment "ips:default critical"
-		meta mark and 0x02000000 != 0 ct mark set ct mark or 0x4000 counter drop comment "ips:default major"
+		comment "ips profile enterprise"
+		meta mark and 0x01000000 != 0 ct mark set ct mark or 0x4000 counter drop comment "ips:enterprise critical"
+		meta mark and 0x02000000 != 0 ct mark set ct mark or 0x4000 counter drop comment "ips:enterprise major"
 	}
 
 	chain ips_enforce {
 		type filter hook forward priority filter + 20; policy accept;
 		meta mark and 0x0f000000 == 0 accept
-		ct mark and 0xffff0000 vmap { 0x00050000 : jump ips_p0 }
+		ct mark and 0xffff0000 vmap { 0x00030000 : jump ips_p0, 0x00050000 : jump ips_p0, 0x00060000 : jump ips_p0, 0x00070000 : jump ips_p0, 0x000d0000 : jump ips_p0 }
 		meta mark set meta mark and 0xf0ffffff
 	}
 
@@ -48,12 +118,46 @@ table inet ngfw {
 		ct state invalid drop
 		iifname "inside" counter drop comment "trunk: untagged"
 		ip saddr 192.168.149.1 tcp dport 179 accept comment "bgp:upstream"
-		iifname { "outside", "inside.150", "inside.151" } meta l4proto icmp accept
-		iifname { "outside", "inside.150", "inside.151" } counter drop comment "zone-to-firewall"
+		iifname "inside.150" udp dport 67 accept comment "dhcp:inside.150"
+		iifname { "inside.150", "inside.151", "outside" } meta l4proto icmp accept
+		meta mark and 0x40000000 != 0 meta l4proto tcp accept comment "decryption"
+		iifname { "inside.150", "inside.151", "outside" } counter drop comment "zone-to-firewall"
+	}
+
+	set decrypt_ready {
+		type ipv4_addr
+		flags interval
+		comment "tlsd is up"
+	}
+
+	chain decrypt_zone {
+		type filter hook prerouting priority raw; policy accept;
+		iifname { "sjbd-c", "sjbd-s" } ct zone set 65520 comment "decryption loop"
+	}
+
+	chain decrypt {
+		type filter hook prerouting priority dstnat + 10; policy accept;
+		iifname { "sjbd-c", "sjbd-s" } accept
+		# Packets of connections tlsd already holds go to its socket.
+		meta l4proto tcp socket transparent 1 meta mark set meta mark or 0x40000000 accept
+		iifname "inside.150" ip saddr @dag_no_decrypt tcp dport 443 accept comment "decrypt:never-decrypt-tagged"
+		iifname "inside.150" ip saddr @dag_no_decrypt udp dport 443 accept comment "decrypt:never-decrypt-tagged"
+		iifname "inside.151" ip saddr @dag_no_decrypt tcp dport 443 accept comment "decrypt:never-decrypt-tagged"
+		iifname "inside.151" ip saddr @dag_no_decrypt udp dport 443 accept comment "decrypt:never-decrypt-tagged"
+		iifname "outside" ip saddr @dag_no_decrypt tcp dport 443 accept comment "decrypt:never-decrypt-tagged"
+		iifname "outside" ip saddr @dag_no_decrypt udp dport 443 accept comment "decrypt:never-decrypt-tagged"
+		iifname "inside.150" ip daddr 192.168.1.0/24 tcp dport 443 accept comment "decrypt:never-decrypt-home-lan"
+		iifname "inside.150" ip daddr 192.168.1.0/24 udp dport 443 accept comment "decrypt:never-decrypt-home-lan"
+		iifname "inside.151" ip daddr 192.168.1.0/24 tcp dport 443 accept comment "decrypt:never-decrypt-home-lan"
+		iifname "inside.151" ip daddr 192.168.1.0/24 udp dport 443 accept comment "decrypt:never-decrypt-home-lan"
+		iifname "outside" ip daddr 192.168.1.0/24 tcp dport 443 accept comment "decrypt:never-decrypt-home-lan"
+		iifname "outside" ip daddr 192.168.1.0/24 udp dport 443 accept comment "decrypt:never-decrypt-home-lan"
+		iifname "inside.150" fib daddr oifname "outside" udp dport 443 counter drop comment "decrypt:decrypt-users-web quic"
+		iifname "inside.150" fib daddr oifname "outside" tcp dport 443 tcp flags & (syn | ack) == syn ip daddr @decrypt_ready counter meta mark set 0x40000103 tproxy ip to :15080 comment "decrypt:decrypt-users-web"
 	}
 
 	chain postrouting {
 		type nat hook postrouting priority srcnat; policy accept;
-		iifname "inside.150" oifname "outside" ip saddr 192.168.150.0/24 counter masquerade comment "nat:inside-out"
+		iifname "inside.150" oifname "outside" counter masquerade comment "nat:inside-out"
 	}
 }

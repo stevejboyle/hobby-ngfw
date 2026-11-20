@@ -1,128 +1,336 @@
 # SJB-OS lab: inside, DMZ and outside, with eBGP to the upstream router.
+# Needs SJB-OS 0.9.10-r02 or later (inside as a trunk).
 #
-#   mgmt     192.168.1.0/24    SJB-OS 192.168.1.75, gateway 192.168.1.1
+#   mgmt     192.168.1.0/24    SJB-OS 192.168.1.75 (deployment settings), gateway 192.168.1.1
 #   outside  192.168.149.0/24  SJB-OS 192.168.149.254, upstream router 192.168.149.1
-#   inside   192.168.150.0/24  SJB-OS 192.168.150.1   (VLAN 150 on the inside trunk)
-#   dmz      192.168.151.0/24  SJB-OS 192.168.151.1   (VLAN 151 on the inside trunk)
+#   inside   192.168.150.0/24  SJB-OS 192.168.150.1, VLAN 150 on the inside trunk, DHCP .101-.199
+#   dmz      192.168.151.0/24  SJB-OS 192.168.151.1, VLAN 151 on the inside trunk, a web server
 #
-# BGP: SJB-OS AS 65244 peers with 192.168.149.1 (AS 65534) and announces only
-# the DMZ. Inside is never announced: it leaves NATed to 192.168.149.254. The
-# DMZ is routed, not NATed: the upstream router reaches it through the BGP
-# route, by the DMZ hosts' real addresses. The default route is learned over
-# BGP, so the upstream router must send 0.0.0.0/0.
+# BGP: SJB-OS AS 65244 peers with 192.168.149.1 (AS 65534), announces only
+# the DMZ (export filter dmz-only) and learns its default route there.
+# Inside is private: an outbound allow-list (web, approved DNS, NTP, mail,
+# ping) with the IPS, risky applications blocked, web decrypted, NATed to
+# 192.168.149.254. The DMZ is routed by its real addresses: web from outside
+# is allowed and inspected, the DMZ may go out, and never reaches inside.
+# ESXi: the inside adapter's port group is a trunk (VLAN 4095).
+# tools/lab-test.sh checks it from the inside client, the DMZ server and
+# a machine outside; docs/lab-dmz-bgp-topology.html draws it.
 #
-# Deployment settings (the OVA's properties, not this file): mgmt_ip
-# 192.168.1.75/24 and mgmt_gateway 192.168.1.1. The management interface is
-# never in a zone and never filtered, so no commit can cut off access.
-# ESXi: the inside network adapter's port group passes VLANs 150 and 151
-# (VLAN 4095, a trunk).
-#
-# Load it with `load` in the CLI (it replaces the whole config) and commit
-# with a confirm timer the first time: `commit -confirm 5m`, then `confirm` once `show bgp` shows the session up.
+# Load with `load` (it replaces the whole config), `commit -confirm 5m`, and
+# `confirm` once `show bgp` shows the session up.
 
 system:
-  hostname: sjb-fw
-  mgmt_interface: mgmt
-
+    hostname: sjb-fw
+    mgmt_interface: mgmt
+    app_id: "on"
+    ips: "on"
+    decryption: "on"
 zones:
-  - name: inside
-  - name: dmz
-  - name: outside
-
+    - name: inside
+    - name: outside
+    - name: dmz
 interfaces:
-  - name: mgmt
-    address: 192.168.1.75/24          # informational: the deployment sets it
-  - name: outside
-    zone: outside
-    address: 192.168.149.254/24
-  # The trunk itself: no zone, no address (SJB-OS 0.9.10-r02 or later). It
-  # carries VLANs 150 and 151 only; everything untagged is dropped, and the
-  # deployment's inside_ip is taken off it.
-  - name: inside
-  - name: inside.150
-    zone: inside
-    address: 192.168.150.1/24
-  - name: inside.151
-    zone: dmz
-    address: 192.168.151.1/24
-
+    - name: mgmt
+      zone: ""
+    # The trunk: no zone, no address. VLANs 150 and 151 only; untagged traffic
+    # is dropped.
+    - name: inside
+    - name: inside.150
+      zone: inside
+      address: 192.168.150.1/24
+    - name: inside.151
+      zone: dmz
+      address: 192.168.151.1/24
+    - name: outside
+      zone: outside
+      address: 192.168.149.254/24
 addresses:
-  - name: inside-net
-    cidr: 192.168.150.0/24
-  - name: dmz-net
-    cidr: 192.168.151.0/24
-
+    - name: inside-net
+      cidr: 192.168.150.0/24
+    - name: home-lan
+      cidr: 192.168.1.0/24
+    - name: home-dns-1
+      cidr: 192.168.1.97
+    - name: home-dns-2
+      cidr: 192.168.1.98
+    - name: wifi-net
+      cidr: 192.168.11.0/24
+    - name: dmz-net
+      cidr: 192.168.151.0/24
+address_groups:
+    - name: approved-dns
+      static:
+        - home-dns-1
+        - home-dns-2
+    - name: quarantine
+      tag: quarantine
+    - name: no-decrypt-hosts
+      tag: no-decrypt
 services:
-  - name: web
-    protocol: tcp
-    ports: 80,443
-
-routing:
-  - name: default
-    router_id: 192.168.149.254
-    bgp_asn: 65244
-    bgp_networks: [192.168.151.0/24]
-
-bgp_neighbors:
-  - name: upstream
-    address: 192.168.149.1
-    remote_as: 65534
-    description: upstream router
-    export: dmz-only                  # only the DMZ leaves, whatever else is added later
-    # no import list: accept every route the router sends, including the
-    # default route (0.0.0.0/0), which is how inside and the DMZ reach the
-    # internet. No static default: without the BGP session there is none.
-
-prefix_lists:
-  - name: dmz-only
-    entries:
-      - permit 192.168.151.0/24
-      - deny any
-
-nat:
-  # Inside only: the DMZ is routed.
-  - name: inside-out
-    type: masquerade
-    from: [inside]
-    to: [outside]
-    source: [inside-net]
-
+    - name: http
+      protocol: tcp
+      ports: "80"
+    - name: https
+      protocol: tcp
+      ports: "443"
+    - name: dns-udp
+      protocol: udp
+      ports: "53"
+    - name: dns-tcp
+      protocol: tcp
+      ports: "53"
+    - name: ntp
+      protocol: udp
+      ports: "123"
+    - name: mail-submission
+      protocol: tcp
+      ports: 465,587
+    - name: imaps
+      protocol: tcp
+      ports: "993"
+    - name: ping
+      protocol: icmp
 rules:
-  - name: inside-out
-    from: [inside]
-    to: [outside]
-    source: [inside-net]
-    action: allow
-    log: true
-  - name: inside-to-dmz
-    from: [inside]
-    to: [dmz]
-    source: [inside-net]
-    destination: [dmz-net]
-    action: allow
-    log: true
-  - name: dmz-out
-    from: [dmz]
-    to: [outside]
-    source: [dmz-net]
-    action: allow
-    log: true
-  # The DMZ never reaches inside.
-  - name: dmz-to-inside
-    from: [dmz]
-    to: [inside]
-    action: deny
-    log: true
-  # From outside, web to the DMZ only, inspected by the IPS.
-  - name: web-to-dmz
-    from: [outside]
-    to: [dmz]
-    destination: [dmz-net]
-    service: [web]
-    action: allow
-    log: true
-    ips_profile: default
-  # Everything else is denied (SJB-OS's default); this logs it.
-  - name: deny-all
-    action: deny
-    log: true
+    - name: block-quarantined
+      from:
+        - inside
+      source:
+        - quarantine
+      action: deny
+      log: true
+    - name: block-risky-apps
+      from:
+        - inside
+      to:
+        - outside
+      application:
+        - risky-apps
+      action: reset
+      log: true
+    - name: dns-to-approved-resolvers
+      from:
+        - inside
+      to:
+        - outside
+      destination:
+        - approved-dns
+      service:
+        - dns-udp
+        - dns-tcp
+      action: allow
+      log: true
+      ips_profile: enterprise
+    - name: block-other-dns
+      from:
+        - inside
+      to:
+        - outside
+      service:
+        - dns-udp
+        - dns-tcp
+      action: reset
+      log: true
+    - name: web
+      from:
+        - inside
+      to:
+        - outside
+      service:
+        - http
+        - https
+      action: allow
+      log: true
+      ips_profile: enterprise
+    - name: time
+      from:
+        - inside
+      to:
+        - outside
+      service:
+        - ntp
+      action: allow
+      log: true
+      ips_profile: enterprise
+    - name: mail
+      from:
+        - inside
+      to:
+        - outside
+      service:
+        - mail-submission
+        - imaps
+      action: allow
+      log: true
+      ips_profile: enterprise
+    - name: ping-out
+      from:
+        - inside
+      to:
+        - outside
+      service:
+        - ping
+      action: allow
+      log: true
+    - name: deny-other-outbound
+      from:
+        - inside
+      to:
+        - outside
+      action: deny
+      log: true
+    # DMZ (192.168.151.0/24): routed, announced over BGP, never reaches inside.
+    - name: inside-to-dmz
+      from:
+        - inside
+      to:
+        - dmz
+      source:
+        - inside-net
+      destination:
+        - dmz-net
+      action: allow
+      log: true
+    - name: dmz-to-inside
+      from:
+        - dmz
+      to:
+        - inside
+      action: deny
+      log: true
+    - name: dmz-out
+      from:
+        - dmz
+      to:
+        - outside
+      source:
+        - dmz-net
+      action: allow
+      log: true
+    - name: web-to-dmz
+      from:
+        - outside
+      to:
+        - dmz
+      destination:
+        - dmz-net
+      service:
+        - http
+        - https
+      action: allow
+      log: true
+      ips_profile: enterprise
+    - name: deny-inbound
+      from:
+        - outside
+      to:
+        - inside
+      action: deny
+      log: true
+    - name: deny-all
+      action: deny
+      log: true
+application_groups:
+    - name: risky-apps
+      members:
+        - category:VPN
+        - category:Mining
+        - BitTorrent
+        - eDonkey
+        - Gnutella
+        - TeamViewer
+        - AnyDesk
+        - VNC
+        - RDP
+        - HTTP_Proxy
+        - SOCKS
+        - DoH_DoT
+nat:
+    - name: inside-out
+      from:
+        - inside
+      to:
+        - outside
+      type: masquerade
+routing:
+    - name: default
+      router_id: 192.168.149.254
+      bgp_asn: 65244
+      bgp_networks:
+        - 192.168.151.0/24
+bgp_neighbors:
+    - name: upstream
+      address: 192.168.149.1
+      remote_as: 65534
+      export: dmz-only    # only the DMZ leaves; accepts everything, incl. the default route
+prefix_lists:
+    - name: dmz-only
+      entries:
+        - permit 192.168.151.0/24
+        - deny any
+dhcp_servers:
+    - name: inside.150
+      range: 192.168.150.101-192.168.150.199
+      gateway: 192.168.150.1
+      dns:
+        - 192.168.1.97
+        - 192.168.1.98
+      domain: sboyle.internal
+ips_profiles:
+    - name: enterprise
+      critical: block
+      major: block
+      minor: alert
+      informational: ignore
+decryption_rules:
+    - name: never-decrypt-tagged
+      source:
+        - no-decrypt-hosts
+      action: no-decrypt
+    - name: never-decrypt-home-lan
+      destination:
+        - home-lan
+      action: no-decrypt
+    - name: decrypt-users-web
+      from:
+        - inside
+      to:
+        - outside
+      service:
+        - https
+      action: decrypt
+      profile: enterprise
+decryption_profiles:
+    - name: enterprise
+      bad_certificate: block
+      unsupported: pass
+      pinned: exclude
+decryption_exclusions:
+    - name: test-exclude
+      domains:
+        - www.sjbconsulting.ai
+    - name: github
+      domains:
+        - raw.githubusercontent.com
+    - name: os-updates-and-identity
+      domains:
+        - '*.apple.com'
+        - '*.icloud.com'
+        - '*.mzstatic.com'
+        - '*.windowsupdate.com'
+        - '*.update.microsoft.com'
+        - '*.delivery.mp.microsoft.com'
+        - login.microsoftonline.com
+        - login.live.com
+        - '*.okta.com'
+        - accounts.google.com
+    - name: collaboration-media
+      domains:
+        - '*.zoom.us'
+        - '*.webex.com'
+        - '*.teams.microsoft.com'
+        - '*.skype.com'
+    - name: pinned-apps
+      domains:
+        - '*.dropbox.com'
+        - '*.whatsapp.net'
+        - '*.signal.org'

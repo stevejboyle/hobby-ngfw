@@ -100,7 +100,7 @@ footer.band .inner { padding-block: 14px; justify-content: space-between; font-s
 <main class="inner">
   <div class="intro">
     <h1>Lab topology: inside, DMZ and outside with eBGP</h1>
-    <p class="lead">SJB-OS (AS 65244) peers with the upstream router (AS 65534) on outside and announces only the DMZ. Inside stays private and leaves NATed; the DMZ is routed by its real addresses. Config: <code>examples/lab-dmz-bgp.yaml</code>.</p>
+    <p class="lead">SJB-OS (AS 65244) peers with the upstream router (AS 65534) on outside and announces only the DMZ. Inside stays private behind an outbound allow-list and leaves NATed; the DMZ's web server is routed by its real address. Config: <code>examples/lab-dmz-bgp.yaml</code>; tests: <code>tools/lab-test.sh</code>.</p>
   </div>
 
   <section class="panel diagram" aria-label="Topology diagram">
@@ -109,6 +109,13 @@ footer.band .inner { padding-block: 14px; justify-content: space-between; font-s
       <rect x="340" y="16" width="280" height="74" rx="8" fill="var(--paper)" stroke="var(--navy)" stroke-width="1.5"/>
       <text x="480" y="44" text-anchor="middle" font-size="16" font-weight="600">Upstream router</text>
       <text x="480" y="66" text-anchor="middle" font-size="13" class="mono muted">AS 65534 · 192.168.149.1</text>
+
+      <!-- home LAN behind the upstream router -->
+      <rect x="16" y="16" width="300" height="74" rx="8" fill="var(--paper)" stroke="var(--muted)" stroke-width="1.2"/>
+      <text x="30" y="40" font-size="14" font-weight="600">Home LAN and wifi</text>
+      <text x="30" y="60" font-size="12" class="mono">192.168.1.0/24 · 192.168.11.0/24</text>
+      <text x="30" y="78" font-size="12" class="mono muted">DNS 192.168.1.97, .98</text>
+      <line x1="316" y1="53" x2="340" y2="53" stroke="var(--muted)" stroke-width="2"/>
 
       <!-- outside segment -->
       <line x1="140" y1="150" x2="820" y2="150" stroke="var(--gold)" stroke-width="5" stroke-linecap="round"/>
@@ -157,16 +164,18 @@ footer.band .inner { padding-block: 14px; justify-content: space-between; font-s
       <text x="100" y="466" font-size="16" font-weight="600" class="navy-t">Inside</text>
       <text x="100" y="488" font-size="12.5" class="mono">inside.150 · 192.168.150.1</text>
       <text x="100" y="506" font-size="12.5" class="mono">192.168.150.0/24</text>
-      <text x="100" y="530" font-size="12.5">NATed to 192.168.149.254</text>
-      <text x="100" y="550" font-size="12.5">never announced over BGP</text>
+      <text x="100" y="528" font-size="12.5">client · DHCP .101–.199</text>
+      <text x="100" y="548" font-size="12.5">allow-list out, IPS, decrypted web</text>
+      <text x="100" y="568" font-size="12.5">NATed · never announced over BGP</text>
 
       <!-- dmz zone -->
       <rect x="540" y="438" width="340" height="140" rx="8" fill="var(--gold-soft)" stroke="var(--gold)" stroke-width="1.5"/>
       <text x="560" y="466" font-size="16" font-weight="600" class="gold-t">DMZ</text>
       <text x="560" y="488" font-size="12.5" class="mono">inside.151 · 192.168.151.1</text>
       <text x="560" y="506" font-size="12.5" class="mono">192.168.151.0/24</text>
-      <text x="560" y="530" font-size="12.5">routed by real address, announced</text>
-      <text x="560" y="550" font-size="12.5">web from outside, inspected (IPS)</text>
+      <text x="560" y="528" font-size="12.5">web server (Apache or nginx) · .10</text>
+      <text x="560" y="548" font-size="12.5">web from outside, inspected (IPS)</text>
+      <text x="560" y="568" font-size="12.5">routed by real address, announced</text>
 
       <!-- dmz → inside blocked -->
       <line x1="534" y1="508" x2="430" y2="508" stroke="var(--deny)" stroke-width="2"/>
@@ -187,6 +196,8 @@ footer.band .inner { padding-block: 14px; justify-content: space-between; font-s
           <tr><td class="mono">inside.150</td><td><span class="zone z-inside">inside</span></td><td class="mono">192.168.150.1/24</td></tr>
           <tr><td class="mono">inside.151</td><td><span class="zone z-dmz">dmz</span></td><td class="mono">192.168.151.1/24</td></tr>
           <tr><td class="mono">inside</td><td><span class="zone z-none">trunk</span></td><td>none; VLANs 150 and 151 only</td></tr>
+          <tr><td>inside client</td><td><span class="zone z-inside">inside</span></td><td class="mono">DHCP 192.168.150.101–199</td></tr>
+          <tr><td>DMZ web server</td><td><span class="zone z-dmz">dmz</span></td><td class="mono">192.168.151.10 (assumed)</td></tr>
         </tbody>
       </table></div>
     </section>
@@ -211,25 +222,60 @@ footer.band .inner { padding-block: 14px; justify-content: space-between; font-s
     <div class="tbl"><table>
       <thead><tr><th>Rule</th><th>From</th><th>To</th><th>Match</th><th>Action</th></tr></thead>
       <tbody>
-        <tr><td class="mono">inside-out</td><td><span class="zone z-inside">inside</span></td><td><span class="zone z-outside">outside</span></td><td>source 192.168.150.0/24</td><td><span class="pill allow">allow</span> log</td></tr>
+        <tr><td class="mono">block-quarantined</td><td><span class="zone z-inside">inside</span></td><td>any</td><td>hosts tagged quarantine</td><td><span class="pill deny">deny</span> log</td></tr>
+        <tr><td class="mono">block-risky-apps</td><td><span class="zone z-inside">inside</span></td><td><span class="zone z-outside">outside</span></td><td>risky-apps: VPN, mining, P2P, remote control, proxies, DoH</td><td><span class="pill deny">reset</span> log</td></tr>
+        <tr><td class="mono">dns-to-approved-resolvers</td><td><span class="zone z-inside">inside</span></td><td><span class="zone z-outside">outside</span></td><td>DNS to 192.168.1.97, .98</td><td><span class="pill allow">allow</span> log, IPS</td></tr>
+        <tr><td class="mono">block-other-dns</td><td><span class="zone z-inside">inside</span></td><td><span class="zone z-outside">outside</span></td><td>DNS anywhere else</td><td><span class="pill deny">reset</span> log</td></tr>
+        <tr><td class="mono">web</td><td><span class="zone z-inside">inside</span></td><td><span class="zone z-outside">outside</span></td><td>HTTP, HTTPS</td><td><span class="pill allow">allow</span> log, IPS</td></tr>
+        <tr><td class="mono">time</td><td><span class="zone z-inside">inside</span></td><td><span class="zone z-outside">outside</span></td><td>NTP</td><td><span class="pill allow">allow</span> log, IPS</td></tr>
+        <tr><td class="mono">mail</td><td><span class="zone z-inside">inside</span></td><td><span class="zone z-outside">outside</span></td><td>SMTP 465, 587; IMAPS 993</td><td><span class="pill allow">allow</span> log, IPS</td></tr>
+        <tr><td class="mono">ping-out</td><td><span class="zone z-inside">inside</span></td><td><span class="zone z-outside">outside</span></td><td>ping</td><td><span class="pill allow">allow</span> log</td></tr>
+        <tr><td class="mono">deny-other-outbound</td><td><span class="zone z-inside">inside</span></td><td><span class="zone z-outside">outside</span></td><td>anything else</td><td><span class="pill deny">deny</span> log</td></tr>
         <tr><td class="mono">inside-to-dmz</td><td><span class="zone z-inside">inside</span></td><td><span class="zone z-dmz">dmz</span></td><td>192.168.150.0/24 to 192.168.151.0/24</td><td><span class="pill allow">allow</span> log</td></tr>
-        <tr><td class="mono">dmz-out</td><td><span class="zone z-dmz">dmz</span></td><td><span class="zone z-outside">outside</span></td><td>source 192.168.151.0/24</td><td><span class="pill allow">allow</span> log</td></tr>
         <tr><td class="mono">dmz-to-inside</td><td><span class="zone z-dmz">dmz</span></td><td><span class="zone z-inside">inside</span></td><td>anything</td><td><span class="pill deny">deny</span> log</td></tr>
-        <tr><td class="mono">web-to-dmz</td><td><span class="zone z-outside">outside</span></td><td><span class="zone z-dmz">dmz</span></td><td>to 192.168.151.0/24, tcp 80, 443</td><td><span class="pill allow">allow</span> log, IPS default</td></tr>
+        <tr><td class="mono">dmz-out</td><td><span class="zone z-dmz">dmz</span></td><td><span class="zone z-outside">outside</span></td><td>source 192.168.151.0/24</td><td><span class="pill allow">allow</span> log</td></tr>
+        <tr><td class="mono">web-to-dmz</td><td><span class="zone z-outside">outside</span></td><td><span class="zone z-dmz">dmz</span></td><td>HTTP, HTTPS to 192.168.151.0/24</td><td><span class="pill allow">allow</span> log, IPS</td></tr>
+        <tr><td class="mono">deny-inbound</td><td><span class="zone z-outside">outside</span></td><td><span class="zone z-inside">inside</span></td><td>anything</td><td><span class="pill deny">deny</span> log</td></tr>
         <tr><td class="mono">deny-all</td><td>any</td><td>any</td><td>anything else</td><td><span class="pill deny">deny</span> log</td></tr>
       </tbody>
     </table></div>
-    <p class="lead" style="margin-top:10px">NAT: <span class="mono">inside-out</span> masquerades 192.168.150.0/24 leaving on outside. The DMZ is not NATed.</p>
+    <p class="lead" style="margin-top:10px">IPS is the <span class="mono">enterprise</span> profile: critical and major blocked, minor alerted. NAT: <span class="mono">inside-out</span> masquerades inside leaving on outside; the DMZ is not NATed.</p>
   </section>
 
+  <div class="grid2">
+    <section class="panel">
+      <h2>TLS decryption</h2>
+      <ul>
+        <li>Inside's web to outside is decrypted with the <span class="mono">enterprise</span> profile: bad certificates blocked, pinned apps excluded.</li>
+        <li>Never decrypted: hosts tagged <span class="mono">no-decrypt</span>, anything on the home LAN, and the exclusion lists (OS updates and sign-in, collaboration, pinned apps, GitHub raw, the SJB site).</li>
+        <li>The DMZ is never decrypted, in either direction.</li>
+      </ul>
+    </section>
+    <section class="panel">
+      <h2>DHCP on inside.150</h2>
+      <div class="tbl"><table>
+        <tbody>
+          <tr><th>Range</th><td class="mono">192.168.150.101–199</td></tr>
+          <tr><th>Gateway</th><td class="mono">192.168.150.1</td></tr>
+          <tr><th>DNS</th><td class="mono">192.168.1.97, 192.168.1.98</td></tr>
+          <tr><th>Domain</th><td class="mono">sboyle.internal</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+  </div>
+
   <section class="panel">
-    <h2>Before you load it</h2>
-    <ul>
-      <li>Leave the OVA's <span class="mono">outside_gateway</span> empty: the default route comes from BGP. Deploy (or keep) the OVA's mgmt settings: <span class="mono">mgmt_ip 192.168.1.75/24</span>, <span class="mono">mgmt_gateway 192.168.1.1</span>. The config never changes management.</li>
-      <li>ESXi: set the inside adapter's port group to VLAN 4095 so VLANs 150 and 151 arrive tagged.</li>
-      <li>Upstream router: peer 192.168.149.254 (AS 65244), send it a default route (0.0.0.0/0), and reach 192.168.151.0/24 by the route it learns.</li>
-      <li>In the CLI: <code>load</code>, paste the file, then <code>commit -confirm 5m</code> and confirm once BGP is up (<code>show bgp</code>).</li>
-    </ul>
+    <h2>Testing</h2>
+    <p style="margin-bottom:10px">Copy <code>lab-test.sh</code> to each machine and run it with its role. Every check has a working control beside it, so a failure is evidence and an unreachable lab shows as skipped, not passed.</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Run on</th><th>Command</th><th>What it checks</th></tr></thead>
+      <tbody>
+        <tr><td>inside client</td><td class="mono">./lab-test.sh -r inside</td><td>DHCP lease, the firewall closed but pingable, the DMZ web page, then the whole outbound policy: web, approved DNS, NTP, mail, ping, the allow-list, risky apps, IPS, decryption. Prints its address for <span class="mono">-c</span>.</td></tr>
+        <tr><td>DMZ web server</td><td class="mono">./lab-test.sh -r dmz -c CLIENT</td><td>Its address and gateway, its own web page, the firewall, inside out of reach, outbound open and not decrypted.</td></tr>
+        <tr><td>home LAN or wifi</td><td class="mono">./lab-test.sh -r outside -c CLIENT</td><td>Web to the DMZ allowed and inspected (test signatures), every other port to the DMZ dropped, inside out of reach, the firewall's outside address closed.</td></tr>
+      </tbody>
+    </table></div>
+    <p class="lead" style="margin-top:10px">The web server defaults to 192.168.151.10; pass <span class="mono">-w</span> with its real address. Afterwards: <span class="mono">show log traffic</span>, <span class="mono">show log threat</span>, <span class="mono">show log decryption</span>.</p>
   </section>
 </main>
 

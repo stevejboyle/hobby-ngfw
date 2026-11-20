@@ -24,6 +24,7 @@ import (
 	"github.com/stevejboyle/hobby-ngfw/internal/diff"
 	"github.com/stevejboyle/hobby-ngfw/internal/frr"
 	"github.com/stevejboyle/hobby-ngfw/internal/logs"
+	"github.com/stevejboyle/hobby-ngfw/internal/natips"
 	"github.com/stevejboyle/hobby-ngfw/internal/netdev"
 	"github.com/stevejboyle/hobby-ngfw/internal/nfqueue"
 	"github.com/stevejboyle/hobby-ngfw/internal/nft"
@@ -71,6 +72,9 @@ type Daemon struct {
 	router      routes.Syncer
 	wantRoutes  []routes.Route // static routes of the running config
 	routeStates []routes.State // result of the last sync
+	natIPs      natips.Syncer
+	wantNATIPs  []natips.Addr  // published servers' public addresses
+	natIPStates []natips.State // result of the last sync
 	ips         ipsState
 	dec         decryptState
 	stats       *stats.Store
@@ -124,7 +128,7 @@ type Status struct {
 // New builds a daemon. Call Start before serving.
 func New(st *store.Store, reg *tags.Registry, runner nft.Runner, ct conntrack.Flusher, log *slog.Logger) *Daemon {
 	return &Daemon{store: st, tags: reg, nft: runner, ct: ct, log: log, Now: time.Now, sets: map[string]string{},
-		Queues: func(q ...int) nfqueue.State { return nfqueue.Read("", q...) }, router: routes.Noop{}, nics: nicaddr.Noop{}, host: sysname.Noop{}, netdev: netdev.Noop{}, frr: frr.Noop{}, dhcp: dhcp.Noop{}}
+		Queues: func(q ...int) nfqueue.State { return nfqueue.Read("", q...) }, router: routes.Noop{}, natIPs: natips.Noop{}, nics: nicaddr.Noop{}, host: sysname.Noop{}, netdev: netdev.Noop{}, frr: frr.Noop{}, dhcp: dhcp.Noop{}}
 }
 
 // SetRouter sets how static routes reach the kernel. Call before Start.
@@ -292,14 +296,63 @@ func (d *Daemon) syncFRRLocked() []string {
 // SetNetdev sets how VRFs and VLANs reach the kernel. Call before Start.
 func (d *Daemon) SetNetdev(n netdev.Syncer) { d.netdev = n }
 
-// syncRoutesLocked installs wantRoutes and returns a warning per route that
-// could not be installed yet. Callers hold d.mu.
-func (d *Daemon) syncRoutesLocked() []string {
-	states, err := d.router.Sync(d.wantRoutes)
+// SetNATIPs sets how published servers' public addresses reach their
+// interfaces. Call before Start.
+func (d *Daemon) SetNATIPs(n natips.Syncer) { d.natIPs = n }
+
+// wantedNATIPs lists the public addresses the config's port forwards and
+// static NAT entries publish, one per interface and address.
+func wantedNATIPs(cfg *config.Config) []natips.Addr {
+	var out []natips.Addr
+	seen := map[string]bool{}
+	for _, n := range cfg.NAT {
+		if !n.Published() || n.PublicAddress == "" {
+			continue
+		}
+		ip, ok := cfg.HostAddress(n.PublicAddress)
+		if !ok || seen[n.Interface+" "+ip.String()] {
+			continue
+		}
+		seen[n.Interface+" "+ip.String()] = true
+		out = append(out, natips.Addr{Dev: n.Interface, IP: ip, Name: n.Name})
+	}
+	return out
+}
+
+// NATAddresses reports the published public addresses and whether each is
+// on its interface.
+func (d *Daemon) NATAddresses() []natips.State {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return slices.Clone(d.natIPStates)
+}
+
+// syncNATIPsLocked puts wantNATIPs on their interfaces and returns a
+// warning per address that isn't yet. Callers hold d.mu.
+func (d *Daemon) syncNATIPsLocked() []string {
+	states, err := d.natIPs.Sync(d.wantNATIPs)
 	if err != nil {
-		return []string{fmt.Sprintf("static routes not synced: %v (ngfwd keeps trying)", err)}
+		return []string{fmt.Sprintf("NAT public addresses not synced: %v (ngfwd keeps trying)", err)}
 	}
 	var warn []string
+	for _, s := range states {
+		if !s.Applied {
+			warn = append(warn, fmt.Sprintf("nat %q: public address %s not on %s yet: %s; ngfwd keeps trying", s.Name, s.IP, s.Dev, s.Error))
+		}
+	}
+	d.natIPStates = states
+	return warn
+}
+
+// syncRoutesLocked installs wantRoutes (and the NAT public addresses, which
+// sit on the same interfaces) and returns a warning per route or address
+// that could not be installed yet. Callers hold d.mu.
+func (d *Daemon) syncRoutesLocked() []string {
+	warn := d.syncNATIPsLocked()
+	states, err := d.router.Sync(d.wantRoutes)
+	if err != nil {
+		return append(warn, fmt.Sprintf("static routes not synced: %v (ngfwd keeps trying)", err))
+	}
 	for _, s := range states {
 		if !s.Installed {
 			hop := "via " + s.Gateway
@@ -384,6 +437,7 @@ func (d *Daemon) Start() error {
 	d.wantHost = strings.TrimSpace(cfg.System.Hostname)
 	d.wantNet = wantedNet(cfg)
 	d.wantRoutes = wantedRoutes(cfg)
+	d.wantNATIPs = wantedNATIPs(cfg)
 	d.wantFRR = frr.Compile(cfg)
 	// DHCP: Kea starts at boot from the file the last run wrote; the
 	// periodic pass applies any change once networking (and the firewall's
@@ -669,6 +723,7 @@ func (d *Daemon) commitLocked(data []byte, author, message string, confirm time.
 	d.wantHost = strings.TrimSpace(cfg.System.Hostname)
 	d.wantNet = wantedNet(cfg)
 	d.wantRoutes = wantedRoutes(cfg)
+	d.wantNATIPs = wantedNATIPs(cfg)
 	d.wantFRR = frrRes
 	d.setRunningLocked(cfg)
 	routeWarnings := append(d.syncNetLocked(nicaddr.Commit), d.syncRoutesLocked()...)
@@ -836,6 +891,7 @@ func (d *Daemon) rollbackToNothingLocked() error {
 	d.wantNICs = nil
 	d.wantNet = netdev.Want{}
 	d.wantRoutes = nil
+	d.wantNATIPs = nil
 	d.wantFRR = frr.Compile(empty)
 	d.setRunningLocked(empty)
 	d.syncNetLocked(nicaddr.Commit)

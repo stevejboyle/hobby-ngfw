@@ -31,6 +31,7 @@ import (
 	"github.com/stevejboyle/hobby-ngfw/internal/frr"
 	"github.com/stevejboyle/hobby-ngfw/internal/ips"
 	"github.com/stevejboyle/hobby-ngfw/internal/logs"
+	"github.com/stevejboyle/hobby-ngfw/internal/natips"
 	"github.com/stevejboyle/hobby-ngfw/internal/netdev"
 	"github.com/stevejboyle/hobby-ngfw/internal/nft"
 	"github.com/stevejboyle/hobby-ngfw/internal/nicaddr"
@@ -104,6 +105,7 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 	if ipPath != "" {
 		d.SetRouter(routes.Exec{Path: ipPath, RestoreDefault: restoreDeploymentDefault})
 		d.SetNetdev(netdev.Exec{Path: ipPath})
+		d.SetNATIPs(natips.Exec{Path: ipPath})
 		d.SetNICs(&nicaddr.Networkd{Dir: "/etc/systemd/network", NICs: []string{"inside", "outside"}, HasAddr: nicaddr.IPHasAddr(ipPath)})
 	}
 	if hostnameDir != "" {

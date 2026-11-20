@@ -178,6 +178,7 @@ internal/decrypt/   decryption CA (generate/import/forge), hello parser,
 internal/ips/       IPS: ET Open download (md5-checked) and processing (every rule
                     alert + nfq_set_mark by severity, test sigs 9900001-4), status,
                     EVE alert socket; Suricata itself runs as sjb-ips.service
+internal/natips/    published public addresses on their interfaces (label <dev>:nat)
 internal/routes/    static routes: sync the config's routes into the kernel
                     (`ip route ... proto 222`; ngfwd owns only proto 222)
 internal/sysname/   system.hostname -> the live hostname, /etc/hostname and /etc/hosts
@@ -240,7 +241,16 @@ drops what the rule's profile blocks and sets the denied bit; ngfwd turns
 Suricata's EVE alerts into "ngfw-threat" journal lines (rule and action from
 the connection's ct mark via conntrack -G). Traffic to the firewall itself is fixed policy, not configurable:
 zoned interfaces may ping it and nothing else; unzoned interfaces (mgmt) are
-unfiltered. NAT is masquerade only. A commit (or rollback) that changes the compiled
+unfiltered. NAT (0.9.9-r11): masquerade, port-forward and static (1:1,
+bidirectional by default) entries in one `nat` list. Published servers are
+translated in chain prerouting_nat (the kernel NATs at dstnat whatever
+a NAT chain's priority says, so chain decrypt's tproxy runs at dstnat + 10,
+after it), so rules, App Identification, the IPS and decryption all see the
+server's inside address (rules name it, not the public one); the compiler
+warns when no allow rule lets a published server in. internal/natips puts
+extra public addresses on their interface (label `<dev>:nat`, synced with
+routes). No hairpin NAT yet; the server must be in the arrival interface's
+VRF (conntrack zones). A commit (or rollback) that changes the compiled
 policy flushes conntrack, so established sessions are re-evaluated against
 it; tag registration flushes the host's entries, daemon start flushes all.
 lab/gate-sessions.sh checks this. Rules naming applications allow at most

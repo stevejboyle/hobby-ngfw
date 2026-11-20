@@ -169,7 +169,8 @@ a QEMU boot test of every release with VMware's device models; it also runs
 on Steve's own ESXi lab):
 
 - Commit, rollback and commit-confirmed; zones and rules compiled to
-  nftables; masquerade NAT; a policy change re-evaluates existing
+  nftables; source NAT, port forwarding and 1:1 static NAT (0.9.9-r11) for
+  publishing servers; a policy change re-evaluates existing
   connections.
 - Host tags through a REST API (and XML user-ID messages for existing
   integrations), applied in about 20 ms, no commit needed.

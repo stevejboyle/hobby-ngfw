@@ -122,7 +122,8 @@ IPS, Tags), **Networking** (Interfaces, Routing, DHCP) and **System** (Logs,
 Revisions, Administration).
 
 - **Policy, NAT, Objects, Interfaces:** add, edit, delete and reorder security
-  rules, NAT rules, addresses, address groups (static or tag-based),
+  rules, NAT (port forwarding, static NAT, source NAT, with live connection
+  counts), addresses, address groups (static or tag-based),
   services, zones, interfaces and static routes. Edits go to the candidate config and are
   validated as you save; a bar at the top shows there are uncommitted
   changes, with the diff, Discard and Commit.
@@ -192,6 +193,7 @@ show the same):
 | `show tags [TAG]`, `show interfaces`, `show api-keys` | Registrations, addresses, tag API keys |
 | `show arp [INTERFACE]` | ARP table: which neighbours answered, with their MACs |
 | `show routes [vrf NAME]` | Static routes from the config (installed or not, and why), then the routing tables: default, each VRF, mgmt |
+| `show nat` | NAT entries (port forwards, static NAT, source NAT) with the connections each has translated |
 | `show vrf` | VRFs with their table, interfaces and state |
 | `show bgp`, `show ospf` | BGP neighbors (state, uptime, prefixes) and OSPF neighbors, every VRF |
 | `show rib [vrf NAME]` | The routing table as FRR sees it, with the protocol of each route |
@@ -575,6 +577,100 @@ A route only lets traffic reach a network. The firewall still decides what
 may pass: the network behind an inside router is part of the inside zone,
 but rules that name `inside-net` as their source don't cover it until you
 add an address for it and include it.
+
+## Publishing servers (port forwarding and static NAT)
+
+Inside traffic going out is NATed to the outside address (source NAT,
+`type: masquerade`). To let the internet reach a server behind SJB-OS, add a
+port forward or a static NAT entry to the same `nat` list: on the web UI's
+Security → NAT page (sections **Port forwarding**, **Static NAT** and
+**Source NAT**), in configure mode, or in YAML.
+
+- **Port forward:** a public port (or range) on the arrival interface goes
+  to a port on one inside server. Without a public address it uses the
+  interface's own address, whatever it is (DHCP included).
+- **Static NAT (1:1):** every port of a public address goes to one inside
+  server. It is **bidirectional** unless you turn that off: the server's own
+  outbound connections leave from its public address instead of the shared
+  outside address.
+
+```yaml
+addresses:
+  - name: web-server
+    cidr: 172.16.40.10        # the server's inside address
+  - name: mail-server
+    cidr: 172.16.40.25
+  - name: mail-public
+    cidr: 198.51.100.25       # an extra public address from your provider
+nat:
+  - name: web
+    type: port-forward
+    interface: outside
+    protocol: tcp
+    public_port: "443"        # or a range, e.g. 8000-8010 (same range on the server)
+    server: web-server
+    server_port: "8443"       # optional; default: the public port
+  - name: mail
+    type: static
+    interface: outside
+    public_address: mail-public
+    server: mail-server
+    # bidirectional: "off"    # inbound only
+rules:
+  - name: web-in
+    from: [outside]
+    to: [dmz]
+    destination: [web-server] # the inside address, not the public one
+    service: [web-alt]        # tcp 8443: the server's port
+    action: allow
+    log: true
+    ips_profile: default
+```
+
+In configure mode:
+
+```
+set address web-server cidr 172.16.40.10
+set nat web type port-forward interface outside protocol tcp public-port 443 server web-server server-port 8443
+set nat mail type static interface outside public-address mail-public server mail-server
+```
+
+**NAT only translates; a security rule still has to allow the traffic.**
+SJB-OS translates published traffic as soon as it arrives, so everything
+after that sees the server's real address and port: the security rules, App
+Identification, the IPS, TLS decryption and the logs. Write the allow rule
+with the server's **inside** address and the zone it sits in, and its port on
+the server (8443 above, not 443). A commit warns about a published server
+that no allow rule lets in. Give published servers an IPS profile and
+logging, as `examples/best-practice.yaml` shows.
+
+Public addresses and the server must be address objects naming one host.
+SJB-OS answers for an extra public address on the arrival interface (it adds
+it there when you commit, removes it when you delete the entry, and puts it
+back within about 10 seconds if it goes missing); nothing on the firewall
+itself listens on it. Pings to it reach the firewall and other ports are
+dropped, unless a static NAT entry sends everything to the server. A port
+forward on the interface's own address doesn't catch the extra addresses.
+The management address can't be published.
+
+`show nat` (or the NAT page) lists every entry with the connections it has
+translated, and says if an extra public address isn't on its interface yet.
+To check from outside, run `tools/policy-test.sh -I <public-address>:<port>`
+on a machine on the internet side: the published port should answer and the
+others shouldn't.
+
+Things to know:
+
+- **Same VRF.** The server must be in the VRF of the interface the traffic
+  arrives on; the commit refuses one in another VRF.
+- **Decryption.** A decryption rule that matches published traffic
+  decrypts it, as it would outbound traffic, and visitors then see the
+  SJB-OS decryption CA's certificate, which their devices don't trust. Only
+  useful in a lab; write decryption rules for outbound traffic.
+- **No hairpin yet.** Inside clients reach a published server by its inside
+  address, not its public one.
+- Order matters only among entries of the same kind: `move nat NAME ...`
+  (or the arrows on the NAT page) reorders them.
 
 ## Users and roles
 
@@ -1242,10 +1338,14 @@ unchanged. The full history lives in `/var/lib/ngfw/revisions/`.
   VMware's device models.
 - IPv4 only. The management default route comes only from the deployment
   settings.
+- No hairpin NAT: inside clients reach a published server by its inside
+  address. A published server must be in the same VRF as the interface its
+  traffic arrives on.
 - App Identification rules can't use nDPI's risk scores yet. The IPS has no per-profile
   exceptions yet, and blocks by dropping (no reset).
-- TLS decryption covers outbound connections in the default VRF, with no
-  revocation checking; decrypted web traffic uses HTTP/1.1 where the client
+- TLS decryption is meant for outbound connections in the default VRF (it
+  decrypts published servers' traffic only if a rule says so, and visitors
+  then get certificate warnings), with no revocation checking; decrypted web traffic uses HTTP/1.1 where the client
   allows it.
 - The web UI and tag API certificate is self-signed (`curl -k`).
 - Users are local to the appliance: no LDAP, RADIUS, SAML or OIDC yet. The

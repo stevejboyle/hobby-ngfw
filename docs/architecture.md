@@ -107,7 +107,12 @@ The design below is the target. Phase 1 simplified it on purpose:
   flushes all of them, so existing sessions are re-evaluated.
 - With no committed config, `ngfwd` applies a forward default-deny.
 - The ruleset also has a fixed input chain (zoned interfaces may only ping
-  the firewall) and, when configured, a masquerade NAT chain.
+  the firewall) and, when configured, NAT chains: `prerouting_nat`
+  (port forwards and 1:1 static NAT; the kernel translates at dstnat, and
+  the decryption hand-over runs just after it at dstnat + 10, so
+  everything after translation sees the server's inside address) and `postrouting` (bidirectional static NAT, then
+  masquerade). `internal/natips` puts published public addresses on their
+  interface (label `<dev>:nat`) so SJB-OS answers ARP for them.
 - Packaged as a VMware OVA (see Deployment model above).
 - The web UI (planned for phase 3) was pulled forward. `ngfwd` serves it on
   mgmt :443: plain HTML/JS embedded in the binary, a session-authenticated
@@ -194,7 +199,7 @@ flowchart TB
     store[("/var/lib/ngfw<br/>revisions, tags.json")]
     upg["fwctl upgrade<br/>transient unit: verify, install, health check"]
     subgraph kernel["Kernel"]
-      table["nftables table inet ngfw<br/>input · forward · postrouting NAT"]
+      table["nftables table inet ngfw<br/>input · forward · prerouting/postrouting NAT"]
       dag["dag_#lt;tag#gt; sets<br/>timeout flag"]
       ct["conntrack"]
     end
@@ -355,7 +360,7 @@ flowchart LR
   end
 ```
 
-- **Hand-over:** chain `decrypt` (prerouting, mangle) matches the decryption
+- **Hand-over:** chain `decrypt` (prerouting, dstnat + 10: after destination NAT) matches the decryption
   rules (zones by ingress interface and `fib daddr oifname`, addresses, TCP
   ports) on new connections and tproxies them to tlsd on port 15080, with a
   packet mark carrying the rule's position and the ingress zone's code

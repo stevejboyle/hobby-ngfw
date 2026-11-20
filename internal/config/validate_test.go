@@ -313,3 +313,44 @@ func TestIPSValidation(t *testing.T) {
 		t.Error("unset severities fall back to the default's action")
 	}
 }
+
+func TestTrunkInterfaces(t *testing.T) {
+	c := base()
+	c.Interfaces = append(c.Interfaces,
+		Interface{Name: "eth2"}, // trunk: no zone
+		Interface{Name: "eth2.150", Zone: "users", Address: "10.0.150.1/24"},
+	)
+	if err := c.Validate(); err != nil {
+		t.Fatalf("a trunk carrying a VLAN should be valid: %v", err)
+	}
+	if got := c.Trunks(); len(got) != 1 || got[0] != "eth2" || !c.IsTrunk("eth2") || c.IsTrunk("mgmt0") {
+		t.Errorf("Trunks() = %v", got)
+	}
+	cases := []struct {
+		name string
+		mod  func(c *Config)
+		want string
+	}{
+		{"no zone, no VLANs", func(c *Config) { c.Interfaces = append(c.Interfaces, Interface{Name: "eth3"}) }, "zone required"},
+		{"VLAN without zone", func(c *Config) {
+			c.Interfaces = append(c.Interfaces, Interface{Name: "eth2"}, Interface{Name: "eth2.150"})
+		}, `interfaces[3] "eth2.150": zone required`},
+		{"trunk with address", func(c *Config) {
+			c.Interfaces = append(c.Interfaces, Interface{Name: "eth2", Address: "10.0.9.1/24"}, Interface{Name: "eth2.150", Zone: "users"})
+		}, "takes no address"},
+		{"published on a trunk", func(c *Config) {
+			c.Interfaces = append(c.Interfaces, Interface{Name: "eth2"}, Interface{Name: "eth2.150", Zone: "users"})
+			c.Addresses = append(c.Addresses, Address{Name: "srv", CIDR: "10.0.0.20"})
+			c.NAT = []NATRule{{Name: "n", Type: NATPortForward, Interface: "eth2", Protocol: "tcp", PublicPort: "80", Server: "srv"}}
+		}, "is a trunk"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := base()
+			tc.mod(c)
+			if err := c.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want %q, got %v", tc.want, err)
+			}
+		})
+	}
+}

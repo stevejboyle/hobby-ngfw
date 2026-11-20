@@ -110,6 +110,18 @@ func (c *Config) Validate() error {
 		switch {
 		case isMgmt && in.Zone != "":
 			v.add(p, "management interface must not be in a zone")
+		case !isMgmt && in.Zone == "":
+			// A trunk only: it carries VLAN subinterfaces and drops
+			// everything untagged.
+			_, _, isVLAN := ParseVLAN(in.Name)
+			switch {
+			case isVLAN || !c.HasVLANs(in.Name):
+				v.add(p, "zone required (only the management interface, or a trunk that carries VLAN subinterfaces such as %s.20, has none)", in.Name)
+			case in.Address != "":
+				v.add(p, "a trunk (no zone) carries VLANs only and takes no address; put the address on a VLAN subinterface")
+			case in.VRF != "":
+				v.add(p, "a trunk (no zone) can't be in a VRF")
+			}
 		case !isMgmt && !zones[in.Zone]:
 			v.add(p, "unknown zone %q", in.Zone)
 		}

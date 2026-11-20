@@ -108,6 +108,8 @@ func (v *validator) nat(c *Config, zones, addrs map[string]bool) {
 			v.add(p, "interface %q is the management interface", n.Interface)
 		case !hasInterface(c, n.Interface):
 			v.add(p, "unknown interface %q", n.Interface)
+		case c.IsTrunk(n.Interface):
+			v.add(p, "interface %q is a trunk (no zone): publish on one of its VLAN subinterfaces", n.Interface)
 		}
 
 		server, okServer := c.HostAddress(n.Server)

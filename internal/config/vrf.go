@@ -160,3 +160,36 @@ func NormalizeArea(a string) (string, bool) {
 	}
 	return "", false
 }
+
+// HasVLANs reports whether any configured interface is a VLAN on parent.
+func (c *Config) HasVLANs(parent string) bool {
+	for _, in := range c.Interfaces {
+		if p, _, ok := ParseVLAN(in.Name); ok && p == parent {
+			return true
+		}
+	}
+	return false
+}
+
+// Trunks lists the trunk-only interfaces: no zone, not the management
+// interface. They carry VLAN subinterfaces; untagged traffic on them is
+// dropped.
+func (c *Config) Trunks() []string {
+	var out []string
+	for _, in := range c.Interfaces {
+		if in.Zone == "" && in.Name != c.System.MgmtInterface {
+			out = append(out, in.Name)
+		}
+	}
+	return out
+}
+
+// IsTrunk reports whether iface is a trunk-only interface.
+func (c *Config) IsTrunk(iface string) bool {
+	for _, t := range c.Trunks() {
+		if t == iface {
+			return true
+		}
+	}
+	return false
+}

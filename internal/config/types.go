@@ -200,7 +200,10 @@ type Zone struct {
 	Name string `yaml:"name" json:"name"`
 }
 
-// Interface binds a physical or virtual interface to a zone. A name like
+// Interface binds a physical or virtual interface to a zone. An interface
+// with no zone (other than the management interface) is a trunk: it only
+// carries VLAN subinterfaces, takes no address, and drops untagged traffic.
+// A name like
 // inside.20 is VLAN 20 on inside: ngfwd creates it, puts it in its VRF and
 // gives it its address. An address on inside or outside takes over from the
 // deployment settings (see internal/nicaddr); mgmt's is informational.

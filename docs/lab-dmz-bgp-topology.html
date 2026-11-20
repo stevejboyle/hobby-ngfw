@@ -173,7 +173,7 @@ footer.band .inner { padding-block: 14px; justify-content: space-between; font-s
       <text x="560" y="466" font-size="16" font-weight="600" class="gold-t">DMZ</text>
       <text x="560" y="488" font-size="12.5" class="mono">inside.151 · 192.168.151.1</text>
       <text x="560" y="506" font-size="12.5" class="mono">192.168.151.0/24</text>
-      <text x="560" y="528" font-size="12.5">web server (Apache or nginx) · .10</text>
+      <text x="560" y="528" font-size="12.5">web server 192.168.151.10 (Apache or nginx)</text>
       <text x="560" y="548" font-size="12.5">web from outside, inspected (IPS)</text>
       <text x="560" y="568" font-size="12.5">routed by real address, announced</text>
 
@@ -197,7 +197,7 @@ footer.band .inner { padding-block: 14px; justify-content: space-between; font-s
           <tr><td class="mono">inside.151</td><td><span class="zone z-dmz">dmz</span></td><td class="mono">192.168.151.1/24</td></tr>
           <tr><td class="mono">inside</td><td><span class="zone z-none">trunk</span></td><td>none; VLANs 150 and 151 only</td></tr>
           <tr><td>inside client</td><td><span class="zone z-inside">inside</span></td><td class="mono">DHCP 192.168.150.101–199</td></tr>
-          <tr><td>DMZ web server</td><td><span class="zone z-dmz">dmz</span></td><td class="mono">192.168.151.10 (assumed)</td></tr>
+          <tr><td>DMZ web server</td><td><span class="zone z-dmz">dmz</span></td><td class="mono">192.168.151.10</td></tr>
         </tbody>
       </table></div>
     </section>
@@ -275,7 +275,7 @@ footer.band .inner { padding-block: 14px; justify-content: space-between; font-s
         <tr><td>home LAN or wifi</td><td class="mono">./lab-test.sh -r outside -c CLIENT</td><td>Web to the DMZ allowed and inspected (test signatures), every other port to the DMZ dropped, inside out of reach, the firewall's outside address closed.</td></tr>
       </tbody>
     </table></div>
-    <p class="lead" style="margin-top:10px">The web server defaults to 192.168.151.10; pass <span class="mono">-w</span> with its real address. Afterwards: <span class="mono">show log traffic</span>, <span class="mono">show log threat</span>, <span class="mono">show log decryption</span>.</p>
+    <p class="lead" style="margin-top:10px">The DMZ web server is 192.168.151.10, the script's default. Afterwards: <span class="mono">show log traffic</span>, <span class="mono">show log threat</span>, <span class="mono">show log decryption</span>.</p>
   </section>
 </main>
 

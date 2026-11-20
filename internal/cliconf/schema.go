@@ -148,11 +148,18 @@ var Kinds = []*Kind{
 		{Name: "log", Field: "log", Kind: vBool, Help: "log matches (yes or no)"},
 		{Name: "ips-profile", Field: "ips_profile", Kind: vRef, Refs: ipsProfiles, Fixed: []string{"default"}, Help: "inspect the rule's traffic with the IPS (allow rules); default is built in"},
 	}},
-	{Name: "nat", Key: "nat", Ordered: true, Help: "source NAT rules", Attrs: []Attr{
-		{Name: "from", Field: "from", Kind: vList, Refs: zones, Any: true, Help: "ingress zones"},
-		{Name: "to", Field: "to", Kind: vList, Refs: zones, Any: true, Help: "egress zones"},
-		{Name: "source", Field: "source", Kind: vList, Refs: addrGrps, Any: true, Help: "source addresses and groups"},
-		{Name: "type", Field: "type", Kind: vEnum, Enum: []string{"masquerade"}, Help: "masquerade (only type so far)"},
+	{Name: "nat", Key: "nat", Ordered: true, Help: "NAT: source NAT (masquerade), port forwarding and 1:1 static NAT", Attrs: []Attr{
+		{Name: "type", Field: "type", Kind: vEnum, Enum: []string{"masquerade", "port-forward", "static"}, Help: "masquerade (source NAT), port-forward (a public port to a server) or static (1:1, every port)"},
+		{Name: "from", Field: "from", Kind: vList, Refs: zones, Any: true, Help: "masquerade: ingress zones"},
+		{Name: "to", Field: "to", Kind: vList, Refs: zones, Any: true, Help: "masquerade: egress zones"},
+		{Name: "source", Field: "source", Kind: vList, Refs: addrGrps, Any: true, Help: "masquerade: source addresses and groups"},
+		{Name: "interface", Field: "interface", Kind: vRef, Refs: ifaces, Help: "port-forward, static: where the published traffic arrives (e.g. outside)"},
+		{Name: "public-address", Field: "public_address", Kind: vRef, Refs: addrs, Help: "port-forward, static: address object (one host) the outside uses; port-forward without it uses the interface's own address"},
+		{Name: "protocol", Field: "protocol", Kind: vEnum, Enum: []string{"tcp", "udp"}, Help: "port-forward: tcp or udp"},
+		{Name: "public-port", Field: "public_port", Kind: vStr, Hint: "<port>|<from-to>", Help: "port-forward: the public port or range, e.g. 443 or 8000-8010"},
+		{Name: "server", Field: "server", Kind: vRef, Refs: addrs, Help: "port-forward, static: address object (one host) of the inside server"},
+		{Name: "server-port", Field: "server_port", Kind: vStr, Hint: "<port>", Help: "port-forward: the server's port (default: the public port; a range keeps its ports)"},
+		{Name: "bidirectional", Field: "bidirectional", Kind: vEnum, Enum: []string{"on", "off"}, Help: "static: on (default) sends the server's own outbound traffic from its public address"},
 	}},
 	{Name: "routing", Key: "routing", Help: "BGP/OSPF in a VRF (name it after the VRF, e.g. default)", NameRefs: vrfKeys, NameFixed: []string{"default"}, Attrs: []Attr{
 		{Name: "router-id", Field: "router_id", Kind: vStr, Hint: "<ip>", Help: "router ID, usually one of the firewall's addresses"},

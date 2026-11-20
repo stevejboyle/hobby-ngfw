@@ -44,6 +44,8 @@ const shellHelp = `SJB-OS commands:
   show arp [INTERFACE]        ARP table (IPv4 neighbours), all interfaces or one
   show routes [vrf NAME]      static routes from the config, then the routing
                               tables (forwarding, each VRF, management)
+  show nat                    NAT entries: port forwards, static NAT, source NAT,
+                              with connections translated so far
   show vrf                    VRFs: table, interfaces, whether they're up
   show bgp                    BGP neighbors in every VRF: state, uptime, prefixes
   show ospf                   OSPF neighbors in every VRF
@@ -585,6 +587,8 @@ func showCmd(args []string) error {
 		}
 		fmt.Println("\nmanagement table (vrf mgmt):")
 		return runTool("ip", "-4", "route", "show", "vrf", "vrf-mgmt")
+	case what == "nat" && len(rest) == 0:
+		return showNAT()
 	case what == "vrf" && len(rest) == 0:
 		return showVRF()
 	case (what == "bgp" || what == "ospf") && len(rest) == 0:

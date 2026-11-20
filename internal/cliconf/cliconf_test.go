@@ -278,3 +278,22 @@ func TestDecryptionInConfigureMode(t *testing.T) {
 		t.Fatalf("profile completion: %q", got)
 	}
 }
+
+func TestSetPublishedNAT(t *testing.T) {
+	m := lab(t)
+	run(t, m,
+		"set address web-srv cidr 10.10.1.80",
+		"set address web-pub cidr 198.51.100.80",
+		"set nat web-in type port-forward interface veth-inet protocol tcp public-port 443 server web-srv server-port 8443",
+		"set nat web-1to1 type static interface veth-inet public-address web-pub server web-srv bidirectional off",
+	)
+	valid(t, m)
+	c, _ := m.Config()
+	n := c.NAT[len(c.NAT)-2]
+	if n.Type != "port-forward" || n.Interface != "veth-inet" || n.PublicPort != "443" || n.ServerPort != "8443" || n.Server != "web-srv" {
+		t.Fatalf("port forward: %+v", n)
+	}
+	if s := c.NAT[len(c.NAT)-1]; s.PublicAddress != "web-pub" || s.BidirectionalOn() {
+		t.Fatalf("static: %+v", s)
+	}
+}

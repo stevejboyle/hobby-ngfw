@@ -87,6 +87,7 @@ var commandNeeds = []struct {
 	{"show interfaces", func(m *me) bool { return m.can("monitoring", "view") }},
 	{"show arp", func(m *me) bool { return m.can("monitoring", "view") }},
 	{"show routes", func(m *me) bool { return m.can("monitoring", "view") }},
+	{"show nat", func(m *me) bool { return m.can("monitoring", "view") }},
 	{"show vrf", func(m *me) bool { return m.can("monitoring", "view") }},
 	{"show bgp", func(m *me) bool { return m.can("monitoring", "view") }},
 	{"show ospf", func(m *me) bool { return m.can("monitoring", "view") }},

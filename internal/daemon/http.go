@@ -161,6 +161,9 @@ func (d *Daemon) mgmtRoutes() []mgmtRoute {
 		{"GET /v1/routes", view(accounts.Monitoring), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
 			reply(w, d.Routes(), nil)
 		}},
+		{"GET /v1/nat", view(accounts.Monitoring), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			reply(w, d.NAT(), nil)
+		}},
 		{"GET /v1/routing/{what}", view(accounts.Monitoring), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
 			v, err := d.RoutingStatus(r.PathValue("what"), r.URL.Query().Get("vrf"))
 			reply(w, v, err)

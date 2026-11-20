@@ -374,30 +374,34 @@ function listSection(spec) {
       cfg[spec.key].splice(i, 1);
       await saveCandidate(cfg, `${cap(spec.singular)} ${items[i].name} deleted from the candidate.`);
     }, "Delete");
-  const move = async (i, d) => {
+  // spec.filter shows part of the list (the NAT page splits one list by
+  // type); moves swap with the neighbour in the same view.
+  const shown = items.map((_, i) => i).filter((i) => !spec.filter || spec.filter(items[i]));
+  const move = async (k, d) => {
     const cfg = clone(state.cand);
     const arr = cfg[spec.key];
-    [arr[i], arr[i + d]] = [arr[i + d], arr[i]];
+    const [a, b] = [shown[k], shown[k + d]];
+    [arr[a], arr[b]] = [arr[b], arr[a]];
     try { await saveCandidate(cfg, "Order changed in the candidate."); } catch (e) { toast(e.message); }
   };
 
   const head = h("tr", {}, spec.orderable ? h("th", { class: "num" }, "#") : null,
     spec.columns.map(([t]) => h("th", {}, t)), h("th", {}, h("span", { class: "hidden" }, "Actions")));
-  const rows = items.map((it, i) => h("tr", {},
-    spec.orderable ? h("td", { class: "num" }, i + 1) : null,
+  const rows = shown.map((i, k) => { const it = items[i]; return h("tr", {},
+    spec.orderable ? h("td", { class: "num" }, k + 1) : null,
     spec.columns.map(([, f]) => h("td", {}, f(it))),
     h("td", { class: "actions" }, ro ? null : [
       spec.orderable ? [
-        h("button", { class: "icon", title: "Move up", "aria-label": `Move ${it.name} up`, disabled: i === 0, onclick: () => move(i, -1) }, "↑"),
-        h("button", { class: "icon", title: "Move down", "aria-label": `Move ${it.name} down`, disabled: i === items.length - 1, onclick: () => move(i, 1) }, "↓"),
+        h("button", { class: "icon", title: "Move up", "aria-label": `Move ${it.name} up`, disabled: k === 0, onclick: () => move(k, -1) }, "↑"),
+        h("button", { class: "icon", title: "Move down", "aria-label": `Move ${it.name} down`, disabled: k === shown.length - 1, onclick: () => move(k, 1) }, "↓"),
       ] : null,
       h("button", { class: "link", onclick: () => edit(i) }, "Edit"),
-      h("button", { class: "link danger", onclick: () => del(i) }, "Delete")])));
+      h("button", { class: "link danger", onclick: () => del(i) }, "Delete")])); });
 
   return h("section", { class: "panel" },
     h("div", { class: "page-head" }, h("h2", {}, spec.title), spec.note ? h("span", { class: "muted small" }, spec.note) : null,
       h("span", { class: "spacer" }), ro ? h("span", { class: "muted small" }, "view only") : h("button", { class: "primary", onclick: () => edit(-1) }, `Add ${spec.singular}`)),
-    items.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, head), h("tbody", {}, rows)))
+    shown.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, head), h("tbody", {}, rows)))
       : h("p", { class: "empty" }, `No ${spec.title.toLowerCase()} yet.`));
 }
 
@@ -517,23 +521,93 @@ const ruleSpec = () => ({
   },
 });
 
-const natSpec = () => ({
-  key: "nat", title: "NAT rules", singular: "NAT rule", orderable: true,
-  note: "Source NAT: traffic leaving through the egress zone takes that interface's address.",
-  blank: () => ({ name: "", from: [], to: [], source: [], type: "masquerade" }),
+// NAT: one ordered list, shown as three sections by type. live is GET nat
+// (counters, whether public addresses are on their interfaces).
+const hostNames = () => state.cand.addresses.filter((a) => /^[0-9.]+(\/32)?$/.test(a.cidr)).map((a) => a.name);
+const natIfaces = () => state.cand.interfaces.filter((i) => i.name !== state.cand.system.mgmt_interface).map((i) => i.name);
+const addrOf = (n) => (state.cand.addresses.find((a) => a.name === n) || {}).cidr || "";
+const natLive = (live, r) => (live || []).find((e) => e.name === r.name) || {};
+const hitCount = (n) => (n === null || n === undefined ? "–" : String(n));
+const publicCell = (live, r) => {
+  if (!r.public_address) return h("span", { class: "muted" }, `${r.interface} address`);
+  const l = natLive(live, r);
+  return h("span", {}, h("strong", {}, r.public_address), " ", h("span", { class: "mono muted" }, addrOf(r.public_address)),
+    l.address_applied === false ? h("span", { class: "badge-threat", title: l.address_error || "" }, "not on the interface yet") : null);
+};
+const serverCell = (r) => h("span", {}, h("strong", {}, r.server), " ", h("span", { class: "mono muted" }, addrOf(r.server)));
+
+const portForwardSpec = (live) => ({
+  key: "nat", title: "Port forwarding", singular: "port forward", orderable: true,
+  filter: (r) => r.type === "port-forward",
+  note: "A public port to an inside server. Translation only: add a security rule that allows the server's inside address.",
+  blank: () => ({ name: "", type: "port-forward", interface: "outside", public_address: "", protocol: "tcp", public_port: "", server: "", server_port: "" }),
   columns: [
-    ["Name", (r) => h("strong", {}, r.name)], ["From", (r) => chips(r.from)], ["To", (r) => chips(r.to)],
-    ["Source", (r) => chips(r.source)], ["Type", (r) => r.type],
+    ["Name", (r) => h("strong", {}, r.name)], ["Interface", (r) => r.interface], ["Public", (r) => publicCell(live, r)],
+    ["Port", (r) => h("span", { class: "mono" }, `${r.protocol}/${r.public_port}`)], ["Server", serverCell],
+    ["Server port", (r) => h("span", { class: "mono" }, r.server_port || r.public_port)],
+    ["Connections", (r) => hitCount(natLive(live, r).hits)],
   ],
   form: (r) => {
     const f = {
       name: textField("Name", r.name, { required: true }),
-      type: selectField("Type", r.type, ["masquerade"], { hint: "Only masquerade for now" }),
+      iface: selectField("Interface", r.interface, natIfaces(), { hint: "Where the traffic arrives, usually outside" }),
+      pub: selectField("Public address", r.public_address || "", [{ value: "", label: "(the interface's own address)" }, ...hostNames()],
+        { hint: "Or an address object (one host): SJB-OS answers for it on the interface" }),
+      proto: selectField("Protocol", r.protocol || "tcp", ["tcp", "udp"]),
+      port: textField("Public port", r.public_port, { required: true, placeholder: "443 or 8000-8010" }),
+      server: selectField("Server", r.server, hostNames(), { hint: "Address object of the inside server (one host)" }),
+      sport: textField("Server port", r.server_port, { placeholder: "same as the public port", hint: "A range keeps its ports" }),
+    };
+    return form(Object.values(f), () => ({
+      name: f.name.get(), type: "port-forward", interface: f.iface.get(), public_address: f.pub.get(), protocol: f.proto.get(),
+      public_port: f.port.get(), server: f.server.get(), server_port: f.sport.get(),
+    }));
+  },
+});
+
+const staticNatSpec = (live) => ({
+  key: "nat", title: "Static NAT", singular: "static NAT", orderable: true,
+  filter: (r) => r.type === "static",
+  note: "1:1: every port of a public address goes to one inside server. Translation only: add a security rule that allows the server.",
+  blank: () => ({ name: "", type: "static", interface: "outside", public_address: "", server: "", bidirectional: "" }),
+  columns: [
+    ["Name", (r) => h("strong", {}, r.name)], ["Interface", (r) => r.interface], ["Public", (r) => publicCell(live, r)],
+    ["Server", serverCell], ["Bidirectional", (r) => (r.bidirectional === "off" ? "off" : "on")],
+    ["In", (r) => hitCount(natLive(live, r).hits)],
+    ["Out", (r) => (r.bidirectional === "off" ? "–" : hitCount(natLive(live, r).out_hits))],
+  ],
+  form: (r) => {
+    const f = {
+      name: textField("Name", r.name, { required: true }),
+      iface: selectField("Interface", r.interface, natIfaces(), { hint: "Where the traffic arrives, usually outside" }),
+      pub: selectField("Public address", r.public_address, hostNames(), { hint: "Address object (one host); SJB-OS answers for it on the interface" }),
+      server: selectField("Server", r.server, hostNames(), { hint: "Address object of the inside server (one host)" }),
+      bidi: checkField("Bidirectional: the server's own outbound traffic leaves from the public address", r.bidirectional !== "off"),
+    };
+    return form(Object.values(f), () => ({
+      name: f.name.get(), type: "static", interface: f.iface.get(), public_address: f.pub.get(), server: f.server.get(),
+      bidirectional: f.bidi.get() ? "" : "off",
+    }));
+  },
+});
+
+const natSpec = (live) => ({
+  key: "nat", title: "Source NAT", singular: "source NAT rule", orderable: true,
+  filter: (r) => r.type === "masquerade",
+  note: "Traffic leaving through the egress zone takes that interface's address.",
+  blank: () => ({ name: "", from: [], to: [], source: [], type: "masquerade" }),
+  columns: [
+    ["Name", (r) => h("strong", {}, r.name)], ["From", (r) => chips(r.from)], ["To", (r) => chips(r.to)],
+    ["Source", (r) => chips(r.source)], ["Type", (r) => r.type], ["Connections", (r) => hitCount(natLive(live, r).hits)],
+  ],
+  form: (r) => {
+    const f = {
+      name: textField("Name", r.name, { required: true }),
       from: multiField("From zones", r.from, zoneNames()),
       to: multiField("To zones", r.to, zoneNames()),
       source: multiField("Source", r.source, addrNames()),
     };
-    return form(Object.values(f), () => ({ name: f.name.get(), from: f.from.get(), to: f.to.get(), source: f.source.get(), type: f.type.get() }));
+    return form(Object.values(f), () => ({ name: f.name.get(), from: f.from.get(), to: f.to.get(), source: f.source.get(), type: "masquerade" }));
   },
 });
 
@@ -910,7 +984,11 @@ async function previewRuleset() {
   } catch (e) { toast(e.message); }
 }
 
-const pageNat = () => h("div", {}, h("div", { class: "page-head" }, h("h1", {}, "NAT")), listSection(natSpec()));
+async function pageNat() {
+  const live = can("monitoring", "view") ? await api("GET", "nat").catch(() => []) : [];
+  return h("div", {}, h("div", { class: "page-head" }, h("h1", {}, "NAT"), h("span", { class: "spacer" }), h("button", { onclick: route }, "Refresh")),
+    listSection(portForwardSpec(live)), listSection(staticNatSpec(live)), listSection(natSpec(live)));
+}
 const pageObjects = async () => {
   await appCatalog();
   return h("div", {}, h("div", { class: "page-head" }, h("h1", {}, "Objects")),

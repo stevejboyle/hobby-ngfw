@@ -98,6 +98,9 @@ func New(d *daemon.Daemon, o Options) http.Handler {
 	mux.HandleFunc("GET /ui/api/routes", s.auth(accounts.NeedView(accounts.Monitoring), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		reply(w, s.d.Routes(), nil)
 	}))
+	mux.HandleFunc("GET /ui/api/nat", s.auth(accounts.NeedView(accounts.Monitoring), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+		reply(w, s.d.NAT(), nil)
+	}))
 	mux.HandleFunc("GET /ui/api/logs/{kind}", s.auth(accounts.NeedView(accounts.Monitoring), s.logs))
 	mux.HandleFunc("GET /ui/api/logs/traffic/columns", s.auth(accounts.NeedView(accounts.Monitoring), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		reply(w, map[string]any{"columns": logs.TrafficColumns, "default": logs.DefaultTrafficColumns,

@@ -119,7 +119,7 @@ var Kinds = []*Kind{
 		{Name: "table", Field: "table", Kind: vInt, Hint: "<1001-65535>", Help: "routing table number (leave unset to pick one)"},
 	}},
 	{Name: "interface", Key: "interfaces", Help: "interfaces, zones and VLAN subinterfaces (inside.20 = VLAN 20 on inside)", Attrs: []Attr{
-		{Name: "zone", Field: "zone", Kind: vRef, Refs: zones, Help: "zone the interface belongs to"},
+		{Name: "zone", Field: "zone", Kind: vRef, Refs: zones, Help: "zone the interface belongs to (delete it on inside or outside to make a trunk that only carries VLANs)"},
 		{Name: "address", Field: "address", Kind: vStr, Hint: "<cidr>", Help: "e.g. 192.168.1.20/24; applied at commit, replacing the deployment's on inside/outside (informational on mgmt)"},
 		{Name: "vrf", Field: "vrf", Kind: vRef, Refs: vrfKeys, Fixed: []string{"default"}, Help: "VRF (VLAN subinterfaces only)"},
 	}},

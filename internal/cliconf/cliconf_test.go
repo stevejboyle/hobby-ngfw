@@ -297,3 +297,17 @@ func TestSetPublishedNAT(t *testing.T) {
 		t.Fatalf("static: %+v", s)
 	}
 }
+
+func TestTrunkInConfigureMode(t *testing.T) {
+	m := lab(t)
+	run(t, m,
+		"set interface veth-users.150 zone users address 10.10.150.1/24",
+		"delete interface veth-users address",
+		"delete interface veth-users zone",
+	)
+	valid(t, m)
+	c, _ := m.Config()
+	if !c.IsTrunk("veth-users") {
+		t.Fatalf("veth-users should be a trunk: %+v", c.Interfaces)
+	}
+}

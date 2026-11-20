@@ -698,17 +698,19 @@ function devState(devs, name) {
 function nicState(nics, i) {
   const s = (nics || []).find((n) => n.name === i.name);
   if (!s) return h("span", { class: "muted" }, "deployment settings");
+  if (s.address === "trunk-only") return s.applied ? h("span", { class: "action-allow" }, "trunk: no address, untagged dropped")
+    : [h("span", { class: "action-deny" }, "trunk not applied yet"), s.error ? h("div", { class: "muted small" }, s.error) : null];
   return s.applied ? h("span", { class: "action-allow" }, "address applied")
     : [h("span", { class: "action-deny" }, "address not applied"), s.error ? h("div", { class: "muted small" }, s.error) : null];
 }
 
 const ifaceSpec = (devs, nics) => ({
   key: "interfaces", title: "Interfaces", singular: "interface",
-  note: "The NICs are mgmt, inside and outside; mgmt has no zone and is never filtered. Add a VLAN as parent.id, e.g. inside.20 (the port group must trunk VLANs: VLAN 4095).",
+  note: "The NICs are mgmt, inside and outside; mgmt has no zone and is never filtered. Add a VLAN as parent.id, e.g. inside.20 (the port group must trunk VLANs: VLAN 4095). A NIC with no zone that carries VLANs is a trunk: no address, untagged traffic dropped.",
   blank: () => ({ name: "", zone: "", address: "", vrf: "" }),
   columns: [
     ["Name", (i) => h("strong", {}, i.name)],
-    ["Zone", (i) => i.zone || h("span", { class: "muted" }, "none")],
+    ["Zone", (i) => i.zone || h("span", { class: "muted" }, i.name === state.cand.system.mgmt_interface ? "none" : "trunk (VLANs only)")],
     ["VRF", (i) => (i.name === state.cand.system.mgmt_interface ? "mgmt" : i.vrf || h("span", { class: "muted" }, "default"))],
     ["Address", (i) => h("span", { class: "mono" }, i.address || "")],
     ["State", (i) => (isVLAN(i.name) ? devState(devs, i.name) : nicState(nics, i))],
@@ -716,7 +718,8 @@ const ifaceSpec = (devs, nics) => ({
   form: (i) => {
     const f = {
       name: textField("Name", i.name, { required: true, placeholder: "inside or inside.20" }),
-      zone: selectField("Zone", i.zone || "", [{ value: "", label: "(none)" }, ...zoneNames()]),
+      zone: selectField("Zone", i.zone || "", [{ value: "", label: "(none: mgmt, or a trunk carrying VLANs)" }, ...zoneNames()],
+        { hint: "No zone on inside or outside makes it a trunk: VLAN subinterfaces only, no address, untagged traffic dropped" }),
       vrf: selectField("VRF", i.vrf || "", [{ value: "", label: "default" }, ...vrfNames()], { hint: "VLAN subinterfaces only" }),
       address: textField("Address", i.address, { placeholder: "10.20.0.1/24", hint: "Applied at commit, replacing the deployment's address or DHCP on inside/outside; leave empty to keep the deployment's. Informational on mgmt." }),
     };
@@ -1239,7 +1242,7 @@ function liveNetwork(nics, arp) {
     h("div", { class: "page-head" }, h("h2", {}, "Live: addresses and ARP"), h("span", { class: "spacer" }), h("button", { onclick: route }, "Refresh")),
     nics.length ? h("div", { class: "table-wrap" }, h("table", {},
       h("thead", {}, h("tr", {}, h("th", {}, "Interface"), h("th", {}, "Configured address"), h("th", {}, "State"))),
-      h("tbody", {}, nics.map((n) => h("tr", {}, h("td", {}, n.name), h("td", { class: "mono" }, n.address),
+      h("tbody", {}, nics.map((n) => h("tr", {}, h("td", {}, n.name), h("td", { class: "mono" }, n.address === "trunk-only" ? "none (trunk)" : n.address),
         h("td", {}, n.applied ? h("span", { class: "action-allow" }, "applied") : h("span", { class: "action-deny" }, "not applied: " + (n.error || "")))))))) : null,
     arp.err ? h("p", { class: "muted" }, arp.err)
       : arp.ok.length ? h("div", { class: "table-wrap" }, h("table", {},

@@ -28,6 +28,7 @@ import (
 	"github.com/stevejboyle/hobby-ngfw/internal/config"
 	"github.com/stevejboyle/hobby-ngfw/internal/lineedit"
 	"github.com/stevejboyle/hobby-ngfw/internal/logs"
+	"github.com/stevejboyle/hobby-ngfw/internal/nicaddr"
 )
 
 const shellHelp = `SJB-OS commands:
@@ -968,7 +969,11 @@ func showInterfaces() error {
 		if !s.Applied {
 			st = "NOT APPLIED: " + s.Error
 		}
-		fmt.Fprintf(tw, "  %s\t%s\t%s\n", s.Name, s.Address, st)
+		addr := s.Address
+		if addr == nicaddr.TrunkOnly {
+			addr = "none (trunk: VLANs only, untagged dropped)"
+		}
+		fmt.Fprintf(tw, "  %s\t%s\t%s\n", s.Name, addr, st)
 	}
 	return nil
 }

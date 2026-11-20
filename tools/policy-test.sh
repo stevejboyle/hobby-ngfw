@@ -275,10 +275,14 @@ allow_list() {
 		*) result "DNS to $r blocked" ok "no answer, approved resolvers work" ;;
 		esac
 	done
-	case $(tcp 1.1.1.1 853) in
-	open) result "DNS over TLS (1.1.1.1:853) blocked" FAIL "OPEN: encrypted DNS gets around the approved resolvers" ;;
-	*) result "DNS over TLS (1.1.1.1:853) blocked" ok "no connection" ;;
-	esac
+	if [[ $CONTROL != yes ]]; then
+		result "DNS over TLS (1.1.1.1:853) blocked" skip "HTTPS control failed; inconclusive"
+	else
+		case $(tcp 1.1.1.1 853) in
+		open) result "DNS over TLS (1.1.1.1:853) blocked" FAIL "OPEN: encrypted DNS gets around the approved resolvers" ;;
+		*) result "DNS over TLS (1.1.1.1:853) blocked" ok "no connection, other HTTPS works" ;;
+		esac
+	fi
 }
 
 risky() {

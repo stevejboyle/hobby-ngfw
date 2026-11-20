@@ -110,6 +110,7 @@ func Compile(cfg *config.Config, tags map[string][]TagEntry) (*Result, error) {
 		b.WriteString("\t\tct state established,related accept\n")
 	}
 	b.WriteString("\t\tct state invalid drop\n")
+	c.trunkDrop(&b, true)
 	for i, r := range cfg.Rules {
 		for _, above := range cfg.Rules[:i] {
 			if covers(above, r) {
@@ -707,6 +708,7 @@ func (c *compiler) input(b *strings.Builder) {
 	b.WriteString("\t\tiif lo accept\n")
 	b.WriteString("\t\tct state established,related accept\n")
 	b.WriteString("\t\tct state invalid drop\n")
+	c.trunkDrop(b, false)
 	// Routing protocols reach the firewall only from what's configured:
 	// BGP from each neighbor's address, OSPF on each OSPF interface.
 	for _, n := range c.cfg.BGPNeighbors {
@@ -921,4 +923,23 @@ func (c *compiler) ips(b *strings.Builder) {
 	fmt.Fprintf(b, "\t\tct mark and 0xffff0000 vmap { %s }\n", strings.Join(vm, ", "))
 	fmt.Fprintf(b, "\t\tmeta mark set meta mark and 0x%08x\n", ^uint32(IPSMarkMask))
 	b.WriteString("\t}\n")
+}
+
+// trunkDrop drops untagged traffic on trunk-only interfaces (no zone, not
+// management): their VLAN subinterfaces carry the traffic, and the trunk
+// itself is in no zone, so nothing may enter or leave on it untagged. A
+// VLAN's packets show its own name (inside.150), never the trunk's.
+// forward also drops traffic routed out of a trunk.
+func (c *compiler) trunkDrop(b *strings.Builder, forward bool) {
+	var ts []string
+	for _, t := range c.cfg.Trunks() {
+		ts = append(ts, fmt.Sprintf("%q", t))
+	}
+	if len(ts) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "\t\tiifname %s counter drop comment \"trunk: untagged\"\n", set(ts))
+	if forward {
+		fmt.Fprintf(b, "\t\toifname %s counter drop comment \"trunk: untagged\"\n", set(ts))
+	}
 }

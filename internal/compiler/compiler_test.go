@@ -389,3 +389,29 @@ func TestIPS(t *testing.T) {
 		t.Fatalf("IPS off: %v\n%s", res.Warnings, res.Ruleset)
 	}
 }
+
+func TestTrunkDropsUntagged(t *testing.T) {
+	c := base()
+	c.Interfaces = []config.Interface{
+		{Name: "eth1"}, // trunk
+		{Name: "eth1.150", Zone: "a"},
+		{Name: "eth2", Zone: "b"},
+	}
+	c.Rules = []config.Rule{{Name: "all", Action: "allow"}}
+	res := compile(t, c)
+	fwd := res.Ruleset[strings.Index(res.Ruleset, "chain forward {"):]
+	in := res.Ruleset[strings.Index(res.Ruleset, "chain input {"):]
+	drop := `iifname "eth1" counter drop comment "trunk: untagged"`
+	if i, r := strings.Index(fwd, drop), strings.Index(fwd, `rule:all`); i < 0 || i > r {
+		t.Errorf("forward: want %q before the rules:\n%s", drop, fwd)
+	}
+	if !strings.Contains(fwd, `oifname "eth1" counter drop comment "trunk: untagged"`) {
+		t.Errorf("forward: no drop for traffic routed out of the trunk:\n%s", fwd)
+	}
+	if !strings.Contains(in[:strings.Index(in, "\n\t}")], drop) {
+		t.Errorf("input: want %q:\n%s", drop, in)
+	}
+	if strings.Contains(compile(t, base()).Ruleset, "trunk: untagged") {
+		t.Error("no trunks: no trunk drops")
+	}
+}

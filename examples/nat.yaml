@@ -1,0 +1,125 @@
+# Publishing inside servers: port forwarding and 1:1 static NAT.
+#
+# A NAT entry only translates; a security rule still has to allow the
+# traffic. Rules see the translated connection, so they name the server's
+# inside address and the zone it sits in (here dmz), not the public address.
+# The server must be in the same VRF as the interface the traffic arrives on.
+system:
+  hostname: sjb-fw
+  mgmt_interface: mgmt
+
+zones:
+  - name: inside
+  - name: outside
+  - name: dmz
+
+interfaces:
+  - name: mgmt
+  - name: inside
+    zone: inside
+    address: 10.10.1.1/24
+  - name: outside
+    zone: outside           # address from DHCP or the deployment settings
+  - name: inside.40
+    zone: dmz
+    address: 172.16.40.1/24
+
+addresses:
+  - name: inside-net
+    cidr: 10.10.1.0/24
+  - name: web-server
+    cidr: 172.16.40.10
+  - name: mail-server
+    cidr: 172.16.40.25
+  - name: game-server
+    cidr: 172.16.40.30
+  # Extra public addresses: SJB-OS answers for them on outside.
+  - name: mail-public
+    cidr: 198.51.100.25
+  - name: game-public
+    cidr: 198.51.100.30
+
+services:
+  - name: https
+    protocol: tcp
+    ports: "443"
+  - name: web-alt
+    protocol: tcp
+    ports: "8443"
+  - name: smtp
+    protocol: tcp
+    ports: "25"
+  - name: game
+    protocol: udp
+    ports: 27015-27020
+
+nat:
+  # The outside interface's own address, port 443, to the web server's 8443.
+  - name: web
+    type: port-forward
+    interface: outside
+    protocol: tcp
+    public_port: "443"
+    server: web-server
+    server_port: "8443"
+  # A port range on an extra public address, same ports on the server.
+  - name: game
+    type: port-forward
+    interface: outside
+    public_address: game-public
+    protocol: udp
+    public_port: 27015-27020
+    server: game-server
+  # 1:1: every port of mail-public goes to the mail server, and the mail
+  # server's own outbound traffic leaves from mail-public (bidirectional,
+  # the default).
+  - name: mail
+    type: static
+    interface: outside
+    public_address: mail-public
+    server: mail-server
+  # Everything else from inside leaves from the outside address.
+  - name: inside-out
+    type: masquerade
+    from: [inside, dmz]
+    to: [outside]
+
+ips_profiles:
+  - name: strict
+    critical: block
+    major: block
+    minor: block
+    informational: alert
+
+rules:
+  - name: web-in
+    from: [outside]
+    to: [dmz]
+    destination: [web-server]
+    service: [web-alt]
+    action: allow
+    log: true
+    ips_profile: strict
+  - name: game-in
+    from: [outside]
+    to: [dmz]
+    destination: [game-server]
+    service: [game]
+    action: allow
+    log: true
+  - name: mail-in
+    from: [outside]
+    to: [dmz]
+    destination: [mail-server]
+    service: [smtp]
+    action: allow
+    log: true
+    ips_profile: default
+  - name: inside-out
+    from: [inside, dmz]
+    to: [outside]
+    action: allow
+  - name: deny-inbound
+    from: [outside]
+    action: deny
+    log: true

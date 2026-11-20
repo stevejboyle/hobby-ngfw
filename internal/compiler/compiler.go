@@ -144,16 +144,7 @@ func Compile(cfg *config.Config, tags map[string][]TagEntry) (*Result, error) {
 		return nil, err
 	}
 
-	if len(cfg.NAT) > 0 {
-		b.WriteString("\n\tchain postrouting {\n")
-		b.WriteString("\t\ttype nat hook postrouting priority srcnat; policy accept;\n")
-		for _, n := range cfg.NAT {
-			for _, l := range c.nat(n) {
-				b.WriteString("\t\t" + l + "\n")
-			}
-		}
-		b.WriteString("\t}\n")
-	}
+	c.natChains(&b)
 	b.WriteString("}\n")
 
 	c.res.Ruleset = b.String()
@@ -747,33 +738,6 @@ func (c *compiler) input(b *strings.Builder) {
 		fmt.Fprintf(b, "\t\t%s counter drop comment \"zone-to-firewall\"\n", z)
 	}
 	b.WriteString("\t}\n")
-}
-
-func (c *compiler) nat(n config.NATRule) []string {
-	froms := c.ingress(n.From, true)
-	to, ok2 := c.zoneExpr("oifname", n.To)
-	if len(froms) == 0 || !ok2 {
-		c.res.Warnings = append(c.res.Warnings,
-			fmt.Sprintf("nat %q skipped: a zone it uses has no interfaces", n.Name))
-		return []string{fmt.Sprintf("# nat %q skipped: zone without interfaces", n.Name)}
-	}
-	var lines []string
-	for _, from := range froms {
-		for _, src := range c.addrTerms(n.Source) {
-			parts := []string{}
-			for _, p := range []string{from, to} {
-				if p != "" {
-					parts = append(parts, p)
-				}
-			}
-			if src != nil {
-				parts = append(parts, src.expr("saddr"))
-			}
-			parts = append(parts, "counter masquerade", fmt.Sprintf("comment \"nat:%s\"", n.Name))
-			lines = append(lines, strings.Join(parts, " "))
-		}
-	}
-	return lines
 }
 
 type verdict struct{ match, verdict string }

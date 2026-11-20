@@ -10,7 +10,9 @@ import (
 // TLS decryption in the data path.
 //
 // A new TCP connection that a decryption rule decrypts is handed to tlsd
-// (nftables tproxy, in chain decrypt at prerouting). tlsd reads the
+// (nftables tproxy, in chain decrypt at prerouting, after destination NAT
+// so a published server's connection is matched by its inside address).
+// tlsd reads the
 // client's TLS hello and then sends the connection's bytes, decrypted or
 // not, through the cleartext loop: out of a network namespace, in on
 // LoopClientIf, through the forward chain like routed traffic (the
@@ -36,6 +38,10 @@ const (
 	DecryptRuleMask  = 0x000000ff
 	DecryptZoneShift = 8
 	DecryptZoneMask  = 0x00003f00
+
+	// DecryptPriority runs chain decrypt's hand-over after destination NAT
+	// (dstnat, -100), still before routing as tproxy needs.
+	DecryptPriority = "dstnat + 10"
 
 	// DecryptPort is where tlsd listens for handed-over connections.
 	DecryptPort = 15080
@@ -120,7 +126,7 @@ func (c *compiler) decrypt(b *strings.Builder) error {
 	b.WriteString("\t}\n")
 
 	b.WriteString("\n\tchain decrypt {\n")
-	b.WriteString("\t\ttype filter hook prerouting priority mangle; policy accept;\n")
+	fmt.Fprintf(b, "\t\ttype filter hook prerouting priority %s; policy accept;\n", DecryptPriority)
 	// The loop first: its packets carry the client's addresses and ports,
 	// so they would match tlsd's own client socket below.
 	fmt.Fprintf(b, "\t\tiifname { %q, %q } accept\n", LoopClientIf, LoopServerIf)

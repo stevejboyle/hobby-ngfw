@@ -406,6 +406,26 @@ destination 172.17.0.0/16 next-vrf lab-b`.
 
 - VLANs go on inside or outside (not mgmt), IDs 1-4094; the port group must
   trunk VLANs (VLAN ID 4095 in vSphere).
+- **Trunks (0.9.10-r02):** when inside or outside only carries VLANs, give
+  it no zone and no address (`delete interface inside zone`, or
+  `- name: inside` alone in YAML). It becomes a trunk: SJB-OS drops
+  everything untagged on it, to the firewall and through it, whatever the
+  rules say, and takes the deployment's address (`inside_ip`, or DHCP) off
+  it; put it back in a zone and the deployment's settings return. A trunk
+  needs at least one VLAN subinterface, can't be in a VRF or publish a NAT
+  entry, and shows as "trunk" on the Interfaces page and in
+  `show interfaces`.
+
+  ```yaml
+  interfaces:
+    - name: inside          # the trunk: VLANs only
+    - name: inside.150
+      zone: inside
+      address: 192.168.150.1/24
+    - name: inside.151
+      zone: dmz
+      address: 192.168.151.1/24
+  ```
 - Only VLAN subinterfaces join VRFs in this release; the inside and outside
   NICs stay in the default VRF, where first boot configured them.
 - Each VRF gets its own conntrack zone, so the same addresses in two VRFs

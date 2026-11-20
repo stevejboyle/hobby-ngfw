@@ -239,7 +239,12 @@ packets to Suricata (NFQUEUE 2-3, bypass), which only marks packets with the
 signature severity (packet mark bits 24-27); chain ips_enforce (filter + 20)
 drops what the rule's profile blocks and sets the denied bit; ngfwd turns
 Suricata's EVE alerts into "ngfw-threat" journal lines (rule and action from
-the connection's ct mark via conntrack -G). Traffic to the firewall itself is fixed policy, not configurable:
+the connection's ct mark via conntrack -G). Trunks (0.9.10-r02): a non-mgmt interface with no zone must carry VLAN
+subinterfaces and has no address; the compiler drops untagged traffic on it
+in forward (in and out) and input, and nicaddr gives it an override with no
+address (TrunkOnly). Never let a zoneless data interface exist otherwise:
+the input chain leaves unzoned interfaces unfiltered (that is mgmt's rule).
+Traffic to the firewall itself is fixed policy, not configurable:
 zoned interfaces may ping it and nothing else; unzoned interfaces (mgmt) are
 unfiltered. NAT (0.9.10-r01): masquerade, port-forward and static (1:1,
 bidirectional by default) entries in one `nat` list. Published servers are

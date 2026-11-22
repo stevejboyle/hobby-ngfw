@@ -165,6 +165,7 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 		Log:        log,
 	}
 	d.SetLogForwarder(fwd)
+	d.SetVersion(installedVersion())
 	defer fwd.Close()
 	// Users and roles: one password per user for SSH, the console and the
 	// web UI; every change goes to the Unix login and the user database

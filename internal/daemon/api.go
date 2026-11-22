@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/netip"
 	"os"
@@ -37,8 +38,14 @@ func LoadKeys(path string) ([]APIKey, error) {
 		return nil, err
 	}
 	defer f.Close()
+	return ParseKeys(f, path)
+}
+
+// ParseKeys reads key file lines ("<name> <scopes> <key>"); name labels
+// errors.
+func ParseKeys(r io.Reader, name string) ([]APIKey, error) {
 	var keys []APIKey
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(r)
 	for line := 1; sc.Scan(); line++ {
 		text := strings.TrimSpace(sc.Text())
 		if text == "" || strings.HasPrefix(text, "#") {
@@ -46,21 +53,31 @@ func LoadKeys(path string) ([]APIKey, error) {
 		}
 		fields := strings.Fields(text)
 		if len(fields) != 3 {
-			return nil, fmt.Errorf("%s:%d: want \"<name> <scopes> <key>\"", path, line)
+			return nil, fmt.Errorf("%s:%d: want \"<name> <scopes> <key>\"", name, line)
 		}
 		if len(fields[2]) < 24 {
-			return nil, fmt.Errorf("%s:%d: key for %q is shorter than 24 characters", path, line, fields[0])
+			return nil, fmt.Errorf("%s:%d: key for %q is shorter than 24 characters", name, line, fields[0])
 		}
 		k := APIKey{Name: fields[0], Key: fields[2], Scopes: map[string]bool{}}
 		for _, s := range strings.Split(fields[1], ",") {
 			if s != ScopeTagsRead && s != ScopeTagsWrite {
-				return nil, fmt.Errorf("%s:%d: unknown scope %q", path, line, s)
+				return nil, fmt.Errorf("%s:%d: unknown scope %q", name, line, s)
 			}
 			k.Scopes[s] = true
 		}
 		keys = append(keys, k)
 	}
 	return keys, sc.Err()
+}
+
+// setAPIKeys replaces the keys the tag API accepts (a restore).
+func (d *Daemon) setAPIKeys(keys []APIKey) { d.apiKeys.Store(&keys) }
+
+func (d *Daemon) currentAPIKeys() []APIKey {
+	if k := d.apiKeys.Load(); k != nil {
+		return *k
+	}
+	return nil
 }
 
 func findKey(keys []APIKey, presented string) *APIKey {
@@ -81,6 +98,7 @@ func findKey(keys []APIKey, presented string) *APIKey {
 // XML user-ID messages (uid-message register/unregister) at /api/, the
 // format many NAC, SOAR and EDR integrations already send.
 func (d *Daemon) APIHandler(keys []APIKey) http.Handler {
+	d.setAPIKeys(keys)
 	mux := http.NewServeMux()
 	wrap := func(scope string, h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +106,7 @@ func (d *Daemon) APIHandler(keys []APIKey) http.Handler {
 			if b, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
 				presented = b
 			}
-			k := findKey(keys, presented)
+			k := findKey(d.currentAPIKeys(), presented)
 			if k == nil {
 				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 				return

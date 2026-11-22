@@ -100,6 +100,8 @@ type Daemon struct {
 	accounts    *accounts.Store // nil: no access control (tests, development)
 	logs        logs.Reader
 	apiKeysFile string
+	apiKeys     atomic.Pointer[[]APIKey] // what the tag API accepts
+	version     string                   // SJB-OS version
 }
 
 type pending struct {

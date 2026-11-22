@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
+	"github.com/stevejboyle/hobby-ngfw/internal/backup"
 	"github.com/stevejboyle/hobby-ngfw/internal/logs"
 	"github.com/stevejboyle/hobby-ngfw/internal/netdev"
 	"github.com/stevejboyle/hobby-ngfw/internal/nicaddr"
@@ -251,6 +252,35 @@ func (d *Daemon) mgmtRoutes() []mgmtRoute {
 			n, err := d.ClearDecryptionLearned(c.Author())
 			reply(w, map[string]int{"cleared": n}, err)
 		}},
+		{"POST /v1/backup/export", accounts.ConfigView, func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			var req struct {
+				Accounts   bool   `json:"accounts"`
+				Passphrase string `json:"passphrase"`
+			}
+			if !decode(w, r, &req) {
+				return
+			}
+			v, err := d.ExportBackup(c, req.Accounts, req.Passphrase)
+			reply(w, v, err)
+		}},
+		{"POST /v1/backup/inspect", accounts.ConfigView, func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			var req struct {
+				Data string `json:"data"`
+			}
+			if !decodeLimit(w, r, &req, backup.MaxSize*2) {
+				return
+			}
+			v, err := d.InspectBackup(c, []byte(req.Data))
+			reply(w, v, err)
+		}},
+		{"POST /v1/backup/restore", accounts.ConfigEdit, func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			var req RestoreRequest
+			if !decodeLimit(w, r, &req, backup.MaxSize*2) {
+				return
+			}
+			v, err := d.RestoreBackup(c, req)
+			reply(w, v, err)
+		}},
 		{"GET /v1/logforwarding", view(accounts.Logging), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
 			reply(w, d.LogForwarding(), nil)
 		}},
@@ -488,7 +518,12 @@ func parseIP(s string, tagList []string) (netip.Addr, error) {
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
-	dec := json.NewDecoder(io.LimitReader(r.Body, maxBody))
+	return decodeLimit(w, r, v, maxBody)
+}
+
+// decodeLimit is decode with a body limit of n bytes.
+func decodeLimit(w http.ResponseWriter, r *http.Request, v any, n int64) bool {
+	dec := json.NewDecoder(io.LimitReader(r.Body, n))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil && !errors.Is(err, io.EOF) {
 		fail(w, fmt.Errorf("%w: bad JSON: %v", ErrInvalid, err))

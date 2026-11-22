@@ -42,11 +42,12 @@ type Exec struct {
 	Group  string // may use ngfwd's management socket
 	KeyDir string // authorized keys, one file per user (sshd's AuthorizedKeysFile)
 	Passwd string // /etc/passwd
+	Shadow string // /etc/shadow (password hashes, for backups)
 }
 
 // DefaultExec is the appliance layout.
 func DefaultExec() *Exec {
-	return &Exec{Shell: "/usr/lib/sjb-os/login-shell", Group: "sjbadm", KeyDir: "/etc/ssh/sjb-keys", Passwd: "/etc/passwd"}
+	return &Exec{Shell: "/usr/lib/sjb-os/login-shell", Group: "sjbadm", KeyDir: "/etc/ssh/sjb-keys", Passwd: "/etc/passwd", Shadow: "/etc/shadow"}
 }
 
 func run(name string, args ...string) error {

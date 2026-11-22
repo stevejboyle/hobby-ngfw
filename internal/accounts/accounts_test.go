@@ -24,10 +24,11 @@ type fakeSys struct {
 	ended    []string
 	resets   []string
 	failPW   bool
+	hashes   map[string]string // crypt hashes (HashSystem)
 }
 
 func newFakeSys() *fakeSys {
-	return &fakeSys{accounts: map[string]bool{}, foreign: map[string]bool{"daemon2": true}, pw: map[string]string{}, keys: map[string][]string{}}
+	return &fakeSys{accounts: map[string]bool{}, foreign: map[string]bool{"daemon2": true}, pw: map[string]string{}, keys: map[string][]string{}, hashes: map[string]string{}}
 }
 
 func (f *fakeSys) Lookup(n string) (bool, bool) {
@@ -57,6 +58,12 @@ func (f *fakeSys) SetPassword(n, pw string) error {
 		return errors.New("chpasswd failed")
 	}
 	f.pw[n] = pw
+	f.hashes[n] = "$y$j9T$fake$" + strings.ReplaceAll(pw, " ", "_")
+	return nil
+}
+func (f *fakeSys) ShadowHash(n string) (string, error) { return f.hashes[n], nil }
+func (f *fakeSys) SetPasswordHash(n, h string) error {
+	f.hashes[n] = h
 	return nil
 }
 func (f *fakeSys) Terminate(n string)     { f.ended = append(f.ended, n) }

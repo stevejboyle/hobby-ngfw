@@ -30,6 +30,7 @@ import (
 	"github.com/stevejboyle/hobby-ngfw/internal/dhcp"
 	"github.com/stevejboyle/hobby-ngfw/internal/frr"
 	"github.com/stevejboyle/hobby-ngfw/internal/ips"
+	"github.com/stevejboyle/hobby-ngfw/internal/logfwd"
 	"github.com/stevejboyle/hobby-ngfw/internal/logs"
 	"github.com/stevejboyle/hobby-ngfw/internal/natips"
 	"github.com/stevejboyle/hobby-ngfw/internal/netdev"
@@ -92,6 +93,16 @@ type uiOpts struct {
 	devHTTP, unixAccounts                        bool
 }
 
+// installedVersion is the SJB-OS version for log messages ("" off the
+// appliance).
+func installedVersion() string {
+	b, err := os.ReadFile("/etc/ngfw-version")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
 func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey, nftPath, ctPath, bootstrap string, ui uiOpts) error {
 	st, err := store.Open(stateDir)
 	if err != nil {
@@ -144,6 +155,17 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 		d.SetDecrypt(decrypt.Exec{Binary: tlsdPath, Socket: tlsdSocket}, decryptCA, decryptPolicy)
 		go d.RunDecryptHealth(context.Background())
 	}
+	// Log forwarding to syslog servers (a SIEM): one journal follower,
+	// started only while the running config has log servers.
+	fwd := &logfwd.Forwarder{
+		Journal:    logs.Journal{ZoneOf: d.ZoneOf, RuleName: d.RuleName},
+		Source:     logfwd.Journalctl(journalctlPath),
+		CursorFile: logfwd.CursorPath(stateDir),
+		Version:    installedVersion(),
+		Log:        log,
+	}
+	d.SetLogForwarder(fwd)
+	defer fwd.Close()
 	// Users and roles: one password per user for SSH, the console and the
 	// web UI; every change goes to the Unix login and the user database
 	// together.

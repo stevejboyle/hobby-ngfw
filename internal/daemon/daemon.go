@@ -77,6 +77,7 @@ type Daemon struct {
 	natIPStates []natips.State // result of the last sync
 	ips         ipsState
 	dec         decryptState
+	logfwd      LogForwarder
 	stats       *stats.Store
 	statsRoot   string
 	// policy is the running config's ruleset without tag set elements: a
@@ -456,7 +457,8 @@ func (d *Daemon) Start() error {
 	d.ips.built = "\x00"
 	warns = append(warns, d.syncFRRLocked()...)
 	warns = append(warns, d.syncIPSLocked()...)
-	for _, w := range append(warns, d.syncDecryptLocked(true)...) {
+	warns = append(warns, d.syncDecryptLocked(true)...)
+	for _, w := range append(warns, d.syncLogFwdLocked()...) {
 		d.log.Warn(w)
 	}
 	// Flows set up while ngfwd was down (possibly with no ruleset) must be
@@ -737,6 +739,7 @@ func (d *Daemon) commitLocked(data []byte, author, message string, confirm time.
 	routeWarnings = append(routeWarnings, d.syncDHCPLocked(true)...)
 	routeWarnings = append(routeWarnings, d.syncIPSLocked()...)
 	routeWarnings = append(routeWarnings, d.syncDecryptLocked(true)...)
+	routeWarnings = append(routeWarnings, d.syncLogFwdLocked()...)
 
 	out := &CommitResult{Revision: rev, Warnings: append(append(res.Warnings, warnings...), routeWarnings...)}
 	if confirm > 0 {
@@ -906,6 +909,7 @@ func (d *Daemon) rollbackToNothingLocked() error {
 	d.syncDHCPLocked(true)
 	d.syncIPSLocked()
 	d.syncDecryptLocked(true)
+	d.syncLogFwdLocked()
 	return nil
 }
 

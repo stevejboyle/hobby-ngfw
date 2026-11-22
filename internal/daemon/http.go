@@ -251,6 +251,18 @@ func (d *Daemon) mgmtRoutes() []mgmtRoute {
 			n, err := d.ClearDecryptionLearned(c.Author())
 			reply(w, map[string]int{"cleared": n}, err)
 		}},
+		{"GET /v1/logforwarding", view(accounts.Logging), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			reply(w, d.LogForwarding(), nil)
+		}},
+		{"POST /v1/logforwarding/test", change(accounts.Logging), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			var req struct {
+				Name string `json:"name"`
+			}
+			if !decode(w, r, &req) {
+				return
+			}
+			reply(w, map[string]bool{"sent": true}, d.TestLogServer(c, req.Name))
+		}},
 		{"GET /v1/dhcp", view(accounts.DHCP), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
 			reply(w, d.DHCP(), nil)
 		}},

@@ -1002,8 +1002,8 @@ grep -q '^<134>1 .* sjb-os - TRAFFIC - {"log":"traffic".*"rule":"boot-test-fwd"'
 	fail "tls sink: $(tail -c 400 "$SINK/tls.log" 2>/dev/null) / $(cli_run show log-forwarding)"
 grep -q 'CEF:0|SJB Consulting|SJB-OS|[^|]*|traffic-start|.*cs1=boot-test-fwd' "$SINK/tcp.log" 2>/dev/null &&
 	pass "the same line reaches the TCP server as CEF" || fail "tcp sink: $(tail -c 400 "$SINK/tcp.log" 2>/dev/null)"
-grep -q 'msg=commit\|"message":"commit"' "$SINK/udp.log" 2>/dev/null && ! grep -q boot-test-fwd "$SINK/udp.log" &&
-	pass "the UDP server gets system lines (the commit) and no traffic" || fail "udp sink: $(tail -c 400 "$SINK/udp.log" 2>/dev/null)"
+grep -q ' sjb-os - SYSTEM - {"log":"system"' "$SINK/udp.log" 2>/dev/null && ! grep -q -e boot-test-fwd -e ' TRAFFIC - ' "$SINK/udp.log" &&
+	pass "the UDP server gets system lines and no traffic" || fail "udp sink: $(tail -c 400 "$SINK/udp.log" 2>/dev/null)"
 grep -q '"source":"sshd"' "$SINK/tls.log" 2>/dev/null && pass "sshd logins are forwarded as system log lines" || fail "no sshd lines at the TLS server"
 lf=$(cli_run show log-forwarding)
 [[ $lf == *"following the journal"* && $lf =~ bt-siem[^$'\n']*connected ]] && pass "show log-forwarding: following the journal, bt-siem connected" || fail "show log-forwarding: $lf"
@@ -1032,7 +1032,7 @@ bk=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no
 [[ $bk == *"config and accounts, encrypted"* && $bk == *"-----END SJB-OS BACKUP-----"* ]] && pass "request backup export accounts: an encrypted, armoured backup" || fail "backup export: ${bk:0:300}"
 script=$'configure\ndelete log-server bt-udp\ncommit -m "boot test: before restore"\nexit\nrequest backup restore config accounts\n'"$bk"$'\n'"$BKPASS"$'\nexit\n'
 out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
-[[ $out == *"now the candidate"* && $out == *"+  - name: bt-udp"* && $out == *"Users: "*"not changed admin"* && $out == *"commit -m"* ]] &&
+[[ $out == *"now the candidate"* && $out =~ $'\n'"+"[[:space:]]+"- name: bt-udp" && $out == *"Users: "*"not changed admin"* && $out == *"commit -m"* ]] &&
 	pass "request backup restore: config into the candidate (bt-udp back in the diff), accounts restored, admin unchanged" || fail "restore: ${out: -800}"
 [[ $(cli_run show running) != *bt-udp* ]] && pass "restore didn't touch the running config before a commit" || fail "running changed by restore"
 commit=$(ui -d '{"message":"boot test: restore","confirm_minutes":5}' "$UI/ui/api/commit")

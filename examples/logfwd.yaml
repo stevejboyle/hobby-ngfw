@@ -1,0 +1,53 @@
+# Log forwarding to a SIEM: the appliance's three networks, one logged
+# rule, and three syslog servers. The first is the usual setup: TLS on
+# 6514 with JSON bodies, reached over the management network.
+system:
+  hostname: sjb-fw
+  mgmt_interface: mgmt
+
+zones:
+  - name: inside
+  - name: outside
+
+interfaces:
+  - name: mgmt
+  - name: inside
+    zone: inside
+  - name: outside
+    zone: outside
+
+rules:
+  - name: inside-out
+    from: [inside]
+    to: [outside]
+    action: allow
+    log: true
+
+nat:
+  - name: outbound
+    type: masquerade
+    from: [inside]
+    to: [outside]
+
+log_servers:
+  # Every log, TLS (port 6514), JSON, via the management VRF; the
+  # certificate is checked against the system's trusted roots and the name.
+  - name: siem
+    address: 192.168.1.50
+    server_name: siem.example.net
+
+  # Threats only, as CEF over plain TCP, to a collector on port 1514.
+  - name: soc-collector
+    address: 192.168.1.51
+    port: 1514
+    transport: tcp
+    format: cef
+    types: [threat]
+
+  # System events over UDP to a log host on the inside network.
+  - name: loghost
+    address: 10.0.0.5
+    transport: udp
+    types: [system]
+    vrf: default
+    facility: local5

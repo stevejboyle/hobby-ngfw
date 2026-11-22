@@ -41,7 +41,7 @@ qemu-system-x86_64 -m 4096 -smp 2 -cpu max -display none -serial "file:$LOG" \
 	-netdev user,id=outside,net=10.98.0.0/24 \
 	-device vmxnet3,netdev=outside,addr=0x12 &
 QEMU=$!
-trap 'kill $QEMU 2>/dev/null; rm -rf "$WORK"' EXIT
+trap 'kill $QEMU ${SINK_PID:-} 2>/dev/null; rm -rf "$WORK"' EXIT
 
 # The console's ready line.
 READY='SJB-OS ready'
@@ -975,6 +975,75 @@ for _ in $(seq 10); do [[ $(root_run systemctl is-active sjb-tlsd) != active ]] 
 script=$'configure\ndelete system decryption\ndelete decryption-rule dec\ndelete decryption-exclusion boot-bank\ndelete rule dec-out\ndelete service tls\ndelete interface dc1\ndelete interface dc2\ndelete zone dcli\ndelete zone dsrv\ncommit -m "boot test: decryption cleanup"\nexit\nexit\n'
 retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
 root_run 'ip netns pids dcs | xargs -r kill; ip netns del dcc; ip netns del dcs; ip link del dc1; ip link del dc2; rm -rf /run/systemd/system/sjb-tlsd.service.d; systemctl daemon-reload' >/dev/null 2>&1
+
+# --- log forwarding to a SIEM -----------------------------------------------------
+# A syslog sink on this host, which QEMU's user network shows the appliance as
+# 10.0.2.2 on mgmt: TLS (the default: port 6514's stand-in 16514, JSON, the
+# management VRF), TCP with CEF, and UDP. The CA goes in on one line, as an
+# operator would paste it into configure mode.
+SINK=$WORK/sink
+mkdir -p "$SINK"
+(cd "$WORK" && openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout lca.key -out lca.crt \
+	-subj "/CN=boot test log CA" -days 2 2>/dev/null &&
+	openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout siem.key -out siem.csr -subj "/CN=siem.lab" 2>/dev/null &&
+	printf 'subjectAltName=DNS:siem.lab\nextendedKeyUsage=serverAuth\n' >siem.ext &&
+	openssl x509 -req -in siem.csr -CA lca.crt -CAkey lca.key -CAcreateserial -days 2 -extfile siem.ext -out siem.crt 2>/dev/null)
+python3 -I lab/syslog-sink.py "$SINK" 15514 15515 16514 "$WORK/siem.crt" "$WORK/siem.key" &
+SINK_PID=$!
+sleep 1
+ca1=$(tr '\n' ' ' <"$WORK/lca.crt")
+script=$'configure\nset log-server bt-siem address 10.0.2.2 port 16514 server-name siem.lab ca "'"$ca1"$'"\nset log-server bt-cef address 10.0.2.2 port 15515 transport tcp format cef type traffic\nset log-server bt-udp address 10.0.2.2 port 15514 transport udp type system\ncommit -m "boot test: log forwarding"\nexit\nexit\n'
+out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
+[[ $out == *"committed revision"* ]] && pass "log servers committed in configure mode (TLS with a pasted CA, TCP CEF, UDP)" || fail "log servers: ${out: -400}"
+root_run "echo 'ngfw boot-test-fwd allow IN=inside OUT=outside SRC=10.10.1.98 DST=192.0.2.9 LEN=60 PROTO=TCP SPT=40405 DPT=443 SYN' > /dev/kmsg"
+for _ in $(seq 30); do grep -q boot-test-fwd "$SINK/tls.log" 2>/dev/null && grep -q boot-test-fwd "$SINK/tcp.log" 2>/dev/null && break; sleep 1; done
+grep -q '^<134>1 .* sjb-os - TRAFFIC - {"log":"traffic".*"rule":"boot-test-fwd"' "$SINK/tls.log" 2>/dev/null &&
+	pass "a kernel traffic line reaches the TLS server over mgmt as RFC 5424 JSON (certificate checked against the pasted CA)" ||
+	fail "tls sink: $(tail -c 400 "$SINK/tls.log" 2>/dev/null) / $(cli_run show log-forwarding)"
+grep -q 'CEF:0|SJB Consulting|SJB-OS|[^|]*|traffic-start|.*cs1=boot-test-fwd' "$SINK/tcp.log" 2>/dev/null &&
+	pass "the same line reaches the TCP server as CEF" || fail "tcp sink: $(tail -c 400 "$SINK/tcp.log" 2>/dev/null)"
+grep -q 'msg=commit\|"message":"commit"' "$SINK/udp.log" 2>/dev/null && ! grep -q boot-test-fwd "$SINK/udp.log" &&
+	pass "the UDP server gets system lines (the commit) and no traffic" || fail "udp sink: $(tail -c 400 "$SINK/udp.log" 2>/dev/null)"
+grep -q '"source":"sshd"' "$SINK/tls.log" 2>/dev/null && pass "sshd logins are forwarded as system log lines" || fail "no sshd lines at the TLS server"
+lf=$(cli_run show log-forwarding)
+[[ $lf == *"following the journal"* && $lf =~ bt-siem[^$'\n']*connected ]] && pass "show log-forwarding: following the journal, bt-siem connected" || fail "show log-forwarding: $lf"
+lj=$(ui "$UI/ui/api/logforwarding")
+[[ $lj == *'"name":"bt-siem"'* && $lj == *'"state":"connected"'* ]] && pass "web UI log forwarding status" || fail "ui logforwarding: ${lj:0:300}"
+script=$'request log-forwarding test bt-siem\nexit\n'
+retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
+for _ in $(seq 10); do grep -q 'border check passed' "$SINK/tls.log" 2>/dev/null && break; sleep 1; done
+grep -q 'border check passed' "$SINK/tls.log" && pass "request log-forwarding test reaches the server" || fail "no test message"
+# ngfwd restarts resume from the journal cursor; nothing is lost in between.
+root_run systemctl restart ngfwd
+sleep 3
+root_run "logger -t bt-check 'written after the restart'" # not a system-log unit: must not be forwarded
+root_run "echo 'ngfw boot-test-after allow IN=inside OUT=outside SRC=10.10.1.98 DST=192.0.2.9 LEN=60 PROTO=TCP SPT=40406 DPT=443 SYN' > /dev/kmsg"
+for _ in $(seq 30); do grep -q boot-test-after "$SINK/tls.log" 2>/dev/null && break; sleep 1; done
+[[ $(root_run cat /var/lib/ngfw/logfwd.cursor) == s=* ]] && grep -q boot-test-after "$SINK/tls.log" && ! grep -q 'written after the restart' "$SINK/tls.log" &&
+	pass "after an ngfwd restart forwarding resumes from the saved journal cursor; other programs' lines stay home" ||
+	fail "after restart: cursor=$(root_run cat /var/lib/ngfw/logfwd.cursor 2>&1 | head -c 80) $(cli_run show log-forwarding)"
+login=$(curl -sk -c "$JAR" -H 'Content-Type: application/json' -d "{\"user\":\"$ADMIN\",\"password\":\"$PW\"}" "$UI/ui/api/login")
+CSRF=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("csrf",""))' <<<"$login" 2>/dev/null)
+
+# --- backup and restore -----------------------------------------------------------
+BKPASS='boot test backup passphrase'
+script=$'request backup export accounts\n'"$BKPASS"$'\n'"$BKPASS"$'\nexit\n'
+bk=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>/dev/null | sed 's/^.*> //' | sed -n '/^SJB-OS backup/,/END SJB-OS/p')
+[[ $bk == *"config and accounts, encrypted"* && $bk == *"-----END SJB-OS BACKUP-----"* ]] && pass "request backup export accounts: an encrypted, armoured backup" || fail "backup export: ${bk:0:300}"
+script=$'configure\ndelete log-server bt-udp\ncommit -m "boot test: before restore"\nexit\nrequest backup restore config accounts\n'"$bk"$'\n'"$BKPASS"$'\nexit\n'
+out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
+[[ $out == *"now the candidate"* && $out == *"+  - name: bt-udp"* && $out == *"Users: "*"not changed admin"* && $out == *"commit -m"* ]] &&
+	pass "request backup restore: config into the candidate (bt-udp back in the diff), accounts restored, admin unchanged" || fail "restore: ${out: -800}"
+[[ $(cli_run show running) != *bt-udp* ]] && pass "restore didn't touch the running config before a commit" || fail "running changed by restore"
+commit=$(ui -d '{"message":"boot test: restore","confirm_minutes":5}' "$UI/ui/api/commit")
+confirm=$(ui -d '{}' -w '%{http_code}' -o /dev/null "$UI/ui/api/confirm")
+[[ $commit == *confirm_by* && $confirm == 200 && $(cli_run show running) == *bt-udp* ]] && pass "restored config committed with confirm and confirmed" || fail "restore commit: $commit $confirm"
+wb=$(ui -d '{"accounts":false,"passphrase":""}' "$UI/ui/api/backup/export")
+[[ $wb == *'"file_name":"sjb-os-'* && $wb == *'BEGIN SJB-OS BACKUP'* ]] && pass "web UI backup export" || fail "ui backup: ${wb:0:200}"
+script=$'configure\ndelete log-server bt-siem\ndelete log-server bt-cef\ndelete log-server bt-udp\ncommit -m "boot test: log forwarding cleanup"\nexit\nexit\n'
+retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
+[[ $(cli_run show log-forwarding) == *"no log servers"* ]] && pass "log servers removed" || fail "log servers still there"
+kill $SINK_PID 2>/dev/null
 
 # --- hostname: a commit renames the appliance ------------------------------------
 oldhn=$(root_run hostname)

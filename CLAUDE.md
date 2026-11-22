@@ -189,6 +189,10 @@ internal/cliconf/   configure mode: schema of objects/attributes, set/delete/
 internal/lineedit/  the CLI's line editor (raw mode via stty, Tab, ?, history)
 internal/logs/      traffic (kernel "ngfw <rule> <action>" lines) and system
                     (ngfwd/sshd/upgrade) logs, read from the journal
+internal/logfwd/    log forwarding: journal follower (cursor in /var/lib/ngfw),
+                    RFC 5424 over UDP/TCP/TLS, JSON or CEF, a queue per server
+internal/backup/    backup files: armoured text, AES-256-GCM when they hold
+                    accounts; restores go through the candidate
 internal/upgrade/   signed upgrade bundles: build, verify, apply, auto-restore,
                     rollback (run by `fwctl upgrade`; a rollback re-commits
                     the config running at the upgrade if it changed since)
@@ -275,7 +279,13 @@ certificate is self-signed. Upgrades (signed bundles, `fwctl upgrade`) cover
 SJB-OS files only, not the kernel or Debian packages; 0.2.0 and earlier
 must be redeployed once to get the updater. Users are local only (no
 LDAP/RADIUS/SAML/OIDC yet); web and SSH/console lockouts count separately.
-IPv4 only, and IPv6 is out of scope until Steve says otherwise. In real
+Log forwarding (0.9.11-r01): ngfwd follows the journal itself (no
+rsyslog); it configures the forwarder after its start-up conntrack flush
+(a connection made before it stalls: the input chain drops the server's
+reply). Queues are in memory (10,000 per server). Backups (0.9.11-r01):
+a config restore only ever sets the candidate (`SetCandidateAs`); accounts
+restores merge, are superuser-only, need an encrypted backup and apply at
+once. IPv4 only, and IPv6 is out of scope until Steve says otherwise. In real
 use on ESXi; boot-test.sh in QEMU is the pre-release check for version
 bumps (revision builds run the relevant tests only).
 

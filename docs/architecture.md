@@ -163,7 +163,9 @@ The design below is the target. Phase 1 simplified it on purpose:
   kernel log lines the ruleset's `log prefix "ngfw <rule> <action> "`
   writes (first packet of each new connection), and the system log is
   ngfwd's own journal plus sshd and the upgrade unit; ngfwd reads both from
-  the journal (`internal/logs`) for the web UI's System → Logs page and `show log`.
+  the journal (`internal/logs`) for the web UI's System → Logs page and `show log`,
+  and can forward them to syslog servers (see
+  [Log forwarding as built](#log-forwarding-as-built-0911-r01)).
 - Static routes live in the config and are part of the commit (diff,
   commit-confirmed, rollback). ngfwd installs them with `ip route replace
   ... proto 222` in the main table or the management VRF's table 100, owns
@@ -412,6 +414,68 @@ flowchart LR
   `tools/decrypt-perf.sh` measures throughput in the namespace lab.
 - Limits: default VRF only, outbound only, IPv4, no revocation checking;
   upstream connections come from the firewall's own address.
+
+### Log forwarding as built (0.9.11-r01)
+
+`internal/logfwd`, inside ngfwd. One journal follower (`journalctl -f -o
+json`, matched to the kernel transport and the log units: appidd, tlsd,
+ngfwd, sshd, the upgrade and first-boot units, Kea) turns each record into
+a log entry with the same parsers the Logs views use
+(`logs.Journal.ParseRecord`: kernel `ngfw <rule> <action>` lines and
+appidd's `ngfw-session` lines are traffic, `ngfw-threat` threats,
+`ngfw-decrypt` decryption, the rest of those units system). Each entry is
+formatted per server (RFC 5424 header, JSON or CEF body) and put on that
+server's queue: 10,000 messages, oldest dropped and counted when full.
+A sender per server dials (UDP, TCP or TLS with `crypto/tls`, octet-counted
+on streams), bound to `vrf-mgmt` with `SO_BINDTODEVICE` unless the server is
+in the default VRF, writes the queue, and reconnects with backoff (1 s to
+30 s), putting back the message whose write failed.
+
+- **Config:** `log_servers` (area `logging`), applied after each commit
+  like FRR and Kea: `syncLogFwdLocked` hands the running list to the
+  forwarder, which keeps unchanged servers' connections, restarts changed
+  ones, and runs the follower only while there is a server. Problems are
+  status (`show log-forwarding`, the Log forwarding page), never commit
+  failures.
+- **Position:** the follower saves the journal cursor to
+  `/var/lib/ngfw/logfwd.cursor` every second and when it stops, and starts
+  with `--after-cursor` (or, the first time, `-n 0`: from now on), so a
+  restart repeats at most a second and loses nothing; a cursor the journal
+  no longer has means carrying on from now.
+- **Start order:** ngfwd configures the forwarder only after its start-up
+  conntrack flush. A TCP connection opened before it would lose its entry
+  mid-handshake, and the input chain drops the server's reply to a
+  connection conntrack doesn't know. Established streams survive later
+  flushes (a policy commit): conntrack picks them up again from the
+  firewall's next packet.
+- `lab/gate-logfwd.sh` replays journal records through
+  `lab/fake-journalctl.py` (the lab has no journal) into UDP, TCP and TLS
+  sinks; the boot test sends to a sink on the test host through mgmt.
+
+### Backup and restore as built (0.9.11-r01)
+
+`internal/backup` makes one armoured text file (so the captive CLI can
+take it by paste): `-----BEGIN SJB-OS BACKUP-----`, base64 of
+`{header, payload}`. The header (format version, SJB-OS version, author,
+hostname, running revision, contents, SHA-256 of the payload) is readable
+without the passphrase; the payload holds the running config's YAML and,
+for superusers, an `accounts.Snapshot` (users with role, state, SSH keys,
+web hash and shadow hash; custom roles) and the tag API key file.
+Accounts mean encryption: AES-256-GCM with a PBKDF2-SHA256 key (600,000
+iterations), the header as additional data, so neither part can be
+changed unnoticed.
+
+- **Config restore** is `SetCandidateAs`: the edit's own checks (parses,
+  validates, every changed area allowed for the caller). Nothing is applied
+  until a commit; the UI's restore offers a commit with a 10-minute confirm.
+  `/etc/ngfw` is never written by a config restore.
+- **Accounts restore** (superusers) is `accounts.Store.Restore`: checked
+  in full first, then roles merged by name and users added or updated
+  through the Unix side (`useradd`/`usermod` via `Ensure`, `chpasswd -e`
+  for the shadow hash, the key file); never deletes, never touches `admin`
+  or the caller. The API key file is replaced atomically and the tag API
+  switches to the new keys at once (an atomic pointer). Like every account
+  change, it is outside the config revisions.
 
 ## Commit sequence
 

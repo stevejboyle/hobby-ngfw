@@ -119,7 +119,7 @@ NICs, 2 vCPU, 2 GB RAM, 8 GB disk. Give it 4 GB of RAM to use the IPS.
   the IPS logs. `show statistics [1h|24h|7d]` in the CLI shows the same.
 The menu groups the pages: **Security** (Policy, NAT, Objects, Applications,
 IPS, Tags), **Networking** (Interfaces, Routing, DHCP) and **System** (Logs,
-Revisions, Administration).
+Log forwarding, Revisions, Backup, Administration).
 
 - **Policy, NAT, Objects, Interfaces:** add, edit, delete and reorder security
   rules, NAT (port forwarding, static NAT, source NAT, with live connection
@@ -139,6 +139,11 @@ Revisions, Administration).
   a client claims), view the config of any revision, roll back.
 - **Logs:** the data-plane (traffic) and management (system) logs; see
   [Logs](#logs).
+- **Log forwarding:** syslog servers (a SIEM) the logs go to, with their
+  status and a test button; see
+  [Forwarding logs to a SIEM](#forwarding-logs-to-a-siem).
+- **Backup:** download a backup, restore one; see
+  [Backing up and restoring the configuration](#backing-up-and-restoring-the-configuration).
 - **Administration:** upgrades (below).
 - **Users** and **Roles** (superusers): see [Users and roles](#users-and-roles).
 - **My account** (top right): your password, your SSH keys and what your
@@ -707,7 +712,7 @@ disabling a user or deleting one takes effect at once.
 | Role | May |
 | --- | --- |
 | `superuser` | Everything: users and roles, upgrades, the decryption CA, tag API keys, and all the below |
-| `admin` | See everything except secrets; change and commit the config, roll back, confirm, tags, IPS signature updates |
+| `admin` | See everything except secrets; change and commit the config (log forwarding included), roll back, confirm, tags, IPS signature updates, config-only backups and restores |
 | `read-only` | See everything except secrets (tag API keys); change nothing |
 
 `admin` (the user) is a permanent superuser: it can't be deleted, disabled
@@ -724,6 +729,7 @@ their own account.
 | `ips` | IPS profiles, on/off, disabled signatures; signature updates |
 | `decryption` | Decryption rules, profiles and exclusions; the learned list |
 | `decryption-ca` | The decryption CA: generate or import |
+| `logging` | Log forwarding: the syslog servers (a SIEM) the logs go to |
 | `tags` | Tag registrations |
 | `monitoring` | Logs, statistics, applications, ARP, routing status, ping (view only) |
 | `revisions` | Commit history; change: confirm a commit, roll back |
@@ -1258,6 +1264,135 @@ addresses, ports and protocol.
 Both come from the systemd journal on the appliance, which keeps them across
 reboots until it reaches its size limit (oldest first out).
 
+### Forwarding logs to a SIEM
+
+SJB-OS can send all four logs to one or more syslog servers as they are
+written: a SIEM, a log collector, or a plain syslog host. Each message is
+RFC 5424 syslog (APP-NAME `sjb-os`, MSGID `TRAFFIC`, `THREAT`, `DECRYPT` or
+`SYSTEM`, the appliance's hostname) with a JSON or CEF body. Up to eight
+servers, each with its own choices:
+
+| Setting | Values | Default |
+| --- | --- | --- |
+| `address` | The server's IPv4 address | (required) |
+| `transport` | `tls`, `tcp` (both octet-counted, RFC 5425 / 6587) or `udp` (RFC 5426) | `tls` |
+| `port` | 1-65535 | 6514 for TLS, 514 for TCP and UDP |
+| `format` | `json` (the entry as the Logs page has it, plus `"log": "traffic"` and so on) or `cef` (`CEF:0\|SJB Consulting\|SJB-OS\|<version>\|...`) | `json` |
+| `types` | Any of `traffic`, `threat`, `decryption`, `system` | all four |
+| `vrf` | `mgmt` (the management network) or `default` (a server behind inside or outside) | `mgmt` |
+| `facility` | `local0`-`local7`, `user`, `daemon`, `auth`, `authpriv`, `syslog` | `local0` |
+| `server_name` | TLS: the name the server's certificate must carry | the address |
+| `ca` | TLS: a CA certificate (PEM) the server's certificate must chain to | Debian's trusted roots |
+
+Severity follows the entry: traffic `info` (allowed) or `notice` (denied),
+threats by signature severity (critical `crit`, major `err`, minor
+`warning`, informational `info`), decryption `warning` when blocked or
+failed, system entries by their level. In CEF, the rule is `cs1`, zones
+`cs2`/`cs3` (traffic), the IPS profile `cs2` and the signature ID the
+event class (threats), and the server name `dhost` (decryption).
+
+In the web UI, **System → Log forwarding**: add, edit and delete servers
+(the changes go to the candidate; commit as usual), and see each server's
+state, messages sent, queued and dropped, and its last error. **Send test**
+sends one system message. In the CLI:
+
+```
+admin@sjb-fw> configure
+admin@sjb-fw# set log-server siem address 192.168.1.50 server-name siem.example.net
+admin@sjb-fw# set log-server siem ca "-----BEGIN CERTIFICATE----- MIIB... -----END CERTIFICATE-----"
+admin@sjb-fw# set log-server soc address 192.168.1.51 port 1514 transport tcp format cef type threat
+admin@sjb-fw# commit -m "send logs to the SIEM"
+admin@sjb-fw# exit
+admin@sjb-fw> show log-forwarding
+Log forwarding: following the journal
+SERVER  ADDRESS            TRANSPORT  FORMAT  VRF   LOGS                              STATE              SENT  QUEUED  DROPPED
+siem    192.168.1.50:6514  tls        json    mgmt  traffic,threat,decryption,system  connected for 2m  412   0       0
+soc     192.168.1.51:1514  tcp        cef     mgmt  threat                            connected for 2m  3     0       0
+admin@sjb-fw> request log-forwarding test siem
+```
+
+The CA can be pasted on one line (spaces for line breaks) in configure mode;
+`examples/logfwd.yaml` in the repository shows the YAML form.
+
+How it behaves:
+
+- Forwarding starts when the first server is committed, from that moment
+  on (older entries aren't sent). ngfwd keeps its place in the journal
+  (`/var/lib/ngfw/logfwd.cursor`), so after a restart, an upgrade or a
+  reboot it sends what was written in between, and nothing twice.
+- Each server has its own queue of 10,000 messages. While a server is
+  down, ngfwd retries (every second at first, then up to every 30 seconds)
+  and the queue fills; when it is full, the oldest messages are dropped and
+  counted (`DROPPED`). UDP gives no delivery guarantee at all; use TLS or
+  TCP where losing entries matters.
+- A TLS server must present a certificate for `server_name` (or the
+  address) that chains to `ca` (or a public CA). A wrong certificate shows
+  as the server's last error, and nothing is sent to it.
+- Servers on the management network are reached through the management
+  VRF, like SSH. A server behind inside or outside needs `vrf: default`;
+  traffic from the firewall itself isn't filtered by the rules.
+- Logging a lot of traffic (every rule with `log: yes`) sends a lot of
+  messages: one or two per connection.
+
+## Backing up and restoring the configuration
+
+A backup is one text file holding the running config, and optionally the
+users, roles and tag API keys. It is plain text so it can travel through
+the CLI's copy and paste as well as the web UI:
+
+```
+SJB-OS backup of sjb-fw, 2026-11-21T10:00:00Z, by web:admin: config and accounts, encrypted
+-----BEGIN SJB-OS BACKUP-----
+eyJoZWFkZXIiOnsiZm9ybWF0Ijoic2piLW9zLWJhY2t1cCIs...
+-----END SJB-OS BACKUP-----
+```
+
+- **Config only:** anyone whose role can view every config area. Not
+  encrypted unless you give a passphrase; a checksum catches a damaged
+  file (but not a deliberate edit).
+- **With users, roles and API keys:** superusers only, and always
+  encrypted (AES-256-GCM, with a key made from your passphrase by
+  PBKDF2-SHA256): the file then holds the API keys and both password
+  hashes of every user (the web UI's and the login's), so keep it like a
+  password. Without the passphrase it can't be restored.
+
+**Back up:** System → **Backup** → Download backup (tick the accounts box
+for users, roles and keys, and give a passphrase), or in the CLI:
+
+```
+admin@sjb-fw> request backup export            # config only
+admin@sjb-fw> request backup export accounts   # asks for a passphrase twice
+```
+
+The CLI prints the backup; copy everything from the first line to the END
+line into a file.
+
+**Restore:** System → **Backup** → choose the file (or paste it) → Check
+backup shows where it came from; pick what to restore and Restore. In the
+CLI, `request backup restore` (config), `request backup restore accounts`,
+or `request backup restore config accounts`, then paste the backup and
+give the passphrase if it has one.
+
+- **The config never goes straight onto the firewall.** It becomes the
+  candidate, with the same checks as any edit: it must be valid on this
+  version, and your role must be able to change every area it changes.
+  You see the diff against the running config, then commit it as usual;
+  the web UI offers a commit with a 10-minute confirm timer, and in the
+  CLI use `commit -m "restore" -confirm 10m`, so a backup from another
+  firewall (other interfaces, other addresses) rolls back on its own if
+  you lose access. `revert` discards it.
+- **Users, roles and API keys** (superusers) take effect at once: they are
+  not part of the config's revisions, so a config rollback never undoes
+  them. The backup's custom roles are added or replace those of the same
+  name; its users are added or updated with their role, enabled or
+  disabled state, SSH keys and passwords (the same passwords work on SSH,
+  the console and the web UI); users the backup doesn't have are kept,
+  and `admin` and the user restoring are left as they are. The tag API key
+  file is replaced and the new keys work at once. Restored users' sessions
+  end.
+- A backup from a newer SJB-OS whose format or config this version can't
+  read is refused; upgrade first.
+
 ## Upgrading
 
 From 0.3.0 on, SJB-OS upgrades in place. Each release has a signed
@@ -1379,6 +1514,13 @@ unchanged. The full history lives in `/var/lib/ngfw/revisions/`.
   deploy time.
 - Some admin tasks (API key edits, logs, Debian updates) still need root;
   they move into the CLI over time.
+- Log forwarding sends what is written from the first commit of a server
+  on, with a per-server queue of 10,000 messages (dropped oldest first,
+  and counted); no store-and-forward to disk, no RELP. Servers are IPv4
+  addresses, not names.
+- Restoring users and roles merges (it never deletes a user or role) and
+  applies at once; only the config restore goes through commit and
+  rollback.
 
 ## Building the OVA
 

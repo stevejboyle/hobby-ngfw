@@ -198,6 +198,11 @@ on Steve's own ESXi lab):
   server (Kea).
 - A web UI and a captive configure-and-commit CLI; traffic, threat,
   decryption and system logs with queries; dashboard statistics.
+- Log forwarding to syslog servers or a SIEM (0.9.11-r01): RFC 5424 over
+  TLS, TCP or UDP, JSON or CEF, per-server log types.
+- Config backup and restore (0.9.11-r01), optionally with users, roles and
+  tag API keys (then always encrypted); restores go through the candidate
+  and a normal commit.
 - Multiple local users with role-based access: built-in superuser, admin
   and read-only roles, custom roles by area (view or change), config
   changes checked against the areas they touch, per-user SSH keys, account
@@ -207,7 +212,8 @@ on Steve's own ESXi lab):
 
 **Not implemented** (from the original plan, and not claimed): high
 availability, a packet-capture test suite, performance testing or tuning,
-external log storage, IPv6, inbound (server) TLS decryption. Nothing has
+log storage and search beyond the appliance's own journal (logs can be
+forwarded to a SIEM, which stores them), IPv6, inbound (server) TLS decryption. Nothing has
 been independently security-tested.
 
 The original build plan, for reference:

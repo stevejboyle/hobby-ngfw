@@ -104,7 +104,7 @@ footer.band .inner { padding-block: 14px; justify-content: space-between; font-s
   </div>
 
   <section class="panel diagram" aria-label="Topology diagram">
-    <svg viewBox="0 0 960 600" role="img" aria-label="Upstream router at the top on 192.168.149.0/24; SJB-OS in the middle with mgmt to the left; inside VLAN 150 and DMZ VLAN 151 below on the inside trunk; an eBGP session announces only 192.168.151.0/24.">
+    <svg viewBox="0 0 960 600" role="img" aria-label="Upstream router at the top on 192.168.149.0/24; SJB-OS in the middle with mgmt to the left and a syslog server at 192.168.1.62 on the management network; inside VLAN 150 and DMZ VLAN 151 below on the inside trunk; an eBGP session announces only 192.168.151.0/24.">
       <!-- upstream router -->
       <rect x="340" y="16" width="280" height="74" rx="8" fill="var(--paper)" stroke="var(--navy)" stroke-width="1.5"/>
       <text x="480" y="44" text-anchor="middle" font-size="16" font-weight="600">Upstream router</text>
@@ -150,6 +150,12 @@ footer.band .inner { padding-block: 14px; justify-content: space-between; font-s
       <text x="30" y="282" font-size="12" class="mono">192.168.1.0/24</text>
       <text x="30" y="300" font-size="12" class="mono muted">gw 192.168.1.1</text>
       <text x="30" y="318" font-size="12" class="muted">no zone · never filtered</text>
+
+      <!-- syslog server on the management network -->
+      <line x1="108" y1="332" x2="108" y2="352" stroke="var(--muted)" stroke-width="2" stroke-dasharray="3 4"/>
+      <rect x="16" y="352" width="184" height="54" rx="8" fill="var(--paper)" stroke="var(--muted)" stroke-width="1.2"/>
+      <text x="30" y="374" font-size="14" font-weight="600">Syslog server</text>
+      <text x="30" y="394" font-size="12" class="mono">192.168.1.62</text>
 
       <!-- inside trunk -->
       <line x1="480" y1="342" x2="480" y2="400" stroke="var(--navy)" stroke-width="2"/>
@@ -198,6 +204,7 @@ footer.band .inner { padding-block: 14px; justify-content: space-between; font-s
           <tr><td class="mono">inside</td><td><span class="zone z-none">trunk</span></td><td>none; VLANs 150 and 151 only</td></tr>
           <tr><td>inside client</td><td><span class="zone z-inside">inside</span></td><td class="mono">DHCP 192.168.150.101–199</td></tr>
           <tr><td>DMZ web server</td><td><span class="zone z-dmz">dmz</span></td><td class="mono">192.168.151.10</td></tr>
+          <tr><td>Syslog server</td><td><span class="zone z-none">none</span></td><td class="mono">192.168.1.62 (mgmt network)</td></tr>
         </tbody>
       </table></div>
     </section>

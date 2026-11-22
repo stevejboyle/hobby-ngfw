@@ -432,6 +432,7 @@ func (c *Config) Validate() error {
 	v.dhcp(c)
 	v.ips(c)
 	v.decryption(c, zones, addrs)
+	v.logServers(c)
 
 	return errors.Join(v.errs...)
 }

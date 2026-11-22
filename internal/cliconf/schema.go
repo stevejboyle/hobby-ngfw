@@ -169,6 +169,17 @@ var Kinds = []*Kind{
 		{Name: "ospf", Field: "ospf", Kind: vBool, Help: "run OSPF in this VRF (yes or no)"},
 		{Name: "ospf-redistribute", Field: "ospf_redistribute", Kind: vList, Enum: []string{"connected", "static", "bgp"}, Help: "routes to announce into OSPF"},
 	}},
+	{Name: "log-server", Key: "log_servers", Help: "syslog servers (a SIEM) the logs are forwarded to (RFC 5424)", Attrs: []Attr{
+		{Name: "address", Field: "address", Kind: vStr, Hint: "<ip>", Help: "the server's IPv4 address"},
+		{Name: "port", Field: "port", Kind: vInt, Hint: "<1-65535>", Help: "server port (unset: 6514 for tls, 514 for tcp and udp)"},
+		{Name: "transport", Field: "transport", Kind: vEnum, Enum: []string{"tls", "tcp", "udp"}, Help: "tls (default), tcp or udp"},
+		{Name: "format", Field: "format", Kind: vEnum, Enum: []string{"json", "cef"}, Help: "message body: json (default) or cef"},
+		{Name: "type", Field: "types", Kind: vList, Enum: []string{"traffic", "threat", "decryption", "system"}, Hint: "<log>", Help: "logs to send (unset: all of traffic, threat, decryption, system)"},
+		{Name: "vrf", Field: "vrf", Kind: vEnum, Enum: []string{"mgmt", "default"}, Help: "where the server is reached: mgmt (default) or default"},
+		{Name: "facility", Field: "facility", Kind: vEnum, Enum: []string{"local0", "local1", "local2", "local3", "local4", "local5", "local6", "local7", "user", "daemon", "auth", "authpriv", "syslog"}, Help: "syslog facility (default local0)"},
+		{Name: "server-name", Field: "server_name", Kind: vStr, Hint: "<name>", Help: "tls: the name checked on the server's certificate (unset: the address)"},
+		{Name: "ca", Field: "ca", Kind: vStr, Hint: `"<pem>"`, Help: "tls: CA certificate (PEM, quoted, on one line is fine) the server's certificate must chain to (unset: the system's trusted roots)"},
+	}},
 	{Name: "bgp-neighbor", Key: "bgp_neighbors", Help: "BGP peers", Attrs: []Attr{
 		{Name: "address", Field: "address", Kind: vStr, Hint: "<ip>", Help: "the peer's address"},
 		{Name: "remote-as", Field: "remote_as", Kind: vInt, Hint: "<asn>", Help: "the peer's AS (same as ours for iBGP)"},

@@ -34,6 +34,7 @@ var configFieldArea = map[string]Area{
 	"DecryptionRules":      Decryption,
 	"DecryptionProfiles":   Decryption,
 	"DecryptionExclusions": Decryption,
+	"LogServers":           Logging,
 }
 
 var systemFieldArea = map[string]Area{

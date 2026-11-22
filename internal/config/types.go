@@ -37,6 +37,9 @@ type Config struct {
 	DecryptionRules      []DecryptionRule      `yaml:"decryption_rules,omitempty" json:"decryption_rules"`
 	DecryptionProfiles   []DecryptionProfile   `yaml:"decryption_profiles,omitempty" json:"decryption_profiles"`
 	DecryptionExclusions []DecryptionExclusion `yaml:"decryption_exclusions,omitempty" json:"decryption_exclusions"`
+
+	// LogServers are syslog servers (a SIEM) the logs are forwarded to.
+	LogServers []LogServer `yaml:"log_servers,omitempty" json:"log_servers"`
 }
 
 // Routing turns on BGP and/or OSPF in one VRF. Name is the VRF.

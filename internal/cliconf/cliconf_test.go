@@ -311,3 +311,27 @@ func TestTrunkInConfigureMode(t *testing.T) {
 		t.Fatalf("veth-users should be a trunk: %+v", c.Interfaces)
 	}
 }
+
+func TestLogServerInConfigureMode(t *testing.T) {
+	m := lab(t)
+	run(t, m,
+		"set log-server siem address 10.0.0.50",
+		"set log-server siem-udp address 192.0.2.10 transport udp format cef port 5140 vrf default type threat type system",
+	)
+	valid(t, m)
+	c, _ := m.Config()
+	if len(c.LogServers) != 2 {
+		t.Fatalf("log servers: %+v", c.LogServers)
+	}
+	if u := c.LogServers[1]; u.Transport != "udp" || u.Format != "cef" || u.Port != 5140 || u.VRF != "default" || len(u.Types) != 2 {
+		t.Fatalf("udp server: %+v", u)
+	}
+	run(t, m, "delete log-server siem-udp type threat")
+	c, _ = m.Config()
+	if got := c.LogServers[1].Types; len(got) != 1 || got[0] != "system" {
+		t.Fatalf("types after delete: %v", got)
+	}
+	if err := m.Set(strings.Fields("set log-server x transport relp")[1:]); err == nil {
+		t.Fatal("transport relp accepted")
+	}
+}

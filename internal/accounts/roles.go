@@ -38,6 +38,7 @@ const (
 	IPS          Area = "ips"
 	Decryption   Area = "decryption"
 	DecryptionCA Area = "decryption-ca"
+	Logging      Area = "logging"
 	Tags         Area = "tags"
 	Monitoring   Area = "monitoring"
 	Revisions    Area = "revisions"
@@ -60,6 +61,7 @@ var Areas = []AreaInfo{
 	{IPS, "IPS", "IPS profiles, on/off, disabled signatures; signature updates", false},
 	{Decryption, "Decryption", "decryption rules, profiles and exclusions; the learned list", false},
 	{DecryptionCA, "Decryption CA", "the decryption CA: generate or import", false},
+	{Logging, "Log forwarding", "syslog servers (a SIEM) the logs are forwarded to", false},
 	{Tags, "Tags", "tag registrations (tag API key values: superusers only)", false},
 	{Monitoring, "Monitoring", "logs, statistics, applications, ARP, routing status, ping", true},
 	{Revisions, "Revisions", "commit history; change: confirm a commit, roll back", false},
@@ -67,7 +69,7 @@ var Areas = []AreaInfo{
 }
 
 // ConfigAreas are the areas that cover parts of the firewall config.
-var ConfigAreas = []Area{Policy, Network, DHCP, IPS, Decryption}
+var ConfigAreas = []Area{Policy, Network, DHCP, IPS, Decryption, Logging}
 
 func knownArea(a Area) (AreaInfo, bool) {
 	for _, i := range Areas {
@@ -140,12 +142,12 @@ func BuiltinRoles() []Role {
 		return m
 	}
 	admin := all(View)
-	for _, a := range []Area{Policy, Network, DHCP, IPS, Decryption, Tags, Revisions} {
+	for _, a := range []Area{Policy, Network, DHCP, IPS, Decryption, Logging, Tags, Revisions} {
 		admin[a] = Change
 	}
 	return []Role{
 		{Name: RoleSuperuser, Description: "Everything, including users, roles, upgrades and the decryption CA", BuiltIn: true, Superuser: true, Perms: all(Change)},
-		{Name: RoleAdmin, Description: "Change and commit the config, roll back, tags, IPS updates; not users, roles, upgrades or the decryption CA", BuiltIn: true, Perms: admin},
+		{Name: RoleAdmin, Description: "Change and commit the config, roll back, tags, IPS updates, log forwarding; not users, roles, upgrades or the decryption CA", BuiltIn: true, Perms: admin},
 		{Name: RoleReadOnly, Description: "See everything except secrets; change nothing", BuiltIn: true, Perms: all(View)},
 	}
 }

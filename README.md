@@ -39,16 +39,21 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 
 ## The evidence
 
-- **Time:** nine days of calendar time (2026-11-08 to 2026-11-16) and
-  30.0 hours of Steve's own time in total, measured from the session
-  transcripts release by release (all but a 0.5-hour estimate for his
-  ChatGPT review): [docs/effort-log.md](docs/effort-log.md). Of that,
-  22.9 hours took it to its first full release (0.9.9-r03), and TLS
-  decryption (0.9.9-r04 to r06) took 0.6 hours.
+- **Time:** the first milestone took nine days of calendar time
+  (2026-11-08 to 2026-11-16, 38 releases through 0.9.9-r08) and about
+  27.3 hours of Steve's active time. Of that, 22.9 hours took it to its
+  first full release (0.9.9-r03), and TLS decryption (0.9.9-r04 to r06)
+  took 0.6 hours. Later work (multiple users, inbound NAT, trunks and the
+  DMZ lab, through 2026-11-20 and 0.9.10-r02) brings the total to 30.0
+  hours. The hours are estimates of active time derived from the session
+  transcripts, not stopwatch measurements: a gap between Steve's messages
+  counts in full up to 30 minutes and as 5 minutes beyond that, and one
+  0.5-hour figure (his ChatGPT review) is his own estimate. Row by row:
+  [docs/effort-log.md](docs/effort-log.md).
 - **AI cost:** a $20/month Claude Pro plan. The 1.60 billion tokens it
-  used (nearly all cached context, counted from the session transcripts)
-  would cost about $510 at Claude API list prices. ChatGPT's review isn't
-  included.
+  used through 2026-11-17 (nearly all cached context, counted from the
+  session transcripts) would cost about $510 at Claude API list prices.
+  ChatGPT's review isn't included.
 - **Size:** on 2026-11-17, about 28,500 lines of Go, C, JavaScript, shell
   and Python, not counting comments and blank lines: 21,500 product, 7,000
   tests.
@@ -57,27 +62,35 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
   VMware's device models: about 150 end-to-end checks of first boot,
   policy, application identification, intrusion prevention, TLS
   decryption, routing, DHCP, upgrades and rollback (every release through
-  0.9.9-r08; from now on, version bumps, while revisions run the tests that
+  0.9.9-r08; since then, version bumps, while revisions run the tests that
   cover what changed). From a client VM behind the firewall,
   [`tools/fw-traffic-test.sh`](tools/fw-traffic-test.sh) exercises App
   Identification, the IPS and TLS decryption, and
   [`tools/policy-test.sh`](tools/policy-test.sh) checks the
   [best-practice policy](examples/best-practice.yaml): 47 checks passed,
-  none failed, on Steve's appliance.
-- **Releases:** 38 in nine days, each gated by the boot test. The public
-  history starts at 0.9.9-r01; the earlier releases are kept privately.
+  none failed, on Steve's appliance on 2026-11-17. That run predates a
+  2026-11-21 harness fix: its risky-application checks could count a
+  local curl failure, such as an untrusted certificate, as a block. They
+  now count only a refused, dropped or reset connection, and
+  `make harness-test` checks the harnesses' verdicts offline.
+- **Releases:** 38 in the first nine days (through 0.9.9-r08), each gated
+  by the boot test; 42 through 2026-11-20 (0.9.10-r02). Since r08,
+  version bumps and the r10 fix get the boot test, and other revisions
+  run the tests that cover their change. The public history starts at
+  0.9.9-r01; the earlier releases are kept privately.
 - **Design:** [docs/architecture.md](docs/architecture.md).
 
 ### Compared with building it the usual way
 
-| | Built the usual way (estimate) | Built with AI (measured) |
+| | Built the usual way (estimate) | Built with AI (from the record) |
 | --- | --- | --- |
-| Time to build | About a year | 9 days, Nov 8 to 16, 2026 |
+| Time to build | About a year | 9 days, Nov 8 to 16, 2026 (to 0.9.9-r08) |
 | People | One specialist, or about six engineers | One person directing AI |
-| Human hours | 2,400 to 12,300 engineering hours | 30.0 hours, everything to date |
+| Human hours | 2,400 to 12,300 engineering hours | About 27.3 hours in those nine days (30.0 through Nov 20), estimated from the session transcripts |
 | Cost | $350,000 to $1.1 million in salary and benefits | A $20/month Claude Pro plan ($510 of tokens at API list prices) |
 
-The left column is an estimate, not a measurement:
+The left column is a model-based estimate; the right comes from the
+effort log and the release history:
 
 - **Low end:** a component-by-component estimate for one senior specialist
   who already knows this stack: 49 weeks of work (6 of them for TLS

@@ -285,20 +285,55 @@ allow_list() {
 	fi
 }
 
+# curl_why RC: what a curl exit status means, for notes.
+curl_why() {
+	case $1 in
+	0) echo "finished without an HTTP status" ;;
+	2 | 48) echo "this curl lacks an option the check needs" ;;
+	3) echo "malformed URL" ;;
+	5 | 6) echo "couldn't resolve the name" ;;
+	7) echo "connection refused" ;;
+	28) echo "timed out" ;;
+	35) echo "TLS handshake failed" ;;
+	52) echo "empty reply" ;;
+	55 | 56) echo "connection reset" ;;
+	58 | 59 | 77) echo "local TLS setup failed" ;;
+	60) echo "certificate not trusted" ;;
+	*) echo "curl error" ;;
+	esac
+}
+# fw_stopped RC: curl's exit looks like the firewall cutting the connection
+# (refused, dropped, or reset during the handshake or the request). Name
+# lookups, certificates, missing options and other local or request errors
+# say nothing about the policy.
+fw_stopped() { case $1 in 7 | 28 | 35 | 52 | 55 | 56) return 0 ;; *) return 1 ;; esac; }
+
+# risky_check LABEL doh|site URL [curl args]: a DoH query must not be
+# answered (FAIL if it is). A vendor's website is only the vendor's site,
+# not its app's traffic, so its being reachable is a skip. Only a failure
+# that looks like the firewall cutting the connection counts as ok, and
+# even then the traffic log is what says which rule did it.
+risky_check() {
+	local label=$1 what=$2 url=$3 code rc; shift 3
+	code=$(http_code "$url" "$@"); rc=$?
+	if answered "$code"; then
+		if [[ $what == doh ]]; then result "$label" FAIL "ANSWERED (HTTP $code): encrypted DNS gets around the approved resolvers"
+		else result "$label" skip "reachable (HTTP $code): the block applies to the app's own traffic; check 'show app'"; fi
+	elif fw_stopped "$rc"; then
+		result "$label" ok "stopped (curl $rc, $(curl_why "$rc")), other HTTPS works; traffic log should show block-risky-apps"
+	else
+		result "$label" skip "curl $rc ($(curl_why "$rc")): not a sign of a firewall block; inconclusive"
+	fi
+}
+
 risky() {
-	local code name url
+	local name url e
 	if [[ $CONTROL != yes ]]; then result "risky applications" skip "HTTPS control failed; inconclusive"; return; fi
-	code=$(http_code "https://cloudflare-dns.com/dns-query?name=example.com&type=A" -H "accept: application/dns-json")
-	if answered "$code"; then result "DNS over HTTPS (Cloudflare) blocked" FAIL "ANSWERED (HTTP $code): encrypted DNS gets around the approved resolvers"
-	else result "DNS over HTTPS (Cloudflare) blocked" ok "no answer, other HTTPS works"; fi
-	code=$(http_code "https://dns.google/resolve?name=example.com&type=A")
-	if answered "$code"; then result "DNS over HTTPS (Google) blocked" FAIL "ANSWERED (HTTP $code): encrypted DNS gets around the approved resolvers"
-	else result "DNS over HTTPS (Google) blocked" ok "no answer, other HTTPS works"; fi
+	risky_check "DNS over HTTPS (Cloudflare) blocked" doh "https://cloudflare-dns.com/dns-query?name=example.com&type=A" -H "accept: application/dns-json"
+	risky_check "DNS over HTTPS (Google) blocked" doh "https://dns.google/resolve?name=example.com&type=A"
 	for e in "${RISKY_SITES[@]}"; do
 		name=${e%%|*} url=${e#*|}
-		code=$(http_code "$url")
-		if answered "$code"; then result "$name site" skip "reachable (HTTP $code): the block applies to the app's own traffic; check 'show app'"
-		else result "$name site" ok "blocked, other HTTPS works"; fi
+		risky_check "$name site" site "$url"
 	done
 }
 
@@ -376,6 +411,9 @@ decryption() {
 		result "QUIC blocked" skip "this curl has no HTTP/3"
 	fi
 }
+
+# tools/harness-test.sh sources this file for its functions only.
+[[ ${SJB_HARNESS_SOURCE:-} == 1 ]] && return 0
 
 echo "Setup:"; setup
 echo "Allowed:"; allowed

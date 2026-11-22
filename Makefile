@@ -1,4 +1,4 @@
-.PHONY: build test validate lab-up lab-down lab-status lab-smoke lab-gate1 lab-gate-sessions lab-gate-decrypt lab-gate-nat lab-gate-trunk lab-gate-users clean
+.PHONY: build test validate lab-up lab-down lab-status lab-smoke lab-gate1 lab-gate-sessions lab-gate-decrypt lab-gate-nat lab-gate-trunk lab-gate-users harness-test clean
 
 build:
 	go build -o bin/ ./cmd/...
@@ -6,6 +6,10 @@ build:
 test:
 	go vet ./...
 	go test -race ./...
+
+# The client test harnesses' own verdicts, offline (curl stubbed).
+harness-test:
+	./tools/harness-test.sh
 
 validate: build
 	./bin/fwctl validate examples/*.yaml

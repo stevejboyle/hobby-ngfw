@@ -160,36 +160,17 @@ func GenerateCA(dir, hostname string, now time.Time, o Owner) (CAInfo, error) {
 // Certificates after the first in certPEM are its chain (intermediates up
 // to, not including, the root).
 func ImportCA(dir string, certPEM, keyPEM []byte, now time.Time, o Owner) (CAInfo, error) {
-	certs, err := parseCerts(certPEM)
+	cert, chain, key, err := ParseKeyPair(certPEM, keyPEM, now, func(c *x509.Certificate) error {
+		switch {
+		case !c.IsCA || !c.BasicConstraintsValid:
+			return errors.New("the certificate is not a CA certificate (basic constraints CA:TRUE)")
+		case c.KeyUsage != 0 && c.KeyUsage&x509.KeyUsageCertSign == 0:
+			return errors.New("the certificate may not sign certificates (key usage lacks certificate signing)")
+		}
+		return nil
+	})
 	if err != nil {
 		return CAInfo{}, err
-	}
-	cert, chain := certs[0], certs[1:]
-	for i, c := range chain {
-		parent := cert
-		if i > 0 {
-			parent = chain[i-1]
-		}
-		if err := parent.CheckSignatureFrom(c); err != nil {
-			return CAInfo{}, fmt.Errorf("certificate %d of the chain didn't sign the one before it (%v): give the CA first, then its intermediates in order", i+2, err)
-		}
-	}
-	switch {
-	case !cert.IsCA || !cert.BasicConstraintsValid:
-		return CAInfo{}, errors.New("the certificate is not a CA certificate (basic constraints CA:TRUE)")
-	case cert.KeyUsage != 0 && cert.KeyUsage&x509.KeyUsageCertSign == 0:
-		return CAInfo{}, errors.New("the certificate may not sign certificates (key usage lacks certificate signing)")
-	case now.After(cert.NotAfter):
-		return CAInfo{}, fmt.Errorf("the certificate expired on %s", cert.NotAfter.Format("2006-01-02"))
-	case now.Before(cert.NotBefore):
-		return CAInfo{}, fmt.Errorf("the certificate is not valid until %s", cert.NotBefore.Format("2006-01-02"))
-	}
-	key, err := parseKey(keyPEM)
-	if err != nil {
-		return CAInfo{}, err
-	}
-	if !samePublic(cert.PublicKey, key.Public()) {
-		return CAInfo{}, errors.New("the key does not belong to the certificate")
 	}
 	un, err := newCA(untrustedCN, now, 5)
 	if err != nil {
@@ -201,6 +182,54 @@ func ImportCA(dir string, certPEM, keyPEM []byte, now time.Time, o Owner) (CAInf
 	}
 	return InfoOf(CAs{Trusted: tr, Untrusted: un, Source: "imported"}), nil
 }
+
+// ParseKeyPair reads an operator's PEM certificate (first), its chain
+// (intermediates after it, in order, up to but not including the root)
+// and its unencrypted key, and checks what every import needs: the chain
+// order, the dates, an ECDSA or RSA (2048 bits or more) key, and that
+// the key belongs to the certificate. kind, when set, checks what the
+// certificate is for (a CA, a server); it runs before the key is read.
+func ParseKeyPair(certPEM, keyPEM []byte, now time.Time, kind func(*x509.Certificate) error) (*x509.Certificate, []*x509.Certificate, crypto.Signer, error) {
+	certs, err := parseCerts(certPEM)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	cert, chain := certs[0], certs[1:]
+	for i, c := range chain {
+		parent := cert
+		if i > 0 {
+			parent = chain[i-1]
+		}
+		if err := parent.CheckSignatureFrom(c); err != nil {
+			return nil, nil, nil, fmt.Errorf("certificate %d of the chain didn't sign the one before it (%v): give the certificate first, then its intermediates in order", i+2, err)
+		}
+	}
+	if kind != nil {
+		if err := kind(cert); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	switch {
+	case now.After(cert.NotAfter):
+		return nil, nil, nil, fmt.Errorf("the certificate expired on %s", cert.NotAfter.Format("2006-01-02"))
+	case now.Before(cert.NotBefore):
+		return nil, nil, nil, fmt.Errorf("the certificate is not valid until %s", cert.NotBefore.Format("2006-01-02"))
+	}
+	key, err := parseKey(keyPEM)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if !samePublic(cert.PublicKey, key.Public()) {
+		return nil, nil, nil, errors.New("the key does not belong to the certificate")
+	}
+	return cert, chain, key, nil
+}
+
+// CertPEM and KeyPEM encode for files other packages write.
+func CertPEM(cs ...*x509.Certificate) []byte { return chainPEM(cs) }
+
+// KeyPEM encodes a key as unencrypted PKCS #8.
+func KeyPEM(k crypto.Signer) ([]byte, error) { return keyPEM(k) }
 
 func samePublic(a, b crypto.PublicKey) bool {
 	type eq interface{ Equal(crypto.PublicKey) bool }

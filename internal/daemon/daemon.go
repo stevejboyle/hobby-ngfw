@@ -80,11 +80,11 @@ type Daemon struct {
 	// NAT); ifaddrFilled what each was last filled with.
 	ifaddrSets   map[string]string
 	ifaddrFilled map[string]string
-	ips         ipsState
-	dec         decryptState
-	logfwd      LogForwarder
-	stats       *stats.Store
-	statsRoot   string
+	ips          ipsState
+	dec          decryptState
+	logfwd       LogForwarder
+	stats        *stats.Store
+	statsRoot    string
 	// policy is the running config's ruleset without tag set elements: a
 	// commit that changes it flushes conntrack (see flushIfPolicyChanged).
 	policy string

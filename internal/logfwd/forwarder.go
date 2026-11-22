@@ -228,28 +228,53 @@ func (f *Forwarder) follow(ctx context.Context, done chan struct{}) {
 	f.writeCursor(cursor)
 }
 
+// read forwards records until the reader ends, saving the journal
+// position every second (and at the end), so a crash repeats at most a
+// second of records.
 func (f *Forwarder) read(ctx context.Context, rc io.Reader, cursor string) string {
+	var mu sync.Mutex
+	latest, saved := cursor, cursor
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				mu.Lock()
+				c := latest
+				mu.Unlock()
+				if c != saved {
+					f.writeCursor(c)
+					saved = c
+				}
+			}
+		}
+	}()
 	sc := bufio.NewScanner(rc)
 	sc.Buffer(make([]byte, 64*1024), 1<<20)
-	last := time.Now()
 	for sc.Scan() {
 		if ctx.Err() != nil {
 			break
 		}
 		r, ok := f.Journal.ParseRecord(sc.Bytes())
-		if r.Cursor != "" {
-			cursor = r.Cursor
-		}
 		if ok {
 			f.Handle(r)
 		}
-		if time.Since(last) > 2*time.Second {
-			f.writeCursor(cursor)
-			last = time.Now()
+		if r.Cursor != "" {
+			mu.Lock()
+			latest = r.Cursor
+			mu.Unlock()
 		}
 	}
-	f.writeCursor(cursor)
-	return cursor
+	close(stop)
+	<-done
+	f.writeCursor(latest)
+	return latest
 }
 
 func (f *Forwarder) readCursor() string {

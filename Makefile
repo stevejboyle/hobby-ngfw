@@ -1,4 +1,4 @@
-.PHONY: build test validate lab-up lab-down lab-status lab-smoke lab-gate1 lab-gate-sessions lab-gate-decrypt lab-gate-nat lab-gate-trunk lab-gate-users harness-test clean
+.PHONY: build test validate lab-up lab-down lab-status lab-smoke lab-gate1 lab-gate-sessions lab-gate-decrypt lab-gate-nat lab-gate-trunk lab-gate-logfwd lab-gate-users harness-test clean
 
 build:
 	go build -o bin/ ./cmd/...
@@ -48,6 +48,12 @@ lab-gate-nat:
 # Trunk gate: an interface with no zone carries VLANs and drops untagged traffic.
 lab-gate-trunk:
 	./lab/gate-trunk.sh
+
+# Log forwarding gate: UDP, TCP and TLS syslog servers, JSON and CEF, the
+# journal position across restarts, and a CLI backup round trip (needs
+# python3 and openssl).
+lab-gate-logfwd:
+	./lab/gate-logfwd.sh
 
 # Users and roles on a real Debian system. It creates accounts and rewrites
 # PAM, so it runs in a throwaway container (Docker; Linux binaries in bin/).

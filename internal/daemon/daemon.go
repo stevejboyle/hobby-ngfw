@@ -460,13 +460,16 @@ func (d *Daemon) Start() error {
 	warns = append(warns, d.syncFRRLocked()...)
 	warns = append(warns, d.syncIPSLocked()...)
 	warns = append(warns, d.syncDecryptLocked(true)...)
-	for _, w := range append(warns, d.syncLogFwdLocked()...) {
-		d.log.Warn(w)
-	}
 	// Flows set up while ngfwd was down (possibly with no ruleset) must be
 	// re-evaluated against the restored policy.
 	if err := d.ct.FlushAll(); err != nil {
 		d.log.Warn("could not flush conntrack; existing flows keep old verdicts", "err", err)
+	}
+	// Log forwarding after the flush: a connection to a log server made
+	// before it would lose its conntrack entry, and the input chain drops
+	// the server's packets of a connection it doesn't know.
+	for _, w := range append(warns, d.syncLogFwdLocked()...) {
+		d.log.Warn(w)
 	}
 	d.log.Info("ruleset applied at start", "revision", n, "warnings", len(res.Warnings))
 	d.restorePendingLocked(n)

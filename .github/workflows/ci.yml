@@ -53,6 +53,8 @@ jobs:
         run: sudo make lab-gate-nat
       - name: Trunk gate (VLANs only, untagged dropped)
         run: sudo make lab-gate-trunk
+      - name: Log forwarding gate (syslog over UDP, TCP and TLS; backup round trip)
+        run: sudo make lab-gate-logfwd
       - name: TLS decryption gate (decrypting)
         run: sudo make lab-gate-decrypt
       - name: TLS decryption gate (observe mode)

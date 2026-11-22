@@ -32,6 +32,7 @@ import (
 	"github.com/stevejboyle/hobby-ngfw/internal/ips"
 	"github.com/stevejboyle/hobby-ngfw/internal/logfwd"
 	"github.com/stevejboyle/hobby-ngfw/internal/logs"
+	"github.com/stevejboyle/hobby-ngfw/internal/mgmtcert"
 	"github.com/stevejboyle/hobby-ngfw/internal/natips"
 	"github.com/stevejboyle/hobby-ngfw/internal/netdev"
 	"github.com/stevejboyle/hobby-ngfw/internal/nft"
@@ -243,16 +244,32 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 	go func() { errc <- servers[0].Serve(ln) }()
 	log.Info("management API listening", "socket", socket)
 
+	// The web UI and the tag API present the management certificate from
+	// memory, so an import takes effect for new connections without a
+	// restart. Unreadable files are replaced with a fresh self-signed
+	// certificate rather than leaving the appliance without its web UI.
+	var certs *mgmtcert.Manager
+	if tlsCert != "" {
+		certs = &mgmtcert.Manager{CertFile: tlsCert, KeyFile: tlsKey}
+		if err := certs.LoadOrGenerate(d.MgmtCertNames()); err != nil {
+			log.Warn("management certificate unreadable: replaced with a new self-signed one", "err", err)
+		}
+		d.SetMgmtCert(certs)
+	}
+
 	if apiListen != "" {
 		keys, err := daemon.LoadKeys(apiKeys)
 		if err != nil {
 			return err
 		}
 		api := &http.Server{Addr: apiListen, Handler: d.APIHandler(keys), ReadHeaderTimeout: 10 * time.Second}
+		if certs != nil {
+			api.TLSConfig = certs.TLSConfig()
+		}
 		servers = append(servers, api)
 		go func() {
 			if tlsCert != "" {
-				errc <- api.ListenAndServeTLS(tlsCert, tlsKey)
+				errc <- api.ListenAndServeTLS("", "")
 			} else {
 				log.Warn("tag API is plain HTTP; use -tls-cert/-tls-key outside the lab")
 				errc <- api.ListenAndServe()
@@ -279,6 +296,9 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 			Log: log,
 		})
 		srv := &http.Server{Addr: ui.listen, Handler: h, ReadHeaderTimeout: 10 * time.Second}
+		if certs != nil {
+			srv.TLSConfig = certs.TLSConfig()
+		}
 		servers = append(servers, srv)
 		go func() {
 			if ui.devHTTP {
@@ -286,7 +306,7 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 				errc <- srv.ListenAndServe()
 				return
 			}
-			errc <- srv.ListenAndServeTLS(tlsCert, tlsKey)
+			errc <- srv.ListenAndServeTLS("", "")
 		}()
 		log.Info("web UI listening", "addr", ui.listen)
 	}

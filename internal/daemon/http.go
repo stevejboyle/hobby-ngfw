@@ -238,6 +238,25 @@ func (d *Daemon) mgmtRoutes() []mgmtRoute {
 			v, err := d.ImportDecryptionCA(c.Author(), []byte(req.Cert), []byte(req.Key))
 			reply(w, v, err)
 		}},
+		{"GET /v1/mgmt-cert", view(accounts.Certificates), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			v, err := d.MgmtCert()
+			reply(w, v, err)
+		}},
+		{"POST /v1/mgmt-cert/import", change(accounts.Certificates), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			var req struct {
+				Cert string `json:"cert"`
+				Key  string `json:"key"`
+			}
+			if !decode(w, r, &req) {
+				return
+			}
+			v, err := d.ImportMgmtCert(c.Author(), []byte(req.Cert), []byte(req.Key))
+			reply(w, v, err)
+		}},
+		{"POST /v1/mgmt-cert/self-signed", change(accounts.Certificates), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			v, err := d.ResetMgmtCert(c.Author())
+			reply(w, v, err)
+		}},
 		{"GET /v1/decryption/learned", view(accounts.Decryption), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
 			v, err := d.DecryptionLearned()
 			reply(w, v, err)

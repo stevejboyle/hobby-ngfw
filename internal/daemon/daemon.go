@@ -24,6 +24,7 @@ import (
 	"github.com/stevejboyle/hobby-ngfw/internal/diff"
 	"github.com/stevejboyle/hobby-ngfw/internal/frr"
 	"github.com/stevejboyle/hobby-ngfw/internal/logs"
+	"github.com/stevejboyle/hobby-ngfw/internal/mgmtcert"
 	"github.com/stevejboyle/hobby-ngfw/internal/natips"
 	"github.com/stevejboyle/hobby-ngfw/internal/netdev"
 	"github.com/stevejboyle/hobby-ngfw/internal/nfqueue"
@@ -91,6 +92,10 @@ type Daemon struct {
 	// for minutes (rebuilding the IPS signatures), and a sampler stuck
 	// behind it skips minutes.
 	statsIfaces atomic.Pointer[[]string]
+	// mgmtCert serves the web UI's and tag API's certificate; certNames is
+	// what it should name, kept apart from d.mu for the same reason.
+	mgmtCert  *mgmtcert.Manager
+	certNames atomic.Pointer[certNames]
 	// recovery, when set, says live enforcement may not match the recorded
 	// running revision (a failed commit could not restore the previous
 	// ruleset, or an auto-rollback failed). Status reports it; the next
@@ -764,6 +769,7 @@ func (d *Daemon) setRunningLocked(cfg *config.Config) {
 		}
 	}
 	d.statsIfaces.Store(&names)
+	d.certNames.Store(&certNames{hostname: cfg.System.Hostname, mgmt: cfg.System.MgmtInterface})
 }
 
 // restorePendingRecordLocked puts the on-disk confirmation record back to

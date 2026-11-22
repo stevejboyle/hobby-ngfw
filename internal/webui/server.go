@@ -227,6 +227,37 @@ func New(d *daemon.Daemon, o Options) http.Handler {
 		}
 		reply(w, v, nil)
 	}))
+	mux.HandleFunc("GET /ui/api/mgmt-cert", s.auth(accounts.NeedView(accounts.Certificates), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+		v, err := s.d.MgmtCert()
+		if err != nil {
+			daemonFail(w, err)
+			return
+		}
+		reply(w, v, nil)
+	}))
+	mux.HandleFunc("POST /ui/api/mgmt-cert/import", s.auth(accounts.NeedChange(accounts.Certificates), func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+		var req struct {
+			Cert string `json:"cert"`
+			Key  string `json:"key"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := s.d.ImportMgmtCert(s.author(ss), []byte(req.Cert), []byte(req.Key))
+		if err != nil {
+			daemonFail(w, err)
+			return
+		}
+		reply(w, v, nil)
+	}))
+	mux.HandleFunc("POST /ui/api/mgmt-cert/self-signed", s.auth(accounts.NeedChange(accounts.Certificates), func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+		v, err := s.d.ResetMgmtCert(s.author(ss))
+		if err != nil {
+			daemonFail(w, err)
+			return
+		}
+		reply(w, v, nil)
+	}))
 	mux.HandleFunc("GET /ui/api/decryption/learned", s.auth(accounts.NeedView(accounts.Decryption), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		v, err := s.d.DecryptionLearned()
 		if err != nil {

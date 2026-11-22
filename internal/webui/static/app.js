@@ -24,7 +24,7 @@ const areaOfKey = {
 const pageNeeds = {
   policy: () => can("policy"), nat: () => can("policy"), objects: () => can("policy"), network: () => can("network"), routing: () => can("network"),
   dhcp: () => can("dhcp"), apps: () => can("monitoring"), ips: () => can("ips"), decryption: () => can("decryption"), tags: () => can("tags"),
-  revisions: () => can("revisions"), logs: () => can("monitoring"), logforwarding: () => can("logging"), backup: () => !!(state.me && state.me.config_view), users: isSuper, roles: isSuper,
+  revisions: () => can("revisions"), logs: () => can("monitoring"), logforwarding: () => can("logging"), backup: () => !!(state.me && state.me.config_view), certificate: () => can("certificates"), users: isSuper, roles: isSuper,
 };
 function applyNav() {
   for (const a of document.querySelectorAll("#nav a, .who a")) {
@@ -1993,6 +1993,54 @@ async function pageSystem() {
   );
 }
 
+// ---- management certificate ---------------------------------------------------
+// A file input that loads a PEM file into a textArea field.
+function pemFilePicker(field) {
+  const f = h("input", { type: "file", accept: ".pem,.crt,.cer,.key,.txt" });
+  f.addEventListener("change", async () => {
+    if (f.files.length) field.node.querySelector("textarea").value = await f.files[0].text();
+  });
+  return f;
+}
+
+async function pageCertificate() {
+  const c = await api("GET", "mgmt-cert");
+  const day = (t) => new Date(t).toLocaleDateString();
+  const names = [...(c.dns_names || []), ...(c.ip_addresses || [])];
+  const left = Math.round((new Date(c.not_after) - Date.now()) / 86400000);
+  const after = (r, what) => {
+    toast(`${what}: new connections use ${r.fingerprint.slice(0, 23)}…${(r.warnings || []).length ? " (see the warnings)" : ""}`);
+    route();
+  };
+  const imp = h("button", { class: "primary", onclick: () => {
+    const cert = textArea("Certificate (PEM), then the intermediates that issued it, in order (not the root)", "", { placeholder: "-----BEGIN CERTIFICATE-----", rows: 7 });
+    const key = textArea("Private key (PEM, unencrypted)", "", { placeholder: "-----BEGIN PRIVATE KEY-----", rows: 5 });
+    modal("Import a management certificate", h("div", {},
+      h("p", { class: "muted small" }, "A server certificate for this firewall, e.g. from your lab CA: ECDSA, or RSA of 2048 bits or more, valid now, for server authentication, naming the host name or address you browse to. The key stays on the firewall and is never shown again."),
+      cert.node, h("div", { class: "row" }, h("label", { class: "small" }, "or load a file ", pemFilePicker(cert))),
+      key.node, h("div", { class: "row" }, h("label", { class: "small" }, "or load a file ", pemFilePicker(key))),
+      h("p", { class: "muted small" }, "This page keeps working: open connections keep the old certificate. The next connection (a reload in a new tab, the tag API's next client) gets the new one.")),
+    { submit: "Import", wide: true, onSubmit: async () => after(await api("POST", "mgmt-cert/import", { cert: cert.get(), key: key.get() }), "Certificate imported") });
+  } }, "Import a certificate");
+  const reset = h("button", { onclick: () => confirmDialog("Go back to a self-signed certificate?",
+    "SJB-OS makes a new self-signed certificate naming this firewall's host name and management address. Browsers and tag API clients will warn about it until they accept it.",
+    async () => after(await api("POST", "mgmt-cert/self-signed", {}), "Self-signed again"), "Make a new self-signed certificate", true) }, "Back to self-signed");
+  return h("div", {},
+    h("div", { class: "page-head" }, h("h1", {}, "Management certificate"), h("span", { class: "spacer" }), can("certificates", "change") ? [reset, imp] : null),
+    h("p", { class: "tagline" }, "The gatehouse shows its papers before anyone shows theirs."),
+    h("div", { class: "cards" },
+      card("Source", c.source, c.source === "imported" ? `issued by ${c.issuer}` : "browsers warn until trusted"),
+      card("Expires", day(c.not_after), `${left} days left`),
+      card("Chain", String(c.chain), "intermediates sent after it")),
+    (c.warnings || []).length ? h("div", { class: "bar warn" }, h("ul", { class: "small" }, c.warnings.map((w) => h("li", {}, w)))) : null,
+    h("section", { class: "panel" }, h("h2", {}, "Certificate"),
+      h("div", { class: "table-wrap" }, h("table", {}, h("tbody", {},
+        [["Subject", c.subject], ["Issuer", c.issuer], ["Names (SANs)", names.length ? names.join(", ") : "none"],
+          ["Valid", `${day(c.not_before)} to ${day(c.not_after)}`], ["SHA-256", h("span", { class: "mono small" }, c.fingerprint)]]
+          .map(([k, v]) => h("tr", {}, h("th", {}, k), h("td", {}, v)))))),
+      h("p", { class: "muted small" }, "The web UI (port 443) and the tag API (port 8443) both present this certificate. It lives in /etc/ngfw, never in the config or a backup.")));
+}
+
 // ---- backup and restore --------------------------------------------------------
 function saveFile(name, text) {
   const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
@@ -2323,7 +2371,7 @@ async function pageRoles() {
 // ---- router ----------------------------------------------------------------
 const pages = {
   dashboard: pageDashboard, policy: pagePolicy, nat: pageNat, objects: pageObjects,
-  network: pageNetwork, routing: pageRouting, dhcp: pageDHCP, apps: pageApps, ips: pageIPS, decryption: pageDecryption, tags: pageTags, revisions: pageRevisions, logs: pageLogs, logforwarding: pageLogForwarding, backup: pageBackup, system: pageSystem,
+  network: pageNetwork, routing: pageRouting, dhcp: pageDHCP, apps: pageApps, ips: pageIPS, decryption: pageDecryption, tags: pageTags, revisions: pageRevisions, logs: pageLogs, logforwarding: pageLogForwarding, backup: pageBackup, certificate: pageCertificate, system: pageSystem,
   account: pageAccount, users: pageUsers, roles: pageRoles,
 };
 
@@ -2345,7 +2393,7 @@ async function route() {
   } catch (e) {
     if (e.status !== 401) $("#main").replaceChildren(h("div", { class: "panel" }, errorBox(e)));
   }
-  const titles = { logforwarding: "Log forwarding", backup: "Backup", dhcp: "DHCP", apps: "Applications", ips: "IPS", decryption: "Decryption", network: "Interfaces", system: "Administration", account: "My account" };
+  const titles = { logforwarding: "Log forwarding", backup: "Backup", certificate: "Management certificate", dhcp: "DHCP", apps: "Applications", ips: "IPS", decryption: "Decryption", network: "Interfaces", system: "Administration", account: "My account" };
   document.title = `SJB-OS · ${titles[name] || name[0].toUpperCase() + name.slice(1)}`;
 }
 

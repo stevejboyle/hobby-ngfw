@@ -68,6 +68,9 @@ const shellHelp = `SJB-OS commands:
                               fingerprint, to install on clients
   show decryption learned     servers passed through because their clients
                               rejected the firewall's certificate (pinned)
+  show management-certificate [pem]
+                              the web UI and tag API certificate: subject,
+                              names, expiry, fingerprint (pem: and the PEM)
   show api-keys               tag API keys (name, scopes, key)
   show log traffic [N] [TEXT] data-plane log: connections matching rules with
                               logging on (newest first; default 50)
@@ -114,6 +117,11 @@ const shellHelp = `SJB-OS commands:
                               paste your own CA certificate and key (PEM)
   request decryption learned clear
                               decrypt the learned (pinned) servers again
+  request management-certificate import
+                              paste the web UI and tag API certificate, its
+                              intermediates and key (PEM), e.g. from your CA
+  request management-certificate self-signed
+                              back to a new self-signed certificate
   request log-forwarding test NAME
                               send a test message to a log server
   request backup export [accounts]
@@ -475,6 +483,9 @@ func runShellLine(line string, in io.Reader) error {
 		if len(rest) > 0 && rest[0] == "backup" {
 			return requestBackup(rest[1:], in)
 		}
+		if len(rest) > 0 && rest[0] == "management-certificate" {
+			return requestMgmtCert(rest[1:], in)
+		}
 		if len(rest) == 3 && rest[0] == "log-forwarding" && rest[1] == "test" {
 			return requestLogForwardingTest(rest[2])
 		}
@@ -488,7 +499,7 @@ func runShellLine(line string, in io.Reader) error {
 		case "decryption learned clear":
 			return requestDecryptionLearnedClear()
 		}
-		return fmt.Errorf("request ips update | decryption ca generate | decryption ca import | decryption learned clear | log-forwarding test NAME | backup ... | user ... | role ...")
+		return fmt.Errorf("request ips update | decryption ca generate | decryption ca import | decryption learned clear | management-certificate import|self-signed | log-forwarding test NAME | backup ... | user ... | role ...")
 	case "ping":
 		return pingCmd(rest)
 	case "passwd":
@@ -542,6 +553,8 @@ func showCmd(args []string) error {
 		return showRoles()
 	case what == "role" && len(rest) == 1:
 		return showRole(rest[0])
+	case what == "management-certificate" && (len(rest) == 0 || len(rest) == 1 && rest[0] == "pem"):
+		return showMgmtCert(rest)
 	case what == "api-keys" && len(rest) == 0:
 		return printRaw(call("GET", "/v1/api-keys", nil))
 	case what == "interfaces" && len(rest) == 0:

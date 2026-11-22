@@ -76,6 +76,7 @@ var showWhat = []Candidate{
 	{"ips", "IPS engine, signatures and inspected rules"},
 	{"decryption", "TLS decryption: state, CA (show decryption ca), learned servers"},
 	{"statistics", "traffic, applications, hosts and threats over 1h, 24h or 7d"},
+	{"management-certificate", "the web UI and tag API certificate"},
 	{"api-keys", "tag API keys"},
 	{"log", "traffic (data plane), threat (IPS) or system (management) log"},
 	{"whoami", "your user name, role and what it allows"},
@@ -157,7 +158,7 @@ func OperationalCandidates(words []string) []Candidate {
 	case words[0] == "show" && len(words) == 2 && words[1] == "statistics":
 		return []Candidate{{"1h", "the last hour (default)"}, {"24h", "the last day"}, {"7d", "the last week"}}
 	case words[0] == "request" && len(words) == 1:
-		return []Candidate{{"ips", "the IPS"}, {"decryption", "TLS decryption"}, {"user", "add, change or delete users (superusers)"}, {"role", "add, change or delete custom roles (superusers)"}}
+		return []Candidate{{"ips", "the IPS"}, {"decryption", "TLS decryption"}, {"management-certificate", "the web UI and tag API certificate"}, {"user", "add, change or delete users (superusers)"}, {"role", "add, change or delete custom roles (superusers)"}}
 	case words[0] == "request" && len(words) == 2 && words[1] == "user":
 		return []Candidate{{"add", "add NAME role ROLE (asks for the password)"}, {"set", "set NAME role ROLE | disabled yes|no"}, {"password", "password NAME: set someone's password"},
 			{"unlock", "unlock NAME after failed logins"}, {"delete", "delete NAME"}, {"ssh-key", "ssh-key add|delete NAME ..."}}
@@ -192,6 +193,10 @@ func OperationalCandidates(words []string) []Candidate {
 		return []Candidate{{"generate", "make a new CA (replaces the current one)"}, {"import", "paste your own CA certificate and key"}}
 	case words[0] == "request" && len(words) == 3 && words[1] == "decryption" && words[2] == "learned":
 		return []Candidate{{"clear", "decrypt them again"}}
+	case words[0] == "request" && len(words) == 2 && words[1] == "management-certificate":
+		return []Candidate{{"import", "paste your certificate, its intermediates and key"}, {"self-signed", "back to a new self-signed certificate"}}
+	case words[0] == "show" && len(words) == 2 && words[1] == "management-certificate":
+		return []Candidate{{"pem", "also print the certificate and chain (PEM)"}}
 	case words[0] == "request" && len(words) == 2 && words[1] == "ips":
 		return []Candidate{{"update", "download the latest signatures now"}}
 	case words[0] == "show" && len(words) >= 3 && words[1] == "log":

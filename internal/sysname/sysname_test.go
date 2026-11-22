@@ -40,9 +40,9 @@ func (f *fakeSys) host(etc string) *Host {
 
 func TestSync(t *testing.T) {
 	etc := t.TempDir()
-	os.WriteFile(filepath.Join(etc, "hostname"), []byte("groot\n"), 0o644)
-	os.WriteFile(filepath.Join(etc, "hosts"), []byte("127.0.0.1 localhost\n127.0.1.1 groot\n::1 localhost ip6-localhost\n"), 0o644)
-	f := &fakeSys{name: "groot"}
+	os.WriteFile(filepath.Join(etc, "hostname"), []byte("old-fw\n"), 0o644)
+	os.WriteFile(filepath.Join(etc, "hosts"), []byte("127.0.0.1 localhost\n127.0.1.1 old-fw\n::1 localhost ip6-localhost\n"), 0o644)
+	f := &fakeSys{name: "old-fw"}
 	h := f.host(etc)
 
 	changed, err := h.Sync("sjb-lab")
@@ -68,18 +68,18 @@ func TestSync(t *testing.T) {
 
 func TestSyncRefusesInvalid(t *testing.T) {
 	etc := t.TempDir()
-	os.WriteFile(filepath.Join(etc, "hostname"), []byte("groot\n"), 0o644)
-	f := &fakeSys{name: "groot"}
-	if changed, err := f.host(etc).Sync("my firewall"); err == nil || changed || f.name != "groot" {
+	os.WriteFile(filepath.Join(etc, "hostname"), []byte("old-fw\n"), 0o644)
+	f := &fakeSys{name: "old-fw"}
+	if changed, err := f.host(etc).Sync("my firewall"); err == nil || changed || f.name != "old-fw" {
 		t.Errorf("invalid name: changed %v err %v name %q", changed, err, f.name)
 	}
-	if b, _ := os.ReadFile(filepath.Join(etc, "hostname")); string(b) != "groot\n" {
+	if b, _ := os.ReadFile(filepath.Join(etc, "hostname")); string(b) != "old-fw\n" {
 		t.Errorf("/etc/hostname changed: %q", b)
 	}
 }
 
 func TestSyncSetError(t *testing.T) {
-	f := &fakeSys{name: "groot", err: errors.New("operation not permitted")}
+	f := &fakeSys{name: "old-fw", err: errors.New("operation not permitted")}
 	if _, err := f.host(t.TempDir()).Sync("sjb-lab"); err == nil || !strings.Contains(err.Error(), "not permitted") {
 		t.Errorf("err = %v", err)
 	}

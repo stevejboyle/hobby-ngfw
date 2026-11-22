@@ -164,6 +164,15 @@ nat:
     public_port: "8443"
     server: web-server
     server_port: "443"
+  # Hairpin: published on the internet side, reached by users through the
+  # firewall's internet-side address; decrypted like any other connection.
+  - name: hairpin-https
+    type: port-forward
+    interface: veth-inet
+    protocol: tcp
+    public_port: "9443"
+    server: web-server
+    server_port: "443"
 services:
   - name: https
     protocol: tcp
@@ -228,6 +237,9 @@ else
 	out=$(client shop.example 10.10.1.1:8443 "$WORK/sjb-ca.crt" /published)
 	[[ $out == *"path /published"*"issuer: SJB-OS Decryption CA"* ]] && pass "port forward, then decryption: translated before the hand-over ($out)" || fail "published + decrypt: $out"
 	lastlog | grep -q '"decision":"decrypted".*"server_name":"shop.example"' && pass "decryption log: the forwarded connection decrypted" || fail "log: $(lastlog)"
+
+	out=$(client shop.example 203.0.113.1:9443 "$WORK/sjb-ca.crt" /hairpin)
+	[[ $out == *"path /hairpin"*"issuer: SJB-OS Decryption CA"* ]] && pass "hairpin, then decryption: users reach the internet-side port forward, decrypted ($out)" || fail "hairpin + decrypt: $out"
 
 	out=$(client www.bank.example 203.0.113.10 "$WORK/testca.crt" /)
 	[[ $out == *"issuer: Lab Public Root"* ]] && pass "excluded name keeps the server's own certificate" || fail "exclusion: $out"

@@ -129,6 +129,22 @@ func New(d *daemon.Daemon, o Options) http.Handler {
 		v, err := s.d.UpdateIPS(r.Context())
 		reply(w, v, err)
 	}))
+	mux.HandleFunc("GET /ui/api/logforwarding", s.auth(accounts.NeedView(accounts.Logging), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+		reply(w, s.d.LogForwarding(), nil)
+	}))
+	mux.HandleFunc("POST /ui/api/logforwarding/test", s.auth(accounts.NeedChange(accounts.Logging), func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		if err := s.d.TestLogServer(ss.caller(), req.Name); err != nil {
+			daemonFail(w, err)
+			return
+		}
+		reply(w, map[string]bool{"sent": true}, nil)
+	}))
 	mux.HandleFunc("GET /ui/api/decryption", s.auth(accounts.NeedView(accounts.Decryption), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		reply(w, s.d.Decryption(), nil)
 	}))

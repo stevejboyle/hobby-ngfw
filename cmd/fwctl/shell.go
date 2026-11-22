@@ -84,6 +84,9 @@ const shellHelp = `SJB-OS commands:
   show log system [N] [TEXT]  management log: commits, logins, tags, upgrades,
                               user and role changes
 
+  show log-forwarding         log forwarding to syslog servers (a SIEM): state,
+                              messages sent, queued and dropped, last error
+
   show whoami                 your user name, role and what it allows
   show ssh-keys               your SSH keys
   show users                  SJB-OS users: role, status, last login
@@ -111,6 +114,8 @@ const shellHelp = `SJB-OS commands:
                               paste your own CA certificate and key (PEM)
   request decryption learned clear
                               decrypt the learned (pinned) servers again
+  request log-forwarding test NAME
+                              send a test message to a log server
   request user add NAME role ROLE
                               add a user (asks for the password); roles:
                               superuser, admin, read-only or a custom one
@@ -457,6 +462,9 @@ func runShellLine(line string, in io.Reader) error {
 		if len(rest) > 0 && rest[0] == "role" {
 			return requestRole(rest[1:])
 		}
+		if len(rest) == 3 && rest[0] == "log-forwarding" && rest[1] == "test" {
+			return requestLogForwardingTest(rest[2])
+		}
 		switch strings.Join(rest, " ") {
 		case "ips update":
 			return requestIPSUpdate()
@@ -467,7 +475,7 @@ func runShellLine(line string, in io.Reader) error {
 		case "decryption learned clear":
 			return requestDecryptionLearnedClear()
 		}
-		return fmt.Errorf("request ips update | decryption ca generate | decryption ca import | decryption learned clear | user ... | role ...")
+		return fmt.Errorf("request ips update | decryption ca generate | decryption ca import | decryption learned clear | log-forwarding test NAME | backup ... | user ... | role ...")
 	case "ping":
 		return pingCmd(rest)
 	case "passwd":
@@ -507,6 +515,8 @@ func showCmd(args []string) error {
 		return dispatch("tags", rest)
 	case what == "log" && len(rest) >= 1:
 		return showLog(rest)
+	case what == "log-forwarding" && len(rest) == 0:
+		return showLogForwarding()
 	case what == "whoami" && len(rest) == 0:
 		return showWhoami()
 	case what == "ssh-keys" && len(rest) == 0:

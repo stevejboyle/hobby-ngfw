@@ -62,6 +62,8 @@ var commandNeeds = []struct {
 	{"request decryption ca", func(m *me) bool { return m.can("decryption-ca", "change") }},
 	{"request decryption learned", func(m *me) bool { return m.can("decryption", "change") }},
 	{"request ips", func(m *me) bool { return m.can("ips", "change") }},
+	{"request log-forwarding", func(m *me) bool { return m.can("logging", "change") }},
+	{"show log-forwarding", func(m *me) bool { return m.can("logging", "view") }},
 	{"request user", func(m *me) bool { return m.Superuser }},
 	{"request role", func(m *me) bool { return m.Superuser }},
 	{"show running", func(m *me) bool { return m.ConfigView }},

@@ -18,12 +18,13 @@ const areaOfKey = {
   zones: "policy", addresses: "policy", address_groups: "policy", services: "policy", rules: "policy", application_groups: "policy", nat: "policy",
   interfaces: "network", routes: "network", vrfs: "network", routing: "network", bgp_neighbors: "network", ospf_interfaces: "network", prefix_lists: "network",
   dhcp_servers: "dhcp", dhcp_reservations: "dhcp", ips_profiles: "ips", decryption_rules: "decryption", decryption_profiles: "decryption", decryption_exclusions: "decryption",
+  log_servers: "logging",
 };
 // Pages by what they need to be seen.
 const pageNeeds = {
   policy: () => can("policy"), nat: () => can("policy"), objects: () => can("policy"), network: () => can("network"), routing: () => can("network"),
   dhcp: () => can("dhcp"), apps: () => can("monitoring"), ips: () => can("ips"), decryption: () => can("decryption"), tags: () => can("tags"),
-  revisions: () => can("revisions"), logs: () => can("monitoring"), users: isSuper, roles: isSuper,
+  revisions: () => can("revisions"), logs: () => can("monitoring"), logforwarding: () => can("logging"), users: isSuper, roles: isSuper,
 };
 function applyNav() {
   for (const a of document.querySelectorAll("#nav a, .who a")) {
@@ -1822,6 +1823,80 @@ function systemTable(rows) {
       h("td", {}, r.message, r.fields ? h("div", { class: "muted small mono" }, r.fields) : null))))));
 }
 
+// ---- log forwarding ----------------------------------------------------------
+const LOG_TYPES = ["traffic", "threat", "decryption", "system"];
+const LOG_FACILITIES = ["local0", "local1", "local2", "local3", "local4", "local5", "local6", "local7", "user", "daemon", "auth", "authpriv", "syslog"];
+const logPort = (s) => s.port || ((s.transport || "tls") === "tls" ? 6514 : 514);
+
+const logServerSpec = (live) => ({
+  key: "log_servers", title: "Log servers", singular: "log server",
+  note: "Syslog servers (a SIEM) that get the logs as RFC 5424 messages: TLS, TCP (octet-counted) or UDP, with a JSON or CEF body. Changes take effect at commit.",
+  blank: () => ({ name: "", address: "", port: 0, transport: "", format: "", types: [], vrf: "", facility: "", server_name: "", ca: "" }),
+  columns: [
+    ["Name", (s) => h("strong", {}, s.name)],
+    ["Server", (s) => h("span", { class: "mono" }, `${s.address}:${logPort(s)}`)],
+    ["Transport", (s) => s.transport || "tls"],
+    ["Format", (s) => (s.format || "json").toUpperCase()],
+    ["Logs", (s) => chips(s.types, "all")],
+    ["VRF", (s) => s.vrf || "mgmt"],
+    ["State", (s) => {
+      const st = (live.servers || []).find((x) => x.name === s.name);
+      if (!st) return h("span", { class: "muted", title: "Commit to start forwarding to it" }, "not committed");
+      const cls = st.state === "connected" ? "action-allow" : st.state === "error" ? "action-deny" : "action-reset";
+      return h("span", { class: cls, title: st.last_error || "" }, st.state);
+    }],
+  ],
+  form: (s) => {
+    const f = {
+      name: textField("Name", s.name, { required: true, placeholder: "siem" }),
+      address: textField("Address", s.address, { required: true, placeholder: "10.0.0.50", hint: "IPv4 address of the syslog server" }),
+      transport: selectField("Transport", s.transport || "", [{ value: "", label: "TLS (default)" }, { value: "tcp", label: "TCP" }, { value: "udp", label: "UDP" }]),
+      port: textField("Port", s.port ? String(s.port) : "", { placeholder: "6514 for TLS, 514 otherwise" }),
+      format: selectField("Format", s.format || "", [{ value: "", label: "JSON (default)" }, { value: "cef", label: "CEF" }]),
+      types: multiField("Logs to send", s.types, LOG_TYPES, { anyLabel: "all of them", noAny: false }),
+      vrf: selectField("Reached via", s.vrf || "", [{ value: "", label: "management VRF (default)" }, { value: "default", label: "default VRF (inside/outside)" }]),
+      facility: selectField("Facility", s.facility || "", [{ value: "", label: "local0 (default)" }, ...LOG_FACILITIES.slice(1)]),
+      server_name: textField("TLS server name", s.server_name, { placeholder: "siem.lab", hint: "Checked on the server's certificate (default: the address)" }),
+      ca: textArea("TLS CA certificate (PEM)", s.ca, { rows: 5, placeholder: "-----BEGIN CERTIFICATE-----", hint: "The server's certificate must chain to it; empty: the system's trusted roots" }),
+    };
+    return form(Object.values(f), () => {
+      const tls = f.transport.get() === "";
+      return {
+        name: f.name.get(), address: f.address.get(), port: parseInt(f.port.get(), 10) || 0, transport: f.transport.get(),
+        format: f.format.get(), types: f.types.get(), vrf: f.vrf.get(), facility: f.facility.get(),
+        server_name: tls ? f.server_name.get() : "", ca: tls ? f.ca.get().trim() : "",
+      };
+    });
+  },
+});
+
+async function pageLogForwarding() {
+  const live = await api("GET", "logforwarding").catch(() => ({ servers: [] }));
+  const servers = live.servers || [];
+  const testBtn = (name) => h("button", { class: "link", onclick: async () => {
+    try { await api("POST", "logforwarding/test", { name }); toast(`Test message queued for ${name}.`); setTimeout(route, 1500); } catch (e) { toast(e.message); }
+  } }, "Send test");
+  const when = (t) => (t ? fmtTime(t) : "");
+  const status = servers.length ? h("section", { class: "panel" }, h("h2", {}, "Forwarding status"),
+    h("p", { class: live.following ? "muted small" : "action-deny" }, live.following ? "Reading the journal." : `Not reading the journal${live.follow_error ? ": " + live.follow_error : ""}.`),
+    h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ["Server", "State", "Since", "Sent", "Queued", "Dropped", "Last sent", "Last error", ""].map((t) => h("th", {}, t)))),
+      h("tbody", {}, servers.map((s) => h("tr", {},
+        h("td", {}, h("strong", {}, s.name), h("div", { class: "muted small mono" }, `${s.transport} ${s.address}:${s.port}`)),
+        h("td", {}, h("span", { class: s.state === "connected" ? "action-allow" : s.state === "error" ? "action-deny" : "action-reset" }, s.state)),
+        h("td", {}, when(s.since)),
+        h("td", { class: "num" }, String(s.sent)), h("td", { class: "num" }, String(s.queued)),
+        h("td", { class: "num" + (s.dropped ? " action-deny" : "") }, String(s.dropped)),
+        h("td", {}, when(s.last_sent)),
+        h("td", { class: "small" }, s.last_error ? `${s.last_error} (${when(s.last_error_at)})` : ""),
+        h("td", { class: "actions" }, can("logging", "change") ? testBtn(s.name) : null))))))) : null;
+  return h("div", {},
+    h("div", { class: "page-head" }, h("h1", {}, "Log forwarding"), h("span", { class: "spacer" }), h("button", { onclick: route }, "Refresh")),
+    h("p", { class: "tagline" }, "Word of every crossing goes back to headquarters."),
+    status, listSection(logServerSpec(live)),
+    h("p", { class: "muted small" }, "Each server has a queue of 10,000 messages; when it is full (the server is down for long), the oldest are dropped and counted. Forwarding starts from the moment a server is first committed; ngfwd resumes where it left off after a restart."));
+}
+
 async function pageIPS() {
   const st = await api("GET", "ips");
   const sig = st.signatures || {};
@@ -2127,7 +2202,7 @@ async function pageRoles() {
 // ---- router ----------------------------------------------------------------
 const pages = {
   dashboard: pageDashboard, policy: pagePolicy, nat: pageNat, objects: pageObjects,
-  network: pageNetwork, routing: pageRouting, dhcp: pageDHCP, apps: pageApps, ips: pageIPS, decryption: pageDecryption, tags: pageTags, revisions: pageRevisions, logs: pageLogs, system: pageSystem,
+  network: pageNetwork, routing: pageRouting, dhcp: pageDHCP, apps: pageApps, ips: pageIPS, decryption: pageDecryption, tags: pageTags, revisions: pageRevisions, logs: pageLogs, logforwarding: pageLogForwarding, system: pageSystem,
   account: pageAccount, users: pageUsers, roles: pageRoles,
 };
 
@@ -2149,7 +2224,7 @@ async function route() {
   } catch (e) {
     if (e.status !== 401) $("#main").replaceChildren(h("div", { class: "panel" }, errorBox(e)));
   }
-  const titles = { dhcp: "DHCP", apps: "Applications", ips: "IPS", decryption: "Decryption", network: "Interfaces", system: "Administration", account: "My account" };
+  const titles = { logforwarding: "Log forwarding", dhcp: "DHCP", apps: "Applications", ips: "IPS", decryption: "Decryption", network: "Interfaces", system: "Administration", account: "My account" };
   document.title = `SJB-OS · ${titles[name] || name[0].toUpperCase() + name.slice(1)}`;
 }
 

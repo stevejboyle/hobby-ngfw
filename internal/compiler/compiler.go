@@ -36,13 +36,17 @@ type Result struct {
 	Warnings []string
 	// Sets maps each tag used by a dynamic address group to its nft set name.
 	Sets map[string]string
+	// IfAddrSets maps an interface to the set holding its live addresses
+	// (hairpin NAT of a port-forward on an interface with no configured
+	// address); ngfwd fills them.
+	IfAddrSets map[string]string
 }
 
 // Compile builds the ruleset. cfg must already be validated. tags is the
 // current registry snapshot; its entries are written into the dynamic sets
 // in the same transaction, so a commit never drops live tag registrations.
 func Compile(cfg *config.Config, tags map[string][]TagEntry) (*Result, error) {
-	c := &compiler{cfg: cfg, res: &Result{Sets: map[string]string{}}}
+	c := &compiler{cfg: cfg, res: &Result{Sets: map[string]string{}, IfAddrSets: map[string]string{}}}
 	if err := c.index(); err != nil {
 		return nil, err
 	}

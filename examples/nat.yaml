@@ -4,6 +4,12 @@
 # traffic. Rules see the translated connection, so they name the server's
 # inside address and the zone it sits in (here dmz), not the public address.
 # The server must be in the same VRF as the interface the traffic arrives on.
+#
+# Hairpin NAT is on for every entry unless it says hairpin: off: inside
+# clients may use the public address too (rules see them coming from their
+# own zone, going to the server's inside address), and clients on the
+# server's own network are masqueraded so the replies come back through
+# SJB-OS.
 system:
   hostname: sjb-fw
   mgmt_interface: mgmt
@@ -63,6 +69,8 @@ nat:
     server: web-server
     server_port: "8443"
   # A port range on an extra public address, same ports on the server.
+  # Published to the outside only: inside clients use the server's own
+  # address.
   - name: game
     type: port-forward
     interface: outside
@@ -70,6 +78,7 @@ nat:
     protocol: udp
     public_port: 27015-27020
     server: game-server
+    hairpin: "off"
   # 1:1: every port of mail-public goes to the mail server, and the mail
   # server's own outbound traffic leaves from mail-public (bidirectional,
   # the default).
@@ -115,6 +124,14 @@ rules:
     action: allow
     log: true
     ips_profile: default
+  # Inside clients reach the web server, also by its public address
+  # (hairpin): the rule names the server's inside address and port.
+  - name: inside-to-web
+    from: [inside]
+    to: [dmz]
+    destination: [web-server]
+    service: [web-alt]
+    action: allow
   - name: inside-out
     from: [inside, dmz]
     to: [outside]

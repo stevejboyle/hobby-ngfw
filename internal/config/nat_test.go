@@ -48,6 +48,14 @@ func TestValidNAT(t *testing.T) {
 	if !c.NAT[6].BidirectionalOn() || c.NAT[7].BidirectionalOn() || c.NAT[1].BidirectionalOn() {
 		t.Error("BidirectionalOn: want on by default for static, off when set off and for port-forward")
 	}
+	c.NAT[1].Hairpin = "off"
+	c.NAT[6].Hairpin = "on"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("hairpin on/off should be valid: %v", err)
+	}
+	if !c.NAT[2].HairpinOn() || !c.NAT[6].HairpinOn() || c.NAT[1].HairpinOn() || c.NAT[0].HairpinOn() {
+		t.Error("HairpinOn: want on by default for published entries, off when set off and for masquerade")
+	}
 }
 
 func TestInvalidNAT(t *testing.T) {
@@ -75,6 +83,8 @@ func TestInvalidNAT(t *testing.T) {
 		{"list of ports", []NATRule{fwd("n", "", "tcp", "80,443", "srv", "")}, "public_port: invalid port"},
 		{"range to other range", []NATRule{fwd("n", "", "tcp", "8000-8010", "srv", "9000-9010")}, "same range on the server"},
 		{"port to range", []NATRule{fwd("n", "", "tcp", "80", "srv", "80-81")}, "must be one port"},
+		{"bad hairpin", []NATRule{func() NATRule { n := fwd("n", "", "tcp", "80", "srv", ""); n.Hairpin = "yes"; return n }()}, "hairpin must be on or off"},
+		{"hairpin on masquerade", []NATRule{{Name: "n", Type: NATMasquerade, Hairpin: "on"}}, "hairpin is for port-forward"},
 		{"bidirectional on forward", []NATRule{func() NATRule { n := fwd("n", "", "tcp", "80", "srv", ""); n.Bidirectional = "on"; return n }()}, "bidirectional is for static NAT"},
 		{"overlapping forwards", []NATRule{fwd("a", "", "tcp", "8000-8010", "srv", ""), fwd("b", "", "tcp", "8005", "srv2", "")}, `overlaps port-forward "a"`},
 		{"static without public", []NATRule{static("n", "", "srv", "")}, "public_address required for static NAT"},

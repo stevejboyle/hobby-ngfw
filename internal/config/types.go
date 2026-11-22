@@ -156,6 +156,10 @@ type NATRule struct {
 	// outbound traffic from its public address; "off" leaves it to the
 	// source NAT rules.
 	Bidirectional string `yaml:"bidirectional,omitempty" json:"bidirectional"`
+	// Hairpin (port-forward, static): "on" (also when unset) lets clients
+	// on SJB-OS's other zoned interfaces in the same VRF reach the server
+	// by its public address too; "off" publishes it on Interface only.
+	Hairpin string `yaml:"hairpin,omitempty" json:"hairpin"`
 }
 
 // NAT types.
@@ -171,6 +175,10 @@ func (n NATRule) Published() bool { return n.Type == NATPortForward || n.Type ==
 // BidirectionalOn reports whether a static entry also translates the
 // server's outbound traffic.
 func (n NATRule) BidirectionalOn() bool { return n.Type == NATStatic && n.Bidirectional != "off" }
+
+// HairpinOn reports whether a published entry is also reachable by its
+// public address from SJB-OS's other interfaces (on unless set off).
+func (n NATRule) HairpinOn() bool { return n.Published() && n.Hairpin != "off" }
 
 // System holds device-wide settings.
 type System struct {

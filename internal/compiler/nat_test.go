@@ -68,7 +68,7 @@ func TestBidirectionalBeforeMasquerade(t *testing.T) {
 
 func TestPortRangeKeepsPorts(t *testing.T) {
 	c := natCfg()
-	c.NAT = []config.NATRule{{Name: "g", Type: config.NATPortForward, Interface: "eth2", PublicAddress: "pub", Protocol: "udp", PublicPort: "27015-27020", Server: "srv"}}
+	c.NAT = []config.NATRule{{Name: "g", Type: config.NATPortForward, Interface: "eth2", PublicAddress: "pub", Protocol: "udp", PublicPort: "27015-27020", Server: "srv", Hairpin: "off"}}
 	res := compile(t, c)
 	if want := `iifname "eth2" ip daddr 198.51.100.7 udp dport 27015-27020 counter dnat ip to 10.9.0.10 comment "nat:g"`; !strings.Contains(res.Ruleset, want) {
 		t.Errorf("missing %q in:\n%s", want, res.Ruleset)
@@ -107,5 +107,62 @@ func TestPublishedWithoutAllowRuleWarns(t *testing.T) {
 				t.Errorf("warning = %v, want %v (warnings: %v)", got, tc.warn, res.Warnings)
 			}
 		})
+	}
+}
+
+func TestHairpin(t *testing.T) {
+	c := natCfg()
+	c.NAT = []config.NATRule{
+		{Name: "out", From: []string{"a"}, To: []string{"b"}, Type: config.NATMasquerade},
+		{Name: "web", Type: config.NATPortForward, Interface: "eth2", Protocol: "tcp", PublicPort: "443", Server: "srv", ServerPort: "8080"},
+		{Name: "one", Type: config.NATStatic, Interface: "eth2", PublicAddress: "pub", Server: "srv", Bidirectional: "off"},
+	}
+	res := compile(t, c)
+	for _, want := range []string{
+		// eth1 (the server's own network) and eth3: every other zoned interface.
+		`iifname { "eth1", "eth3" } ip daddr @ifaddr_eth2 tcp dport 443 counter dnat ip to 10.9.0.10:8080 comment "nat:web hairpin"`,
+		`iifname { "eth1", "eth3" } ip daddr 198.51.100.7 counter dnat ip to 10.9.0.10 comment "nat:one hairpin"`,
+		"set ifaddr_eth2 {",
+	} {
+		if !strings.Contains(res.Ruleset, want) {
+			t.Errorf("missing %q in:\n%s", want, res.Ruleset)
+		}
+	}
+	if res.IfAddrSets["eth2"] != "ifaddr_eth2" || len(res.IfAddrSets) != 1 {
+		t.Errorf("IfAddrSets = %v", res.IfAddrSets)
+	}
+	// Clients on the server's own network are masqueraded, once per server,
+	// ahead of the other source NAT.
+	hair := `oifname "eth1" ip saddr 10.9.0.0/24 ip daddr 10.9.0.10 counter masquerade comment "nat:hairpin 10.9.0.10"`
+	if n := strings.Count(res.Ruleset, hair); n != 1 {
+		t.Fatalf("want the hairpin masquerade once, got %d:\n%s", n, res.Ruleset)
+	}
+	if strings.Index(res.Ruleset, hair) > strings.Index(res.Ruleset, `masquerade comment "nat:out"`) {
+		t.Error("hairpin masquerade must come before the other source NAT")
+	}
+}
+
+func TestHairpinConfiguredAddressVRFAndOff(t *testing.T) {
+	c := natCfg()
+	c.Interfaces[1].Address = "198.51.100.2/24"
+	c.VRFs = []config.VRF{{Name: "blue"}}
+	// eth1.30: another VRF, never hairpinned.
+	c.Interfaces = append(c.Interfaces, config.Interface{Name: "eth1.30", Zone: "b", VRF: "blue", Address: "10.30.0.1/24"})
+	c.NAT = []config.NATRule{
+		{Name: "web", Type: config.NATPortForward, Interface: "eth2", Protocol: "tcp", PublicPort: "443", Server: "srv"},
+		{Name: "dns", Type: config.NATPortForward, Interface: "eth2", PublicAddress: "pub", Protocol: "udp", PublicPort: "53", Server: "srv", Hairpin: "off"},
+	}
+	res := compile(t, c)
+	if want := `iifname { "eth1", "eth3" } ip daddr 198.51.100.2 tcp dport 443 counter dnat ip to 10.9.0.10:443 comment "nat:web hairpin"`; !strings.Contains(res.Ruleset, want) {
+		t.Errorf("missing %q in:\n%s", want, res.Ruleset)
+	}
+	if strings.Contains(res.Ruleset, "ifaddr_") || len(res.IfAddrSets) != 0 {
+		t.Error("a configured interface address needs no live set")
+	}
+	if strings.Contains(res.Ruleset, "nat:dns hairpin") {
+		t.Error("hairpin off: no hairpin line")
+	}
+	if strings.Contains(res.Ruleset, `"eth1.30" } ip daddr`) {
+		t.Errorf("eth1.30 is in another VRF:\n%s", res.Ruleset)
 	}
 }

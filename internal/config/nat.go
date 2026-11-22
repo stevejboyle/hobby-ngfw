@@ -84,7 +84,7 @@ func (v *validator) nat(c *Config, zones, addrs map[string]bool) {
 			v.refs(p, "source", n.Source, "address or group", func(s string) bool { return addrs[s] })
 			for _, f := range [][2]string{
 				{"interface", n.Interface}, {"public_address", n.PublicAddress}, {"protocol", n.Protocol},
-				{"public_port", n.PublicPort}, {"server", n.Server}, {"server_port", n.ServerPort}, {"bidirectional", n.Bidirectional},
+				{"public_port", n.PublicPort}, {"server", n.Server}, {"server_port", n.ServerPort}, {"bidirectional", n.Bidirectional}, {"hairpin", n.Hairpin},
 			} {
 				if f[1] != "" {
 					v.add(p, "%s is for port-forward and static entries, not masquerade", f[0])
@@ -98,6 +98,11 @@ func (v *validator) nat(c *Config, zones, addrs map[string]bool) {
 		}
 
 		// Published server: port-forward or static.
+		switch n.Hairpin {
+		case "", "on", "off":
+		default:
+			v.add(p, "hairpin must be on or off, got %q", n.Hairpin)
+		}
 		if len(n.From) > 0 || len(n.To) > 0 || len(n.Source) > 0 {
 			v.add(p, "from, to and source are for masquerade; %s entries use interface", n.Type)
 		}

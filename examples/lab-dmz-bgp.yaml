@@ -1,7 +1,8 @@
 # SJB-OS lab: inside, DMZ and outside, with eBGP to the upstream router.
-# Needs SJB-OS 0.9.10-r02 or later (inside as a trunk).
+# Needs SJB-OS 0.9.11-r01 or later (inside as a trunk, log forwarding).
 #
 #   mgmt     192.168.1.0/24    SJB-OS 192.168.1.75 (deployment settings), gateway 192.168.1.1
+#            a syslog server at 192.168.1.62 gets every log
 #   outside  192.168.149.0/24  SJB-OS 192.168.149.254, upstream router 192.168.149.1
 #   inside   192.168.150.0/24  SJB-OS 192.168.150.1, VLAN 150 on the inside trunk, DHCP .101-.199
 #   dmz      192.168.151.0/24  SJB-OS 192.168.151.1, VLAN 151 on the inside trunk, a web server
@@ -334,3 +335,13 @@ decryption_exclusions:
         - '*.dropbox.com'
         - '*.whatsapp.net'
         - '*.signal.org'
+
+log_servers:
+    # Every log (traffic, threat, decryption, system) as JSON over the
+    # management network. UDP 514 works with any syslog server; for TLS
+    # (the default, port 6514) drop transport and port, and give the
+    # server's CA with ca (or server_name, if a public CA signed it).
+    - name: lab-syslog
+      address: 192.168.1.62
+      transport: udp
+      port: 514

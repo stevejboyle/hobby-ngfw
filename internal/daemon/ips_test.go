@@ -3,6 +3,7 @@ package daemon
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stevejboyle/hobby-ngfw/internal/compiler"
 	"github.com/stevejboyle/hobby-ngfw/internal/ips"
@@ -30,10 +31,29 @@ func (f *fakeSuricata) ConnMark(proto, src string, sport int, dst string, dport 
 	return f.mark, f.decrypted, f.mark != 0
 }
 
+// testEngine is an IPS engine whose downloads fail at once. A commit with
+// IPS rules starts a background download, which records its failure in
+// the engine's directory; the cleanup waits for it, so it can't write
+// there after the test's TempDir is removed.
+func testEngine(t *testing.T, d *Daemon) *ips.Engine {
+	e := &ips.Engine{Dir: t.TempDir(), URL: "http://127.0.0.1:1/none"}
+	t.Cleanup(func() {
+		if d.ips.lastTry.IsZero() {
+			return // no download was started
+		}
+		for deadline := time.Now().Add(10 * time.Second); e.Status().LastAttempt.IsZero() && time.Now().Before(deadline); {
+			time.Sleep(5 * time.Millisecond)
+		}
+		d.ips.updating.Lock() // held until the download has returned
+		d.ips.updating.Unlock()
+	})
+	return e
+}
+
 func TestIPSLifecycleAndAlerts(t *testing.T) {
 	d, nf := setup(t)
 	fs := &fakeSuricata{mem: 2 << 30}
-	e := &ips.Engine{Dir: t.TempDir(), URL: "http://127.0.0.1:1/none"}
+	e := testEngine(t, d)
 	d.SetIPS(fs, e)
 	var lines []string
 	d.ips.emit = func(s string) { lines = append(lines, s) }

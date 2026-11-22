@@ -317,6 +317,22 @@ func TestNotTLS(t *testing.T) {
 		rule := defaultRule
 		rule.Unsupported = unsupported
 		h := newHarness(t, decrypt.ModeDecrypt, pki.leaf(t, "x.example", time.Now().Add(time.Hour)), pki, rule)
+		// The server end reads whatever arrives: the harness's TLS upstream
+		// would close on the first bytes, and the rest of the client's
+		// bytes could then never cross the loop.
+		sink, _ := net.Listen("tcp", "127.0.0.1:0")
+		go func() {
+			for {
+				s, err := sink.Accept()
+				if err != nil {
+					return
+				}
+				go io.Copy(io.Discard, s)
+			}
+		}()
+		h.p.dialUp = func(ctx context.Context, _ netip.AddrPort) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", sink.Addr().String())
+		}
 		ln, _ := net.Listen("tcp", "127.0.0.1:0")
 		go func() {
 			c, _ := ln.Accept()
@@ -341,6 +357,7 @@ func TestNotTLS(t *testing.T) {
 		}
 		c.Close()
 		ln.Close()
+		sink.Close()
 	}
 }
 

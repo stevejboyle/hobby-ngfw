@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/ips"
 	"github.com/stevejboyle/hobby-ngfw/internal/nfqueue"
 )
 
@@ -14,7 +13,7 @@ import (
 func TestIPSStateFollowsTheQueueNotTheProcess(t *testing.T) {
 	d, _ := setup(t)
 	fs := &fakeSuricata{mem: 8 << 30}
-	d.SetIPS(fs, &ips.Engine{Dir: t.TempDir(), URL: "http://127.0.0.1:1/none"})
+	d.SetIPS(fs, testEngine(t, d))
 	var q nfqueue.State
 	d.Queues = func(...int) nfqueue.State { return q }
 

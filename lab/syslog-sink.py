@@ -5,6 +5,8 @@ ports; each message is appended as one line to DIR/<transport>.log.
 usage: syslog-sink.py DIR UDP_PORT TCP_PORT TLS_PORT CERT KEY"""
 import os, socket, ssl, sys, threading
 
+BIND = os.environ.get("SINK_BIND", "0.0.0.0")
+
 d, udp_port, tcp_port, tls_port, cert, key = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), sys.argv[5], sys.argv[6]
 lock = threading.Lock()
 
@@ -14,7 +16,7 @@ def write(name, msg):
 
 def udp():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.bind(("0.0.0.0", udp_port))
+    s.bind((BIND, udp_port))
     while True:
         data, _ = s.recvfrom(65535)
         write("udp", data.decode(errors="replace"))
@@ -39,7 +41,7 @@ def frames(conn, name):
 def stream(port, name, ctx=None):
     s = socket.socket()
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(("0.0.0.0", port))
+    s.bind((BIND, port))
     s.listen()
     while True:
         c, _ = s.accept()

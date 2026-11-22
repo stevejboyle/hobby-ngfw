@@ -988,7 +988,7 @@ mkdir -p "$SINK"
 	openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout siem.key -out siem.csr -subj "/CN=siem.lab" 2>/dev/null &&
 	printf 'subjectAltName=DNS:siem.lab\nextendedKeyUsage=serverAuth\n' >siem.ext &&
 	openssl x509 -req -in siem.csr -CA lca.crt -CAkey lca.key -CAcreateserial -days 2 -extfile siem.ext -out siem.crt 2>/dev/null)
-python3 -I lab/syslog-sink.py "$SINK" 15514 15515 16514 "$WORK/siem.crt" "$WORK/siem.key" &
+SINK_BIND=127.0.0.1 python3 -I lab/syslog-sink.py "$SINK" 15514 15515 16514 "$WORK/siem.crt" "$WORK/siem.key" &
 SINK_PID=$!
 sleep 1
 ca1=$(tr '\n' ' ' <"$WORK/lca.crt")

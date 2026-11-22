@@ -24,7 +24,7 @@ const areaOfKey = {
 const pageNeeds = {
   policy: () => can("policy"), nat: () => can("policy"), objects: () => can("policy"), network: () => can("network"), routing: () => can("network"),
   dhcp: () => can("dhcp"), apps: () => can("monitoring"), ips: () => can("ips"), decryption: () => can("decryption"), tags: () => can("tags"),
-  revisions: () => can("revisions"), logs: () => can("monitoring"), logforwarding: () => can("logging"), users: isSuper, roles: isSuper,
+  revisions: () => can("revisions"), logs: () => can("monitoring"), logforwarding: () => can("logging"), backup: () => !!(state.me && state.me.config_view), users: isSuper, roles: isSuper,
 };
 function applyNav() {
   for (const a of document.querySelectorAll("#nav a, .who a")) {
@@ -192,7 +192,7 @@ async function refresh() {
 function normalise(c) {
   c = c || {};
   c.system = c.system || { hostname: "", mgmt_interface: "" };
-  for (const k of ["zones", "interfaces", "addresses", "address_groups", "services", "rules", "nat", "routes", "vrfs", "routing", "bgp_neighbors", "ospf_interfaces", "prefix_lists", "dhcp_servers", "dhcp_reservations", "application_groups", "ips_profiles", "decryption_rules", "decryption_profiles", "decryption_exclusions"]) c[k] = c[k] || [];
+  for (const k of ["zones", "interfaces", "addresses", "address_groups", "services", "rules", "nat", "routes", "vrfs", "routing", "bgp_neighbors", "ospf_interfaces", "prefix_lists", "dhcp_servers", "dhcp_reservations", "application_groups", "ips_profiles", "decryption_rules", "decryption_profiles", "decryption_exclusions", "log_servers"]) c[k] = c[k] || [];
   c.system.ips_disabled_signatures = c.system.ips_disabled_signatures || [];
   return c;
 }
@@ -276,10 +276,11 @@ async function showDiff() {
   ), { submit: null, wide: true });
 }
 
-function commitDialog() {
-  const msg = h("input", { name: "message", placeholder: "What changed and why" });
+function commitDialog(opts) {
+  const o = opts instanceof Event || !opts ? {} : opts;
+  const msg = h("input", { name: "message", placeholder: "What changed and why", value: o.message || "" });
   const useTimer = h("input", { type: "checkbox", checked: true });
-  const mins = h("input", { type: "number", min: 1, max: 60, value: 5 });
+  const mins = h("input", { type: "number", min: 1, max: 60, value: o.minutes || 5 });
   useTimer.addEventListener("change", () => { mins.disabled = !useTimer.checked; });
   modal("Commit", h("div", { class: "grid2" },
     h("label", {}, "Message", msg),
@@ -1992,6 +1993,126 @@ async function pageSystem() {
   );
 }
 
+// ---- backup and restore --------------------------------------------------------
+function saveFile(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+  const a = h("a", { href: url, download: name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function pageBackup() {
+  // Export.
+  const withAcc = checkField("Include users, roles and tag API keys (encrypted)", false);
+  const encrypt = checkField("Encrypt with a passphrase", false);
+  const pass1 = h("input", { type: "password", autocomplete: "new-password", minlength: 12 });
+  const pass2 = h("input", { type: "password", autocomplete: "new-password", minlength: 12 });
+  const passRow = h("div", { class: "grid2 hidden" }, h("label", {}, "Passphrase", h("span", { class: "hint" }, "12 or more characters; without it the backup can't be restored"), pass1),
+    h("label", {}, "Again", pass2));
+  const box = (f) => f.node.querySelector("input");
+  const syncPass = () => {
+    if (box(withAcc).checked) { box(encrypt).checked = true; box(encrypt).disabled = true; } else box(encrypt).disabled = false;
+    passRow.classList.toggle("hidden", !box(encrypt).checked);
+  };
+  box(withAcc).addEventListener("change", syncPass);
+  box(encrypt).addEventListener("change", syncPass);
+  const exportMsg = h("p", { class: "muted small" });
+  const exportBtn = h("button", { class: "primary", onclick: async () => {
+    const accounts = isSuper() && withAcc.get();
+    let passphrase = "";
+    if (box(encrypt).checked) {
+      if (pass1.value !== pass2.value) return toast("The passphrases don't match.");
+      passphrase = pass1.value;
+    }
+    exportBtn.disabled = true;
+    try {
+      const b = await api("POST", "backup/export", { accounts, passphrase });
+      saveFile(b.file_name, b.data);
+      exportMsg.textContent = `Saved ${b.file_name}: ${b.header.contents.join(" and ")} of revision ${b.header.revision}, ${b.header.encryption ? "encrypted" : "not encrypted"}.` +
+        ((b.warnings || []).length ? " Warnings: " + b.warnings.join("; ") : "");
+      pass1.value = pass2.value = "";
+    } catch (e) { toast(e.message); }
+    exportBtn.disabled = false;
+  } }, "Download backup");
+
+  // Restore.
+  const file = h("input", { type: "file", accept: ".backup,.txt" });
+  const paste = h("textarea", { rows: 4, placeholder: "…or paste it here (-----BEGIN SJB-OS BACKUP----- … -----END SJB-OS BACKUP-----)" });
+  const info = h("div", {});
+  let data = "";
+  const check = h("button", { onclick: async () => {
+    data = file.files[0] ? await file.files[0].text() : paste.value;
+    if (!data.trim()) return toast("Choose a backup file or paste one first.");
+    try {
+      const hd = await api("POST", "backup/inspect", { data });
+      info.replaceChildren(restoreForm(hd));
+    } catch (e) { info.replaceChildren(errorBox(e)); }
+  } }, "Check backup");
+  const restoreForm = (hd) => {
+    const hasAcc = hd.contents.includes("accounts");
+    const cfg = checkField("Config → candidate (commit it afterwards, with a confirm timer)", state.me.config_edit);
+    const acc = checkField("Users, roles and tag API keys (take effect at once)", false);
+    if (!state.me.config_edit) box(cfg).disabled = true;
+    if (!hasAcc || !isSuper()) box(acc).disabled = true;
+    const pass = h("input", { type: "password", autocomplete: "off" });
+    const go = h("button", { class: "primary", onclick: async () => {
+      if (!cfg.get() && !acc.get()) return toast("Choose what to restore.");
+      go.disabled = true;
+      try {
+        const r = await api("POST", "backup/restore", { data, passphrase: pass.value, config: cfg.get(), accounts: acc.get() });
+        pass.value = "";
+        await refresh();
+        restoreDone(hd, r);
+      } catch (e) { toast(e.message); }
+      go.disabled = false;
+    } }, "Restore");
+    return h("div", {},
+      h("table", { class: "kv" }, h("tbody", {},
+        [["Firewall", hd.hostname || "-"], ["Revision", String(hd.revision || "-")], ["Made", fmtWhen(hd.created)], ["By", hd.by],
+          ["SJB-OS", hd.sjb_os || "-"], ["Contents", hd.contents.join(", ")], ["Encrypted", hd.encryption ? "yes" : "no"]]
+          .map(([k, v]) => h("tr", {}, h("th", {}, k), h("td", {}, v))))),
+      h("div", { class: "grid2" }, cfg.node, acc.node,
+        hd.encryption ? h("label", {}, "Passphrase", pass) : null),
+      !hasAcc ? h("p", { class: "muted small" }, "This backup has no users, roles or API keys.") :
+        !isSuper() ? h("p", { class: "muted small" }, "Only superusers restore users, roles and API keys.") :
+        h("p", { class: "muted small" }, "Restoring accounts adds or updates the backup's users (with their passwords and SSH keys) and custom roles; users the backup doesn't have are kept, and admin and you are left as you are."),
+      h("div", { class: "row" }, go));
+  };
+  const restoreDone = (hd, r) => {
+    const parts = [];
+    if (r.accounts) {
+      const a = r.accounts, n = (x) => (x && x.length ? x.join(", ") : "none");
+      parts.push(h("p", {}, `Users added: ${n(a.added)}. Updated: ${n(a.updated)}. Kept as they were: ${n(a.kept)}. Not changed: ${n(a.skipped)}. Custom roles: ${n(a.roles)}.`));
+    }
+    if (r.api_keys != null) parts.push(h("p", {}, `Tag API keys restored: ${r.api_keys}, in use now.`));
+    if ((r.warnings || []).length) parts.push(h("ul", {}, r.warnings.map((w) => h("li", { class: "action-reset" }, w))));
+    if (r.config) {
+      if (!(r.diff || "").trim()) parts.push(h("p", {}, "The backup's config is the same as the running config: nothing to commit."));
+      else {
+        parts.push(h("p", {}, "The backup's config is now the candidate. Nothing is applied until you commit:"),
+          h("pre", { class: "diff block" }, r.diff.split("\n").map((l) => h("span", { class: l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : "" }, l + "\n"))),
+          h("div", { class: "row" },
+            h("button", { class: "primary", onclick: () => commitDialog({ message: `Restore backup of ${hd.hostname || "firewall"} revision ${hd.revision}`, minutes: 10 }) }, "Commit with confirm…"),
+            h("button", { onclick: () => confirmDialog("Discard the restored config?", "The candidate goes back to the running config.", async () => { await api("POST", "config/revert", {}); await refresh(); route(); toast("Restored config discarded."); }, "Discard") }, "Discard")));
+      }
+    }
+    info.replaceChildren(h("div", {}, h("h3", {}, "Restored"), parts));
+  };
+
+  return h("div", {},
+    h("div", { class: "page-head" }, h("h1", {}, "Backup")),
+    h("p", { class: "tagline" }, "A spare key to the gatehouse, kept somewhere safe."),
+    h("section", { class: "panel" }, h("h2", {}, "Back up"),
+      h("p", { class: "muted small" }, "Downloads the running config as one text file. Superusers can add the users (with their password hashes and SSH keys), custom roles and tag API keys; such a backup is always encrypted (AES-256-GCM)."),
+      h("div", { class: "grid2" }, isSuper() ? withAcc.node : null, encrypt.node), passRow,
+      h("div", { class: "row" }, exportBtn), exportMsg),
+    h("section", { class: "panel" }, h("h2", {}, "Restore"),
+      h("p", { class: "muted small" }, "The config is restored into the candidate, never straight onto the firewall: review the diff, then commit it with a confirm timer as usual. Your role must be able to change every part of the config the backup changes."),
+      h("div", { class: "row" }, h("label", {}, "Backup file", file), check), paste, info));
+}
+
 function waitForUpgrade(from) {
   let n = 0;
   const poll = async () => {
@@ -2202,7 +2323,7 @@ async function pageRoles() {
 // ---- router ----------------------------------------------------------------
 const pages = {
   dashboard: pageDashboard, policy: pagePolicy, nat: pageNat, objects: pageObjects,
-  network: pageNetwork, routing: pageRouting, dhcp: pageDHCP, apps: pageApps, ips: pageIPS, decryption: pageDecryption, tags: pageTags, revisions: pageRevisions, logs: pageLogs, logforwarding: pageLogForwarding, system: pageSystem,
+  network: pageNetwork, routing: pageRouting, dhcp: pageDHCP, apps: pageApps, ips: pageIPS, decryption: pageDecryption, tags: pageTags, revisions: pageRevisions, logs: pageLogs, logforwarding: pageLogForwarding, backup: pageBackup, system: pageSystem,
   account: pageAccount, users: pageUsers, roles: pageRoles,
 };
 
@@ -2224,7 +2345,7 @@ async function route() {
   } catch (e) {
     if (e.status !== 401) $("#main").replaceChildren(h("div", { class: "panel" }, errorBox(e)));
   }
-  const titles = { logforwarding: "Log forwarding", dhcp: "DHCP", apps: "Applications", ips: "IPS", decryption: "Decryption", network: "Interfaces", system: "Administration", account: "My account" };
+  const titles = { logforwarding: "Log forwarding", backup: "Backup", dhcp: "DHCP", apps: "Applications", ips: "IPS", decryption: "Decryption", network: "Interfaces", system: "Administration", account: "My account" };
   document.title = `SJB-OS · ${titles[name] || name[0].toUpperCase() + name.slice(1)}`;
 }
 

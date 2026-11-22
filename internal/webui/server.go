@@ -23,6 +23,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
+	"github.com/stevejboyle/hobby-ngfw/internal/backup"
 	"github.com/stevejboyle/hobby-ngfw/internal/config"
 	"github.com/stevejboyle/hobby-ngfw/internal/daemon"
 	"github.com/stevejboyle/hobby-ngfw/internal/logs"
@@ -128,6 +129,47 @@ func New(d *daemon.Daemon, o Options) http.Handler {
 		s.o.Log.Info("IPS signature update requested", "by", s.author(ss))
 		v, err := s.d.UpdateIPS(r.Context())
 		reply(w, v, err)
+	}))
+	mux.HandleFunc("POST /ui/api/backup/export", s.auth(accounts.ConfigView, func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+		var req struct {
+			Accounts   bool   `json:"accounts"`
+			Passphrase string `json:"passphrase"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		v, err := s.d.ExportBackup(ss.caller(), req.Accounts, req.Passphrase)
+		if err != nil {
+			daemonFail(w, err)
+			return
+		}
+		reply(w, v, nil)
+	}))
+	mux.HandleFunc("POST /ui/api/backup/inspect", s.auth(accounts.ConfigView, func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+		var req struct {
+			Data string `json:"data"`
+		}
+		if !decodeLimit(w, r, &req, 2*backup.MaxSize) {
+			return
+		}
+		v, err := s.d.InspectBackup(ss.caller(), []byte(req.Data))
+		if err != nil {
+			daemonFail(w, err)
+			return
+		}
+		reply(w, v, nil)
+	}))
+	mux.HandleFunc("POST /ui/api/backup/restore", s.auth(accounts.ConfigEdit, func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+		var req daemon.RestoreRequest
+		if !decodeLimit(w, r, &req, 2*backup.MaxSize) {
+			return
+		}
+		v, err := s.d.RestoreBackup(ss.caller(), req)
+		if err != nil {
+			daemonFail(w, err)
+			return
+		}
+		reply(w, v, nil)
 	}))
 	mux.HandleFunc("GET /ui/api/logforwarding", s.auth(accounts.NeedView(accounts.Logging), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		reply(w, s.d.LogForwarding(), nil)
@@ -804,7 +846,11 @@ const errPendingConfirm = "a commit is waiting for confirmation; confirm it (or 
 const maxBody = 4 << 20
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
-	dec := json.NewDecoder(io.LimitReader(r.Body, maxBody))
+	return decodeLimit(w, r, v, maxBody)
+}
+
+func decodeLimit(w http.ResponseWriter, r *http.Request, v any, n int64) bool {
+	dec := json.NewDecoder(io.LimitReader(r.Body, n))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil && !errors.Is(err, io.EOF) {
 		fail(w, http.StatusBadRequest, "bad JSON: "+err.Error())

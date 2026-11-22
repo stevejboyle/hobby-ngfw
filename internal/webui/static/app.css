@@ -289,3 +289,5 @@ input.log-query { min-width: 22em; }
 .bar-fill { display: block; height: 100%; background: var(--series-1); border-radius: 0 4px 4px 0; }
 .bar-value { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; display: inline-flex; gap: 6px; align-items: center; }
 .badge-threat { font-size: 11px; padding: 1px 6px; border-radius: 10px; background: var(--danger-soft); color: var(--danger); }
+
+table.kv th { text-align: left; padding-right: 1.5em; font-weight: 600; }

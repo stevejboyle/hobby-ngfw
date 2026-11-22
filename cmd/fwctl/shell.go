@@ -116,6 +116,16 @@ const shellHelp = `SJB-OS commands:
                               decrypt the learned (pinned) servers again
   request log-forwarding test NAME
                               send a test message to a log server
+  request backup export [accounts]
+                              print a backup of the running config to copy
+                              into a file; with accounts, also users, roles
+                              and tag API keys (superusers; encrypted, asks
+                              for a passphrase)
+  request backup restore [config] [accounts]
+                              paste a backup: its config becomes the
+                              candidate (commit it as usual); accounts
+                              restores users, roles and API keys at once
+                              (superusers)
   request user add NAME role ROLE
                               add a user (asks for the password); roles:
                               superuser, admin, read-only or a custom one
@@ -461,6 +471,9 @@ func runShellLine(line string, in io.Reader) error {
 		}
 		if len(rest) > 0 && rest[0] == "role" {
 			return requestRole(rest[1:])
+		}
+		if len(rest) > 0 && rest[0] == "backup" {
+			return requestBackup(rest[1:], in)
 		}
 		if len(rest) == 3 && rest[0] == "log-forwarding" && rest[1] == "test" {
 			return requestLogForwardingTest(rest[2])

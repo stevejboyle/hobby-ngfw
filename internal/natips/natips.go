@@ -37,6 +37,12 @@ type Syncer interface {
 	Sync(want []Addr) ([]State, error)
 }
 
+// AddrReader reads an interface's own IPv4 addresses (not the public
+// addresses ngfwd put there). Exec implements it.
+type AddrReader interface {
+	Addrs(dev string) ([]netip.Addr, error)
+}
+
 // Noop never touches the kernel (development on a machine without ip).
 type Noop struct{}
 
@@ -94,6 +100,33 @@ type link struct {
 		PrefixLen int    `json:"prefixlen"`
 		Label     string `json:"label"`
 	} `json:"addr_info"`
+}
+
+// Addrs lists dev's IPv4 addresses, leaving out ngfwd's public ones
+// (label <dev>:nat). A missing interface has none.
+func (e Exec) Addrs(dev string) ([]netip.Addr, error) {
+	out, err := e.run("-4", "-j", "addr", "show")
+	if err != nil {
+		return nil, err
+	}
+	var links []link
+	if s := strings.TrimSpace(string(out)); s != "" {
+		if err := json.Unmarshal([]byte(s), &links); err != nil {
+			return nil, fmt.Errorf("reading addresses: %w", err)
+		}
+	}
+	var ips []netip.Addr
+	for _, l := range links {
+		if l.IfName != dev {
+			continue
+		}
+		for _, ai := range l.AddrInfo {
+			if ip, err := netip.ParseAddr(ai.Local); err == nil && !owned(l.IfName, ai.Label) {
+				ips = append(ips, ip)
+			}
+		}
+	}
+	return ips, nil
 }
 
 // Sync removes labelled addresses no longer wanted, then adds each wanted

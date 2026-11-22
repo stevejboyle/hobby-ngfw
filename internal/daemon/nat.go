@@ -19,6 +19,9 @@ type NATEntry struct {
 	// static entry's outbound ones. nil when counters can't be read.
 	Hits    *uint64 `json:"hits"`
 	OutHits *uint64 `json:"out_hits,omitempty"`
+	// HairpinHits counts connections from SJB-OS's other interfaces to the
+	// public address (hairpin on only).
+	HairpinHits *uint64 `json:"hairpin_hits,omitempty"`
 	// AddressApplied: the public address is on the interface (published
 	// entries with a public address only).
 	AddressApplied *bool  `json:"address_applied,omitempty"`
@@ -73,6 +76,9 @@ func (d *Daemon) NAT() []NATEntry {
 			e.Hits = hits("prerouting_nat", n.Name)
 			if n.BidirectionalOn() {
 				e.OutHits = hits("postrouting", n.Name)
+			}
+			if n.HairpinOn() {
+				e.HairpinHits = hits("prerouting_nat", n.Name+" hairpin")
 			}
 		}
 		out = append(out, e)

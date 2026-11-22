@@ -76,6 +76,10 @@ type Daemon struct {
 	natIPs      natips.Syncer
 	wantNATIPs  []natips.Addr  // published servers' public addresses
 	natIPStates []natips.State // result of the last sync
+	// ifaddrSets are the running ruleset's interface-address sets (hairpin
+	// NAT); ifaddrFilled what each was last filled with.
+	ifaddrSets   map[string]string
+	ifaddrFilled map[string]string
 	ips         ipsState
 	dec         decryptState
 	logfwd      LogForwarder
@@ -341,6 +345,49 @@ func (d *Daemon) NATAddresses() []natips.State {
 	return slices.Clone(d.natIPStates)
 }
 
+// syncIfAddrsLocked fills the ruleset's interface-address sets (hairpin
+// NAT of port forwards on an interface's own address) with the live
+// addresses, at commit and every 10 s, so a DHCP change follows within
+// seconds. A ruleset load empties them (ifaddrFilled is reset then).
+// Callers hold d.mu.
+func (d *Daemon) syncIfAddrsLocked() {
+	r, ok := d.natIPs.(natips.AddrReader)
+	if !ok || len(d.ifaddrSets) == 0 {
+		return
+	}
+	if d.ifaddrFilled == nil {
+		d.ifaddrFilled = map[string]string{}
+	}
+	for iface, name := range d.ifaddrSets {
+		ips, err := r.Addrs(iface)
+		if err != nil {
+			d.log.Warn("hairpin NAT: reading the interface's address", "interface", iface, "err", err)
+			continue
+		}
+		var els []string
+		for _, ip := range ips {
+			if ip.Is4() {
+				els = append(els, ip.String())
+			}
+		}
+		slices.Sort(els)
+		key := strings.Join(els, ",")
+		if have, done := d.ifaddrFilled[iface]; done && have == key {
+			continue
+		}
+		set := compiler.Table + " " + name
+		script := fmt.Sprintf("flush set %s\n", set)
+		if len(els) > 0 {
+			script += fmt.Sprintf("add element %s { %s }\n", set, strings.Join(els, ", "))
+		}
+		if err := d.nft.Apply(script); err != nil {
+			d.log.Warn("hairpin NAT: filling the interface's address set", "interface", iface, "err", err)
+			continue
+		}
+		d.ifaddrFilled[iface] = key
+	}
+}
+
 // syncNATIPsLocked puts wantNATIPs on their interfaces and returns a
 // warning per address that isn't yet. Callers hold d.mu.
 func (d *Daemon) syncNATIPsLocked() []string {
@@ -363,6 +410,7 @@ func (d *Daemon) syncNATIPsLocked() []string {
 // that could not be installed yet. Callers hold d.mu.
 func (d *Daemon) syncRoutesLocked() []string {
 	warn := d.syncNATIPsLocked()
+	d.syncIfAddrsLocked()
 	states, err := d.router.Sync(d.wantRoutes)
 	if err != nil {
 		return append(warn, fmt.Sprintf("static routes not synced: %v (ngfwd keeps trying)", err))
@@ -446,6 +494,7 @@ func (d *Daemon) Start() error {
 		return err
 	}
 	d.sets = res.Sets
+	d.ifaddrSets, d.ifaddrFilled = res.IfAddrSets, nil
 	d.policy = policyOf(cfg)
 	d.wantNICs = wantedNICs(cfg)
 	d.wantHost = strings.TrimSpace(cfg.System.Hostname)
@@ -737,6 +786,7 @@ func (d *Daemon) commitLocked(data []byte, author, message string, confirm time.
 	}
 	warnings = append(warnings, d.flushIfPolicyChangedLocked(cfg)...)
 	d.sets = res.Sets
+	d.ifaddrSets, d.ifaddrFilled = res.IfAddrSets, nil
 	d.wantNICs = wantedNICs(cfg)
 	d.wantHost = strings.TrimSpace(cfg.System.Hostname)
 	d.wantNet = wantedNet(cfg)
@@ -908,6 +958,7 @@ func (d *Daemon) rollbackToNothingLocked() error {
 		d.log.Warn(w)
 	}
 	d.sets = res.Sets
+	d.ifaddrSets, d.ifaddrFilled = res.IfAddrSets, nil
 	d.wantNICs = nil
 	d.wantNet = netdev.Want{}
 	d.wantRoutes = nil

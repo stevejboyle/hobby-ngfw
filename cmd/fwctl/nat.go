@@ -16,6 +16,7 @@ type natEntry struct {
 	ServerIP       string  `json:"server_ip"`
 	Hits           *uint64 `json:"hits"`
 	OutHits        *uint64 `json:"out_hits"`
+	HairpinHits    *uint64 `json:"hairpin_hits"`
 	AddressApplied *bool   `json:"address_applied"`
 	AddressError   string  `json:"address_error"`
 }
@@ -69,19 +70,25 @@ func showNAT() error {
 			fmt.Fprintln(tw)
 		}
 	}
-	section("port forwarding", "NAME\tINTERFACE\tPUBLIC\tPORT\tSERVER\tSERVER PORT\tCONNECTIONS", config.NATPortForward, func(e natEntry) string {
+	hairpin := func(e natEntry) string {
+		if !e.HairpinOn() {
+			return "off\t-"
+		}
+		return "on\t" + count(e.HairpinHits)
+	}
+	section("port forwarding", "NAME\tINTERFACE\tPUBLIC\tPORT\tSERVER\tSERVER PORT\tCONNECTIONS\tHAIRPIN\tHAIRPINNED", config.NATPortForward, func(e natEntry) string {
 		sp := e.ServerPort
 		if sp == "" {
 			sp = e.PublicPort
 		}
-		return fmt.Sprintf("%s\t%s\t%s\t%s/%s\t%s\t%s\t%s", e.Name, e.Interface, public(e), e.Protocol, e.PublicPort, server(e), sp, count(e.Hits))
+		return fmt.Sprintf("%s\t%s\t%s\t%s/%s\t%s\t%s\t%s\t%s", e.Name, e.Interface, public(e), e.Protocol, e.PublicPort, server(e), sp, count(e.Hits), hairpin(e))
 	})
-	section("static NAT", "NAME\tINTERFACE\tPUBLIC\tSERVER\tBIDIRECTIONAL\tIN\tOUT", config.NATStatic, func(e natEntry) string {
+	section("static NAT", "NAME\tINTERFACE\tPUBLIC\tSERVER\tBIDIRECTIONAL\tIN\tOUT\tHAIRPIN\tHAIRPINNED", config.NATStatic, func(e natEntry) string {
 		bi, outHits := "on", count(e.OutHits)
 		if !e.BidirectionalOn() {
 			bi, outHits = "off", "-"
 		}
-		return fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s", e.Name, e.Interface, public(e), server(e), bi, count(e.Hits), outHits)
+		return fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", e.Name, e.Interface, public(e), server(e), bi, count(e.Hits), outHits, hairpin(e))
 	})
 	section("source NAT", "NAME\tFROM\tTO\tSOURCE\tTYPE\tCONNECTIONS", config.NATMasquerade, func(e natEntry) string {
 		return fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s", e.Name, list(e.From), list(e.To), list(e.Source), e.Type, count(e.Hits))

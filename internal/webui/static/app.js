@@ -536,6 +536,9 @@ const publicCell = (live, r) => {
   return h("span", {}, h("strong", {}, r.public_address), " ", h("span", { class: "mono muted" }, addrOf(r.public_address)),
     l.address_applied === false ? h("span", { class: "badge-threat", title: l.address_error || "" }, "not on the interface yet") : null);
 };
+// Hairpin: on (default) or off, with its connection count.
+const hairpinCell = (live, r) => (r.hairpin === "off" ? h("span", { class: "muted" }, "off") : h("span", {}, "on ", h("span", { class: "muted" }, hitCount(natLive(live, r).hairpin_hits))));
+const hairpinField = (r) => checkField("Hairpin: clients on the other interfaces may use the public address too (rules see the server's inside address)", r.hairpin !== "off");
 const serverCell = (r) => h("span", {}, h("strong", {}, r.server), " ", h("span", { class: "mono muted" }, addrOf(r.server)));
 
 const portForwardSpec = (live) => ({
@@ -548,6 +551,7 @@ const portForwardSpec = (live) => ({
     ["Port", (r) => h("span", { class: "mono" }, `${r.protocol}/${r.public_port}`)], ["Server", serverCell],
     ["Server port", (r) => h("span", { class: "mono" }, r.server_port || r.public_port)],
     ["Connections", (r) => hitCount(natLive(live, r).hits)],
+    ["Hairpin", (r) => hairpinCell(live, r)],
   ],
   form: (r) => {
     const f = {
@@ -559,10 +563,11 @@ const portForwardSpec = (live) => ({
       port: textField("Public port", r.public_port, { required: true, placeholder: "443 or 8000-8010" }),
       server: selectField("Server", r.server, hostNames(), { hint: "Address object of the inside server (one host)" }),
       sport: textField("Server port", r.server_port, { placeholder: "same as the public port", hint: "A range keeps its ports" }),
+      hairpin: hairpinField(r),
     };
     return form(Object.values(f), () => ({
       name: f.name.get(), type: "port-forward", interface: f.iface.get(), public_address: f.pub.get(), protocol: f.proto.get(),
-      public_port: f.port.get(), server: f.server.get(), server_port: f.sport.get(),
+      public_port: f.port.get(), server: f.server.get(), server_port: f.sport.get(), hairpin: f.hairpin.get() ? "" : "off",
     }));
   },
 });
@@ -577,6 +582,7 @@ const staticNatSpec = (live) => ({
     ["Server", serverCell], ["Bidirectional", (r) => (r.bidirectional === "off" ? "off" : "on")],
     ["In", (r) => hitCount(natLive(live, r).hits)],
     ["Out", (r) => (r.bidirectional === "off" ? "–" : hitCount(natLive(live, r).out_hits))],
+    ["Hairpin", (r) => hairpinCell(live, r)],
   ],
   form: (r) => {
     const f = {
@@ -585,10 +591,11 @@ const staticNatSpec = (live) => ({
       pub: selectField("Public address", r.public_address, hostNames(), { hint: "Address object (one host); SJB-OS answers for it on the interface" }),
       server: selectField("Server", r.server, hostNames(), { hint: "Address object of the inside server (one host)" }),
       bidi: checkField("Bidirectional: the server's own outbound traffic leaves from the public address", r.bidirectional !== "off"),
+      hairpin: hairpinField(r),
     };
     return form(Object.values(f), () => ({
       name: f.name.get(), type: "static", interface: f.iface.get(), public_address: f.pub.get(), server: f.server.get(),
-      bidirectional: f.bidi.get() ? "" : "off",
+      bidirectional: f.bidi.get() ? "" : "off", hairpin: f.hairpin.get() ? "" : "off",
     }));
   },
 });

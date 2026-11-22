@@ -160,6 +160,7 @@ var Kinds = []*Kind{
 		{Name: "server", Field: "server", Kind: vRef, Refs: addrs, Help: "port-forward, static: address object (one host) of the inside server"},
 		{Name: "server-port", Field: "server_port", Kind: vStr, Hint: "<port>", Help: "port-forward: the server's port (default: the public port; a range keeps its ports)"},
 		{Name: "bidirectional", Field: "bidirectional", Kind: vEnum, Enum: []string{"on", "off"}, Help: "static: on (default) sends the server's own outbound traffic from its public address"},
+		{Name: "hairpin", Field: "hairpin", Kind: vEnum, Enum: []string{"on", "off"}, Help: "port-forward, static: on (default) lets clients on the other interfaces use the public address too"},
 	}},
 	{Name: "routing", Key: "routing", Help: "BGP/OSPF in a VRF (name it after the VRF, e.g. default)", NameRefs: vrfKeys, NameFixed: []string{"default"}, Attrs: []Attr{
 		{Name: "router-id", Field: "router_id", Kind: vStr, Hint: "<ip>", Help: "router ID, usually one of the firewall's addresses"},

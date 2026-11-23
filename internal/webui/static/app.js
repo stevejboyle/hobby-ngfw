@@ -17,7 +17,7 @@ const isSuper = () => !!(state.me && state.me.superuser);
 const areaOfKey = {
   zones: "policy", addresses: "policy", address_groups: "policy", services: "policy", rules: "policy", application_groups: "policy", nat: "policy",
   interfaces: "network", routes: "network", vrfs: "network", routing: "network", bgp_neighbors: "network", ospf_interfaces: "network", prefix_lists: "network",
-  dhcp_servers: "dhcp", dhcp_reservations: "dhcp", ips_profiles: "ips", decryption_rules: "decryption", decryption_profiles: "decryption", decryption_exclusions: "decryption",
+  dhcp_servers: "dhcp", dhcp_reservations: "dhcp", ips_profiles: "ips", ips_exceptions: "ips", decryption_rules: "decryption", decryption_profiles: "decryption", decryption_exclusions: "decryption",
   log_servers: "logging",
 };
 // Pages by what they need to be seen.
@@ -192,7 +192,7 @@ async function refresh() {
 function normalise(c) {
   c = c || {};
   c.system = c.system || { hostname: "", mgmt_interface: "" };
-  for (const k of ["zones", "interfaces", "addresses", "address_groups", "services", "rules", "nat", "routes", "vrfs", "routing", "bgp_neighbors", "ospf_interfaces", "prefix_lists", "dhcp_servers", "dhcp_reservations", "application_groups", "ips_profiles", "decryption_rules", "decryption_profiles", "decryption_exclusions", "log_servers"]) c[k] = c[k] || [];
+  for (const k of ["zones", "interfaces", "addresses", "address_groups", "services", "rules", "nat", "routes", "vrfs", "routing", "bgp_neighbors", "ospf_interfaces", "prefix_lists", "dhcp_servers", "dhcp_reservations", "application_groups", "ips_profiles", "ips_exceptions", "decryption_rules", "decryption_profiles", "decryption_exclusions", "log_servers"]) c[k] = c[k] || [];
   c.system.ips_disabled_signatures = c.system.ips_disabled_signatures || [];
   return c;
 }
@@ -1031,6 +1031,33 @@ const ipsProfileSpec = () => ({
     const sel = Object.fromEntries(IPS_SEVERITIES.map((sev) => [sev, selectField(sev[0].toUpperCase() + sev.slice(1), p[sev] || "",
       [{ value: "", label: `(default: ${IPS_DEFAULTS[sev]})` }, "block", "alert", "ignore"])]));
     return form([name, ...Object.values(sel)], () => ({ name: name.get(), ...Object.fromEntries(IPS_SEVERITIES.map((sev) => [sev, sel[sev].get()])) }));
+  },
+});
+
+// IPS exceptions. live is GET ips's exceptions (packets each let through).
+const ipsRuleNames = () => state.cand.rules.filter((r) => r.action === "allow" && r.ips_profile).map((r) => r.name);
+const ipsExceptionSpec = (live) => ({
+  key: "ips_exceptions", title: "Exceptions", singular: "IPS exception",
+  note: "One signature stops blocking for some of the inspected traffic only, instead of being disabled everywhere. Everything you give must match: the rules whose traffic it covers, the clients (source) and the servers by their inside address (destination). Alert still logs each match, marked with the exception's name; ignore doesn't. The threat log shows signature IDs.",
+  blank: () => ({ name: "", sid: "", rules: [], source: [], destination: [], action: "" }),
+  columns: [
+    ["Name", (e) => h("strong", {}, e.name)], ["SID", (e) => h("span", { class: "mono" }, e.sid)],
+    ["Rules", (e) => chips(e.rules)], ["Source", (e) => chips(e.source)], ["Destination", (e) => chips(e.destination)],
+    ["Action", (e) => (e.action === "ignore" ? h("span", { class: "muted" }, "ignore") : h("span", { class: "action-reset" }, "alert"))],
+    ["Packets", (e) => hitCount(((live || []).find((x) => x.name === e.name) || {}).hits)],
+  ],
+  form: (e) => {
+    const f = {
+      name: textField("Name", e.name, { required: true, placeholder: "scanner-to-web" }),
+      sid: textField("Signature ID", e.sid, { required: true, placeholder: "2019876", hint: "The SID column of Logs → Threats" }),
+      rules: multiField("Rules", e.rules, ipsRuleNames(), { hint: "Allow rules with an IPS profile; any: every rule" }),
+      source: multiField("Source (clients)", e.source, addrNames(), { hint: "Addresses and groups" }),
+      destination: multiField("Destination (servers)", e.destination, addrNames(), { hint: "The server's inside address, as rules name it" }),
+      action: selectField("Action", e.action || "", [{ value: "", label: "alert: log it, don't block (default)" }, { value: "ignore", label: "ignore: neither block nor log" }]),
+    };
+    return form(Object.values(f), () => ({
+      name: f.name.get(), sid: f.sid.get().trim(), rules: f.rules.get(), source: f.source.get(), destination: f.destination.get(), action: f.action.get(),
+    }));
   },
 });
 
@@ -1945,7 +1972,8 @@ async function pageIPS() {
     h("section", { class: "panel" }, h("h2", {}, "Inspected rules"),
       (st.rules || []).length ? chips(st.rules)
         : h("p", { class: "muted" }, "No rule uses an IPS profile yet. Pick one on an allow rule (Policy → IPS profile), or in the CLI: set rule NAME ips-profile default."),
-      h("p", { class: "muted small" }, "Matches show in Logs → Threats. Test from a client behind the firewall: a request containing SJB-IPS-TEST-CRITICAL (or MAJOR, MINOR, INFO) matches SJB-OS's test signatures.")));
+      h("p", { class: "muted small" }, "Matches show in Logs → Threats. Test from a client behind the firewall: a request containing SJB-IPS-TEST-CRITICAL (or MAJOR, MINOR, INFO) matches SJB-OS's test signatures.")),
+    listSection(ipsExceptionSpec(st.exceptions)));
 }
 
 async function pageSystem() {

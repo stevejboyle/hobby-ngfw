@@ -64,6 +64,7 @@ var (
 	appGrps  = []string{"application_groups"}
 
 	ipsProfiles = []string{"ips_profiles"}
+	ruleKeys    = []string{"rules"}
 	ipsActions  = []string{"block", "alert", "ignore"}
 
 	decryptProfiles = []string{"decryption_profiles"}
@@ -113,6 +114,13 @@ var Kinds = []*Kind{
 		{Name: "major", Field: "major", Kind: vEnum, Enum: ipsActions, Help: "major signatures (default: block)"},
 		{Name: "minor", Field: "minor", Kind: vEnum, Enum: ipsActions, Help: "minor signatures (default: alert)"},
 		{Name: "informational", Field: "informational", Kind: vEnum, Enum: ipsActions, Help: "informational signatures (default: ignore)"},
+	}},
+	{Name: "ips-exception", Key: "ips_exceptions", Help: "IPS exceptions: one signature stops blocking for some rules or addresses only (every attribute given must match)", Attrs: []Attr{
+		{Name: "sid", Field: "sid", Kind: vStr, Hint: "<sid>", Help: "the signature ID (the threat log shows it)"},
+		{Name: "rule", Field: "rules", Kind: vList, Refs: ruleKeys, Help: "rules (with an ips-profile) whose traffic it covers"},
+		{Name: "source", Field: "source", Kind: vList, Refs: addrGrps, Help: "clients it covers (addresses and groups)"},
+		{Name: "destination", Field: "destination", Kind: vList, Refs: addrGrps, Help: "servers it covers, by inside address (addresses and groups)"},
+		{Name: "action", Field: "action", Kind: vEnum, Enum: []string{"alert", "ignore"}, Help: "alert (default): log the match, don't block; ignore: neither"},
 	}},
 	{Name: "zone", Key: "zones", Help: "security zones"},
 	{Name: "vrf", Key: "vrfs", Help: "VRFs: separate routing tables", Attrs: []Attr{

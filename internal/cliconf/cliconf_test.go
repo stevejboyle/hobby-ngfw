@@ -335,3 +335,31 @@ func TestLogServerInConfigureMode(t *testing.T) {
 		t.Fatal("transport relp accepted")
 	}
 }
+
+func TestIPSExceptionInConfigureMode(t *testing.T) {
+	m := lab(t)
+	run(t, m,
+		"set rule allow-web ips-profile default",
+		"set address scanner cidr 10.10.1.50",
+		"set ips-exception scanner-ok sid 2019876 rule allow-web source scanner",
+		"set ips-exception quiet sid 2027758 source users-net action ignore",
+	)
+	valid(t, m)
+	c, _ := m.Config()
+	e := c.IPSExceptions[0]
+	if e.SID != "2019876" || strings.Join(e.Rules, ",") != "allow-web" || strings.Join(e.Source, ",") != "scanner" || e.ActionOf() != "alert" {
+		t.Fatalf("exception: %+v", e)
+	}
+	if c.IPSExceptions[1].Action != "ignore" {
+		t.Fatalf("second: %+v", c.IPSExceptions[1])
+	}
+	// Renaming the rule renames it in the exception.
+	run(t, m, "rename rule allow-web web-out")
+	c, _ = m.Config()
+	if strings.Join(c.IPSExceptions[0].Rules, ",") != "web-out" {
+		t.Fatalf("rule not renamed in the exception: %+v", c.IPSExceptions[0])
+	}
+	if got := words(Filter(ConfigCandidates(m, []string{"set", "ips-exception", "quiet", "action"}), "")); got != "alert ignore" {
+		t.Fatalf("action completion: %q", got)
+	}
+}

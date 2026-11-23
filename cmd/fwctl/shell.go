@@ -1349,7 +1349,12 @@ func showIPS() error {
 		Detail                                      string `json:"state_detail"`
 		MemTotal                                    uint64 `json:"mem_total"`
 		Rules                                       []string
-		Signatures                                  struct {
+		Exceptions                                  []struct {
+			Name, SID, Action          string
+			Rules, Source, Destination []string
+			Hits                       *uint64
+		}
+		Signatures struct {
 			Source, Version string
 			Updated, Built  time.Time
 			LastAttempt     time.Time `json:"last_attempt"`
@@ -1409,7 +1414,27 @@ func showIPS() error {
 	} else {
 		fmt.Fprintf(tw, "rules\t%s\n", strings.Join(st.Rules, ", "))
 	}
-	return tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if len(st.Exceptions) > 0 {
+		fmt.Println()
+		tw = tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "EXCEPTION\tSID\tRULES\tSOURCE\tDESTINATION\tACTION\tPACKETS")
+		for _, e := range st.Exceptions {
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", e.Name, e.SID, anyList(e.Rules), anyList(e.Source), anyList(e.Destination), e.Action, count(e.Hits))
+		}
+		return tw.Flush()
+	}
+	return nil
+}
+
+// anyList shows an exception's scope list ("any" when empty).
+func anyList(xs []string) string {
+	if len(xs) == 0 {
+		return "any"
+	}
+	return strings.Join(xs, ",")
 }
 
 func requestIPSUpdate() error {

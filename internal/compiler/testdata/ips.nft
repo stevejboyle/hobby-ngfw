@@ -39,8 +39,10 @@ table inet ngfw {
 	chain ips_enforce {
 		type filter hook forward priority filter + 20; policy accept;
 		meta mark and 0x0f000000 == 0 accept
+		meta mark and 0x80fe0000 == 0x000e0000 ct mark and 0xffff0000 == 0x00010000 ct original ip saddr 10.10.1.50 ct reply ip saddr 172.16.20.10 meta mark set meta mark and 0x7001ffff counter accept comment "ips-exception:scanner-to-web"
+		meta mark and 0x80fe0000 == 0x00160000 ct original ip saddr 10.10.1.64/28 meta mark set meta mark and 0x7001ffff counter accept comment "ips-exception:build-downloads"
 		ct mark and 0xffff0000 vmap { 0x00010000 : jump ips_p0, 0x00020000 : jump ips_p1 }
-		meta mark set meta mark and 0xf0ffffff
+		meta mark set meta mark and 0x7001ffff
 	}
 
 	chain input {

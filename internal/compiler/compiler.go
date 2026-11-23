@@ -8,6 +8,7 @@ package compiler
 
 import (
 	"fmt"
+	"math/bits"
 	"net/netip"
 	"regexp"
 	"slices"
@@ -46,7 +47,22 @@ type Result struct {
 // current registry snapshot; its entries are written into the dynamic sets
 // in the same transaction, so a commit never drops live tag registrations.
 func Compile(cfg *config.Config, tags map[string][]TagEntry) (*Result, error) {
-	c := &compiler{cfg: cfg, res: &Result{Sets: map[string]string{}, IfAddrSets: map[string]string{}}}
+	return CompileWith(cfg, tags, Options{})
+}
+
+// Options adjust a compile.
+type Options struct {
+	// IPSCodes is the exception code of each signature with IPS
+	// exceptions (AssignIPSCodes); nil assigns them afresh.
+	IPSCodes map[int]uint32
+}
+
+// CompileWith is Compile with options.
+func CompileWith(cfg *config.Config, tags map[string][]TagEntry, opt Options) (*Result, error) {
+	c := &compiler{cfg: cfg, ipsCodes: opt.IPSCodes, res: &Result{Sets: map[string]string{}, IfAddrSets: map[string]string{}}}
+	if c.ipsCodes == nil {
+		c.ipsCodes = IPSExceptionCodes(cfg)
+	}
 	if err := c.index(); err != nil {
 		return nil, err
 	}
@@ -195,6 +211,84 @@ const (
 	AppPendingPackets = 40
 )
 
+// IPS exceptions (ips_exceptions) are decided here, in chain ips_enforce,
+// so blocking stays in nftables. Suricata marks a match of a signature
+// that has exceptions with its severity bit and the signature's exception
+// code (packet mark bits 17-23: three of the seven bits set, so 35
+// signatures); every other signature's match also sets IPSPlainBit. An
+// exception applies only to a packet whose mark has exactly its code and no
+// plain bit: when two signatures with exceptions match one packet their
+// codes OR into a value that isn't a code, and when any other signature
+// matched too, the packet goes to the profile as usual (fail closed).
+// Bits 17-23 and 31 are free in the forward path: bit 16 and the low
+// bits carry the VRF marks (raw prerouting), bit 30 decryption's hand-over
+// (locally delivered, never forwarded).
+const (
+	IPSExcShift  = 17
+	IPSExcMask   = 0x00fe0000
+	IPSPlainBit  = 0x80000000
+	ipsClearMask = IPSMarkMask | IPSExcMask | IPSPlainBit
+)
+
+// ipsCodes are the exception codes in order: the 7-bit values with three
+// bits set, shifted into place.
+var ipsCodes = func() []uint32 {
+	var out []uint32
+	for v := uint32(0); v < 128; v++ {
+		if bits.OnesCount32(v) == 3 {
+			out = append(out, v<<IPSExcShift)
+		}
+	}
+	return out
+}()
+
+// IPSExceptionCodes gives each signature with exceptions a code, in
+// signature order (AssignIPSCodes with nothing before).
+func IPSExceptionCodes(cfg *config.Config) map[int]uint32 { return AssignIPSCodes(nil, cfg) }
+
+// AssignIPSCodes gives each signature with exceptions in cfg its code. The
+// rules file (Suricata) and the ruleset must agree, and they change at
+// different moments: Suricata takes a while to load a new rules file, and
+// meanwhile still marks with the codes of prev. So a signature keeps its
+// code from prev, and a new one takes a code prev didn't use, where one is
+// left: an old mark then never meets another signature's exception.
+func AssignIPSCodes(prev map[int]uint32, cfg *config.Config) map[int]uint32 {
+	sids := cfg.IPSExceptionSIDs()
+	out := map[int]uint32{}
+	used := map[uint32]bool{}
+	for _, sid := range sids {
+		if c, ok := prev[sid]; ok && slices.Contains(ipsCodes, c) {
+			out[sid], used[c] = c, true
+		}
+	}
+	old := map[uint32]bool{}
+	for _, c := range prev {
+		old[c] = true
+	}
+	next := func(avoidOld bool) (uint32, bool) {
+		for _, c := range ipsCodes {
+			if !used[c] && !(avoidOld && old[c]) {
+				return c, true
+			}
+		}
+		return 0, false
+	}
+	for _, sid := range sids {
+		if _, ok := out[sid]; ok {
+			continue
+		}
+		c, ok := next(true)
+		if !ok {
+			c, ok = next(false)
+		}
+		if !ok {
+			break // more than MaxIPSExceptionSIDs: validation refuses it
+		}
+		out[sid], used[c] = c, true
+	}
+	return out
+}
+
 // IPSSeverityMark is the packet mark bit for a severity.
 func IPSSeverityMark(severity string) uint32 {
 	switch severity {
@@ -221,10 +315,11 @@ type ipsRule struct {
 
 type compiler struct {
 	cfg        *config.Config
-	ruleIdx    int       // position of the rule being compiled
-	appMode    bool      // some rule names applications (and App Identification is on)
-	firstApp   int       // position of the first such rule (-1: none)
-	ipsRules   []ipsRule // rules whose traffic the IPS inspects
+	ipsCodes   map[int]uint32 // exception code per signature
+	ruleIdx    int            // position of the rule being compiled
+	appMode    bool           // some rule names applications (and App Identification is on)
+	firstApp   int            // position of the first such rule (-1: none)
+	ipsRules   []ipsRule      // rules whose traffic the IPS inspects
 	res        *Result
 	zoneIfaces map[string][]string
 	// inVRF holds interfaces in a non-default VRF. For their traffic the
@@ -920,13 +1015,70 @@ func (c *compiler) ips(b *strings.Builder) {
 	b.WriteString("\n\tchain ips_enforce {\n")
 	b.WriteString("\t\ttype filter hook forward priority filter + 20; policy accept;\n")
 	fmt.Fprintf(b, "\t\tmeta mark and 0x%08x == 0 accept\n", IPSMarkMask)
+	c.ipsExceptions(b)
 	var vm []string
 	for _, r := range c.ipsRules {
 		vm = append(vm, fmt.Sprintf("0x%08x : jump ips_p%d", r.tag, profiles[r.profile]))
 	}
 	fmt.Fprintf(b, "\t\tct mark and 0xffff0000 vmap { %s }\n", strings.Join(vm, ", "))
-	fmt.Fprintf(b, "\t\tmeta mark set meta mark and 0x%08x\n", ^uint32(IPSMarkMask))
+	fmt.Fprintf(b, "\t\tmeta mark set meta mark and 0x%08x\n", ^uint32(ipsClearMask))
 	b.WriteString("\t}\n")
+}
+
+// ipsExceptions writes ips_enforce's exception lines: a packet only the
+// excepted signature matched, of a connection the exception covers, has
+// its IPS bits cleared and passes (see IPSExcShift). The connection's
+// client is its original source, its server the reply's source: the
+// server's inside address after destination NAT, as rules name it.
+func (c *compiler) ipsExceptions(b *strings.Builder) {
+	codes := c.ipsCodes
+	disabled := map[string]bool{}
+	for _, s := range c.cfg.System.IPSDisabledSignatures {
+		disabled[strings.TrimSpace(s)] = true
+	}
+	tagOf := map[string]int{}
+	for _, r := range c.ipsRules {
+		tagOf[c.cfg.Rules[(r.tag>>RuleShift)-1].Name] = r.tag
+	}
+	for _, e := range c.cfg.IPSExceptions {
+		if disabled[e.SID] {
+			c.res.Warnings = append(c.res.Warnings, fmt.Sprintf("ips exception %q: signature %s is disabled system-wide (ips_disabled_signatures), so the exception never applies", e.Name, e.SID))
+		}
+		code, ok := codes[e.SIDNumber()]
+		if !ok {
+			continue
+		}
+		head := fmt.Sprintf("meta mark and 0x%08x == 0x%08x", IPSExcMask|IPSPlainBit, code)
+		if len(e.Rules) > 0 {
+			var tags []string
+			for _, name := range e.Rules {
+				if t, ok := tagOf[name]; ok {
+					tags = append(tags, fmt.Sprintf("0x%08x", t))
+				}
+			}
+			if len(tags) == 0 {
+				continue // none of its rules is inspected
+			}
+			if len(tags) == 1 {
+				head += " ct mark and 0xffff0000 == " + tags[0]
+			} else {
+				head += " ct mark and 0xffff0000 " + set(tags)
+			}
+		}
+		for _, src := range c.addrTerms(e.Source) {
+			for _, dst := range c.addrTerms(e.Destination) {
+				parts := []string{head}
+				if src != nil {
+					parts = append(parts, "ct original "+src.expr("saddr"))
+				}
+				if dst != nil {
+					parts = append(parts, "ct reply "+dst.expr("saddr"))
+				}
+				parts = append(parts, fmt.Sprintf("meta mark set meta mark and 0x%08x counter accept comment \"ips-exception:%s\"", ^uint32(ipsClearMask), e.Name))
+				b.WriteString("\t\t" + strings.Join(parts, " ") + "\n")
+			}
+		}
+	}
 }
 
 // trunkDrop drops untagged traffic on trunk-only interfaces (no zone, not

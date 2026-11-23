@@ -10,7 +10,8 @@ system:
   hostname: sjb-fw
   mgmt_interface: mgmt
   # Signatures that misfire on your network (signature IDs from the
-  # Threat log) can be left out:
+  # Threat log) can be left out everywhere (or, below, only for some
+  # rules or addresses):
   ips_disabled_signatures: ["2013504"]
 
 zones:
@@ -32,6 +33,10 @@ interfaces:
 addresses:
   - name: web-server
     cidr: 172.16.20.10
+  - name: vuln-scanner
+    cidr: 10.10.1.50
+  - name: build-hosts
+    cidr: 10.10.1.64/28
 
 services:
   - name: web
@@ -51,6 +56,24 @@ ips_profiles:
     major: block
     minor: block
     informational: alert
+
+# Exceptions: one signature stops blocking for some of the inspected
+# traffic only. Every field given must match; source is the connection's
+# client, destination its server (the inside address, as rules name it).
+# action alert (the default) still logs the match, marked with the
+# exception's name; ignore drops it from the threat log too.
+ips_exceptions:
+  # The lab's vulnerability scanner probes the web server on purpose.
+  - name: scanner-to-web
+    sid: "2019876"
+    rules: [web-in]
+    source: [vuln-scanner]
+    destination: [web-server]
+  # Build hosts download installers a signature mistakes for malware.
+  - name: build-downloads
+    sid: "2027758"
+    source: [build-hosts]
+    action: ignore
 
 rules:
   - name: web-in

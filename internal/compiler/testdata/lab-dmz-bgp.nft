@@ -108,7 +108,7 @@ table inet ngfw {
 		type filter hook forward priority filter + 20; policy accept;
 		meta mark and 0x0f000000 == 0 accept
 		ct mark and 0xffff0000 vmap { 0x00030000 : jump ips_p0, 0x00050000 : jump ips_p0, 0x00060000 : jump ips_p0, 0x00070000 : jump ips_p0, 0x000d0000 : jump ips_p0 }
-		meta mark set meta mark and 0xf0ffffff
+		meta mark set meta mark and 0x7001ffff
 	}
 
 	chain input {

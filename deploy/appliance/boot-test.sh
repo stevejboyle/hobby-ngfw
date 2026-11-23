@@ -59,6 +59,9 @@ sed -n '/^ *+-------/,/ready/p' "$LOG" | tr -d '\r'
 grep -a "ngfw-firstboot:" "$LOG" | tr -d '\r'
 echo "---------------"
 
+# The serial getty can reprint /etc/issue with the password a little later
+# on a slow emulated boot; wait for it rather than reading too early.
+for _ in $(seq 60); do grep -aq 'initial password: ' "$LOG" && break; sleep 1; done
 PW=$(grep -ao 'initial password: [A-Za-z0-9]*' "$LOG" | tail -1 | awk '{print $3}')
 [[ -n $PW ]] && pass "generated password shown on console" || fail "no password on console"
 

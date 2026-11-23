@@ -30,7 +30,7 @@
     <Name>SJB-OS</Name>
     <AnnotationSection>
       <Info>Notes</Info>
-      <Annotation>SJB-OS @VERSION@ (Stops Junk at the Border). NIC 1 = mgmt, NIC 2 = inside, NIC 3 = outside; log in as admin, and a generated password shows on the console until changed. https://github.com/stevejboyle/hobby-ngfw</Annotation>
+      <Annotation>SJB-OS @VERSION@ (Stops Junk at the Border). NIC 1 = mgmt, NIC 2 = inside, NIC 3 = outside; log in as admin, and a generated password shows on the console until changed. https://github.com/stevejboyle/sjb-os</Annotation>
     </AnnotationSection>
     <ProductSection ovf:required="false">
       <Info>Appliance settings, applied once at first boot</Info>

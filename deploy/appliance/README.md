@@ -13,14 +13,14 @@ direction and reviewed with ChatGPT's help; it relies on Linux netfilter,
 nDPI, Suricata, FRRouting, Kea and Debian for the real work (see the repo's
 README).
 
-SJB-OS (Stops Junk at the Border) is the hobby-ngfw
+SJB-OS (Stops Junk at the Border) is a
 firewall packaged as a VMware OVA, and that is the only supported way to run
 it. The VM is Debian 13 with ngfwd, nftables and open-vm-tools: 3 vmxnet3
 NICs, 2 vCPU, 2 GB RAM, 8 GB disk. Give it 4 GB of RAM to use the IPS.
 
 ## Before you start
 
-- The OVA from [Releases](https://github.com/stevejboyle/hobby-ngfw/releases),
+- The OVA from [Releases](https://github.com/stevejboyle/sjb-os/releases),
   checked against its `.sha256` file.
 - vSphere 8.0 Update 1 or later (ESXi host, standalone or under vCenter). The
   OVA uses virtual hardware version 20 and the Debian 12 64-bit guest type.

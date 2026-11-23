@@ -1,6 +1,6 @@
 [Unit]
 Description=SJB-OS App Identification (appidd: nDPI on the first packets of each connection)
-Documentation=https://github.com/stevejboyle/hobby-ngfw
+Documentation=https://github.com/stevejboyle/sjb-os
 After=ngfwd.service
 
 [Service]

@@ -1,5 +1,5 @@
 {
-  description = "hobby-ngfw development shell";
+  description = "SJB-OS development shell";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 

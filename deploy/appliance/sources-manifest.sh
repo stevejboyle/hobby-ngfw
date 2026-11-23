@@ -21,7 +21,7 @@ git diff --quiet HEAD -- . ':!build' 2>/dev/null || commit="$commit+local-change
 {
 	echo "# SJB-OS $VERSION: corresponding source for the third-party code it ships."
 	echo "# deploy/appliance/fetch-sources.py downloads everything listed here."
-	echo "sjb-os $VERSION $commit https://github.com/stevejboyle/hobby-ngfw"
+	echo "sjb-os $VERSION $commit https://github.com/stevejboyle/sjb-os"
 	echo "ndpi $NDPI_VERSION https://github.com/ntop/nDPI/archive/refs/tags/$NDPI_VERSION.tar.gz sha256:$NDPI_SHA256"
 	echo "go $(go env GOVERSION)"
 	# Modules compiled into the shipped binaries (not test-only ones).

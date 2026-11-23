@@ -1,6 +1,6 @@
 [Unit]
 Description=SJB-OS TLS decryption: cleartext loop (namespaces, veths, routing)
-Documentation=https://github.com/stevejboyle/hobby-ngfw
+Documentation=https://github.com/stevejboyle/sjb-os
 # Its own unit so the loop's namespaces exist before tlsd's sandbox (a
 # private mount namespace) is set up; sjb-tlsd.service pulls it in.
 StopWhenUnneeded=yes

@@ -99,7 +99,7 @@ version, anyone may obtain the complete corresponding source code, in
 machine-readable form, of every GPL- or LGPL-licensed component that
 version's OVA or upgrade bundle contains, for no more than the cost of
 providing it. Ask by opening an issue at
-<https://github.com/stevejboyle/hobby-ngfw/issues> naming the version.
+<https://github.com/stevejboyle/sjb-os/issues> naming the version.
 
 ## Downloaded at run time, not distributed
 

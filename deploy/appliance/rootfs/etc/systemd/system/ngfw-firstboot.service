@@ -1,5 +1,5 @@
 [Unit]
-Description=hobby-ngfw first-boot setup (NIC names, network, credentials, initial config)
+Description=SJB-OS first-boot setup (NIC names, network, credentials, initial config)
 DefaultDependencies=no
 After=local-fs.target systemd-udev-trigger.service systemd-udevd.service
 Before=network-pre.target systemd-networkd.service ngfwd.service ssh.service getty.target sysinit.target

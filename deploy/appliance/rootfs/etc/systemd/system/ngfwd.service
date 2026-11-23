@@ -1,6 +1,6 @@
 [Unit]
-Description=hobby-ngfw firewall daemon
-Documentation=https://github.com/stevejboyle/hobby-ngfw
+Description=SJB-OS firewall daemon
+Documentation=https://github.com/stevejboyle/sjb-os
 # Load the ruleset before any interface comes up: no unfiltered window.
 After=ngfw-firstboot.service
 Before=network-pre.target

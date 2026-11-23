@@ -144,7 +144,7 @@ the credit for what they do; see [Built on](#built-on).
 If you want to try it in a lab, the OVA is the way to run it. Deploy it on
 vSphere 8.0 U1 or later with three networks: **mgmt**, **inside** and **outside**.
 
-1. Download the OVA from [Releases](https://github.com/stevejboyle/hobby-ngfw/releases)
+1. Download the OVA from [Releases](https://github.com/stevejboyle/sjb-os/releases)
    (or build it, below) and check its `.sha256`.
 2. In vSphere, **Deploy OVF Template** and map Network adapter 1 → mgmt,
    2 → inside, 3 → outside.

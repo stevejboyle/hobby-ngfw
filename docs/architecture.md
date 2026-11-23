@@ -13,7 +13,7 @@ Diagrams: [target architecture](#target-architecture),
 
 ## Deployment model
 
-hobby-ngfw is delivered only as the SJB-OS VMware OVA (vSphere 8.0 U1+,
+SJB-OS is delivered only as a VMware OVA (vSphere 8.0 U1+,
 virtual hardware 20). Every design decision assumes
 the appliance layout:
 

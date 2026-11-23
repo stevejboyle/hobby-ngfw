@@ -1,5 +1,5 @@
 [Unit]
-Description=hobby-ngfw console status banner
+Description=SJB-OS console status banner
 After=ngfwd.service network-online.target
 Wants=network-online.target
 

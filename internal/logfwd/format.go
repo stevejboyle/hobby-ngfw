@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/config"
-	"github.com/stevejboyle/hobby-ngfw/internal/logs"
+	"github.com/stevejboyle/sjb-os/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/logs"
 )
 
 // AppName is the RFC 5424 APP-NAME of every message.

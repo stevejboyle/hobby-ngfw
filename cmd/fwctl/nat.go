@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"text/tabwriter"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/config"
 )
 
 type natEntry struct {

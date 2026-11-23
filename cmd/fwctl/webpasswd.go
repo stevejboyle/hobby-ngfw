@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
+	"github.com/stevejboyle/sjb-os/internal/accounts"
 )
 
 // webPasswd is root's recovery command: it sets a user's one password

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
+	"github.com/stevejboyle/sjb-os/internal/accounts"
 )
 
 func withAccounts(t *testing.T, d *Daemon) *accounts.Store {

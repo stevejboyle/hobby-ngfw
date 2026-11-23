@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/conntrack"
-	"github.com/stevejboyle/hobby-ngfw/internal/nft"
-	"github.com/stevejboyle/hobby-ngfw/internal/store"
+	"github.com/stevejboyle/sjb-os/internal/conntrack"
+	"github.com/stevejboyle/sjb-os/internal/nft"
+	"github.com/stevejboyle/sjb-os/internal/store"
 )
 
 // Failure injection for the commit pipeline: a commit either takes effect

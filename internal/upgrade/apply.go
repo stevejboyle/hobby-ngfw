@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/store"
+	"github.com/stevejboyle/sjb-os/internal/store"
 )
 
 // Paths under the root filesystem.

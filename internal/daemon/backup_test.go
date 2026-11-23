@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
-	"github.com/stevejboyle/hobby-ngfw/internal/backup"
+	"github.com/stevejboyle/sjb-os/internal/accounts"
+	"github.com/stevejboyle/sjb-os/internal/backup"
 )
 
 var (

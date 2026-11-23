@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/tags"
+	"github.com/stevejboyle/sjb-os/internal/tags"
 )
 
 // Scopes an API key can hold.

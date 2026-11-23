@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
-	"github.com/stevejboyle/hobby-ngfw/internal/backup"
-	"github.com/stevejboyle/hobby-ngfw/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/accounts"
+	"github.com/stevejboyle/sjb-os/internal/backup"
+	"github.com/stevejboyle/sjb-os/internal/config"
 )
 
 // SetVersion records the SJB-OS version (for backup headers and logs).

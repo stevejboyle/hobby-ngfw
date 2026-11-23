@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
-	"github.com/stevejboyle/hobby-ngfw/internal/backup"
+	"github.com/stevejboyle/sjb-os/internal/accounts"
+	"github.com/stevejboyle/sjb-os/internal/backup"
 )
 
 // requestBackup runs request backup export|restore ....

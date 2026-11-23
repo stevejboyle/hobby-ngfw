@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/config"
 )
 
 // QueueSize is how many messages wait per server; when full, the oldest

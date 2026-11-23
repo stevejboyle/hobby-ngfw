@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/config"
-	"github.com/stevejboyle/hobby-ngfw/internal/dhcp"
+	"github.com/stevejboyle/sjb-os/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/dhcp"
 )
 
 // SetDHCP sets how DHCP servers are run. Call before Start.

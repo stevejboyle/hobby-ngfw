@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/compiler"
-	"github.com/stevejboyle/hobby-ngfw/internal/decrypt"
-	"github.com/stevejboyle/hobby-ngfw/internal/logs"
+	"github.com/stevejboyle/sjb-os/internal/compiler"
+	"github.com/stevejboyle/sjb-os/internal/decrypt"
+	"github.com/stevejboyle/sjb-os/internal/logs"
 )
 
 // testPKI is a "public" CA the proxy trusts for upstream servers.

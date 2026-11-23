@@ -3,7 +3,7 @@
 // the completion data the line editor offers on Tab and "?".
 package cliconf
 
-import "github.com/stevejboyle/hobby-ngfw/internal/appid"
+import "github.com/stevejboyle/sjb-os/internal/appid"
 
 // Kind of attribute value.
 type valueKind int

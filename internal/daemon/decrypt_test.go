@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/decrypt"
+	"github.com/stevejboyle/sjb-os/internal/decrypt"
 )
 
 type fakeTLSD struct {

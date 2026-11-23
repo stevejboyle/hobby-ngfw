@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/dhcp"
+	"github.com/stevejboyle/sjb-os/internal/dhcp"
 )
 
 type fakeKea struct {

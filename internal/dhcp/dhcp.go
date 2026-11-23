@@ -15,7 +15,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/config"
 )
 
 // Paths Kea uses on the appliance (Debian's kea-dhcp4-server).

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/store"
+	"github.com/stevejboyle/sjb-os/internal/store"
 )
 
 func key(t *testing.T) (ed25519.PrivateKey, []PublicKey) {

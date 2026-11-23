@@ -4,7 +4,7 @@ import (
 	"errors"
 
 	"fmt"
-	"github.com/stevejboyle/hobby-ngfw/internal/appid"
+	"github.com/stevejboyle/sjb-os/internal/appid"
 	"net/netip"
 	"regexp"
 	"strconv"

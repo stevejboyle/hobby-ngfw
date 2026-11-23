@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/compiler"
-	"github.com/stevejboyle/hobby-ngfw/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/compiler"
+	"github.com/stevejboyle/sjb-os/internal/config"
 )
 
 const usage = `usage: fwctl [-socket PATH] <command> [args]

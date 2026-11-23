@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/upgrade"
+	"github.com/stevejboyle/sjb-os/internal/upgrade"
 )
 
 // SystemdUpgrader verifies uploads in ngfwd and runs the install itself as

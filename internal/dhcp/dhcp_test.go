@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/config"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")

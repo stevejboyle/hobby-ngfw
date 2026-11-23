@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/cliconf"
+	"github.com/stevejboyle/sjb-os/internal/cliconf"
 )
 
 // A CA pasted on one line in configure mode (as the boot test does it)

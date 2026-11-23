@@ -10,11 +10,11 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
-	"github.com/stevejboyle/hobby-ngfw/internal/backup"
-	"github.com/stevejboyle/hobby-ngfw/internal/logs"
-	"github.com/stevejboyle/hobby-ngfw/internal/netdev"
-	"github.com/stevejboyle/hobby-ngfw/internal/nicaddr"
+	"github.com/stevejboyle/sjb-os/internal/accounts"
+	"github.com/stevejboyle/sjb-os/internal/backup"
+	"github.com/stevejboyle/sjb-os/internal/logs"
+	"github.com/stevejboyle/sjb-os/internal/netdev"
+	"github.com/stevejboyle/sjb-os/internal/nicaddr"
 )
 
 const maxBody = 1 << 20

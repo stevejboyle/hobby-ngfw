@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/config"
 )
 
 func TestIPSExceptionCodes(t *testing.T) {

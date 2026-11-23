@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/cliconf"
+	"github.com/stevejboyle/sjb-os/internal/cliconf"
 )
 
 func TestSplitWords(t *testing.T) {

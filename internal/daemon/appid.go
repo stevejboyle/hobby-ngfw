@@ -3,8 +3,8 @@ package daemon
 import (
 	"fmt"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/appid"
-	"github.com/stevejboyle/hobby-ngfw/internal/compiler"
+	"github.com/stevejboyle/sjb-os/internal/appid"
+	"github.com/stevejboyle/sjb-os/internal/compiler"
 )
 
 // SetAppID sets where App Identification's catalog and statistics are read. Call before

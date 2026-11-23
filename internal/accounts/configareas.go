@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/config"
 )
 
 // configFieldArea maps each top-level config section (by Go field name) to

@@ -8,7 +8,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/logfwd"
+	"github.com/stevejboyle/sjb-os/internal/logfwd"
 )
 
 // showLogForwarding prints the log forwarder's state and each server.

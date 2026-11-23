@@ -22,14 +22,14 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
-	"github.com/stevejboyle/hobby-ngfw/internal/backup"
-	"github.com/stevejboyle/hobby-ngfw/internal/config"
-	"github.com/stevejboyle/hobby-ngfw/internal/daemon"
-	"github.com/stevejboyle/hobby-ngfw/internal/logs"
-	"github.com/stevejboyle/hobby-ngfw/internal/netdev"
-	"github.com/stevejboyle/hobby-ngfw/internal/nicaddr"
-	"github.com/stevejboyle/hobby-ngfw/internal/upgrade"
+	"github.com/stevejboyle/sjb-os/internal/accounts"
+	"github.com/stevejboyle/sjb-os/internal/backup"
+	"github.com/stevejboyle/sjb-os/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/daemon"
+	"github.com/stevejboyle/sjb-os/internal/logs"
+	"github.com/stevejboyle/sjb-os/internal/netdev"
+	"github.com/stevejboyle/sjb-os/internal/nicaddr"
+	"github.com/stevejboyle/sjb-os/internal/upgrade"
 )
 
 //go:embed static

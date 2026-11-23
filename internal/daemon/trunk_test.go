@@ -3,8 +3,8 @@ package daemon
 import (
 	"testing"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/config"
-	"github.com/stevejboyle/hobby-ngfw/internal/nicaddr"
+	"github.com/stevejboyle/sjb-os/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/nicaddr"
 )
 
 func TestWantedNICsTrunk(t *testing.T) {

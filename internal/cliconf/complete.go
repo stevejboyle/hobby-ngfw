@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
-	"github.com/stevejboyle/hobby-ngfw/internal/logs"
+	"github.com/stevejboyle/sjb-os/internal/accounts"
+	"github.com/stevejboyle/sjb-os/internal/logs"
 )
 
 // Candidate is one possible next word. Words starting with "<" are hints

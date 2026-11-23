@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/sysname"
+	"github.com/stevejboyle/sjb-os/internal/sysname"
 )
 
 type fakeHost struct{ applied []string }

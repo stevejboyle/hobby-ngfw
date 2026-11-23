@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/stevejboyle/hobby-ngfw/internal/compiler"
+	"github.com/stevejboyle/sjb-os/internal/compiler"
 	"net"
 	"os"
 	"os/exec"

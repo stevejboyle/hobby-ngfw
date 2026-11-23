@@ -7,9 +7,9 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/compiler"
-	"github.com/stevejboyle/hobby-ngfw/internal/config"
-	"github.com/stevejboyle/hobby-ngfw/internal/decrypt"
+	"github.com/stevejboyle/sjb-os/internal/compiler"
+	"github.com/stevejboyle/sjb-os/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/decrypt"
 )
 
 // ObserveOnly makes decryption observe (log what it would decrypt, pass

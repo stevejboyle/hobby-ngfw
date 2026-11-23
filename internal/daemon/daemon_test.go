@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/config"
-	"github.com/stevejboyle/hobby-ngfw/internal/conntrack"
-	"github.com/stevejboyle/hobby-ngfw/internal/nft"
-	"github.com/stevejboyle/hobby-ngfw/internal/routes"
-	"github.com/stevejboyle/hobby-ngfw/internal/store"
-	"github.com/stevejboyle/hobby-ngfw/internal/tags"
+	"github.com/stevejboyle/sjb-os/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/conntrack"
+	"github.com/stevejboyle/sjb-os/internal/nft"
+	"github.com/stevejboyle/sjb-os/internal/routes"
+	"github.com/stevejboyle/sjb-os/internal/store"
+	"github.com/stevejboyle/sjb-os/internal/tags"
 )
 
 func setup(t *testing.T) (*Daemon, *nft.Fake) {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/natips"
+	"github.com/stevejboyle/sjb-os/internal/natips"
 )
 
 // liveAddrs is a natips syncer whose interfaces have the given addresses.

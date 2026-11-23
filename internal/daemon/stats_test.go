@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/appid"
-	"github.com/stevejboyle/hobby-ngfw/internal/compiler"
-	"github.com/stevejboyle/hobby-ngfw/internal/ips"
-	"github.com/stevejboyle/hobby-ngfw/internal/stats"
+	"github.com/stevejboyle/sjb-os/internal/appid"
+	"github.com/stevejboyle/sjb-os/internal/compiler"
+	"github.com/stevejboyle/sjb-os/internal/ips"
+	"github.com/stevejboyle/sjb-os/internal/stats"
 )
 
 func TestDashboardStats(t *testing.T) {

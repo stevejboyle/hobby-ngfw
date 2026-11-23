@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/config"
-	"github.com/stevejboyle/hobby-ngfw/internal/logs"
+	"github.com/stevejboyle/sjb-os/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/logs"
 )
 
 // Status is the forwarder's state: the journal follower and each server.

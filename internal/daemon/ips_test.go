@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/compiler"
-	"github.com/stevejboyle/hobby-ngfw/internal/ips"
-	"github.com/stevejboyle/hobby-ngfw/internal/logs"
+	"github.com/stevejboyle/sjb-os/internal/compiler"
+	"github.com/stevejboyle/sjb-os/internal/ips"
+	"github.com/stevejboyle/sjb-os/internal/logs"
 )
 
 type fakeSuricata struct {

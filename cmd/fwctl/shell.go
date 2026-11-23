@@ -24,11 +24,11 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/cliconf"
-	"github.com/stevejboyle/hobby-ngfw/internal/config"
-	"github.com/stevejboyle/hobby-ngfw/internal/lineedit"
-	"github.com/stevejboyle/hobby-ngfw/internal/logs"
-	"github.com/stevejboyle/hobby-ngfw/internal/nicaddr"
+	"github.com/stevejboyle/sjb-os/internal/cliconf"
+	"github.com/stevejboyle/sjb-os/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/lineedit"
+	"github.com/stevejboyle/sjb-os/internal/logs"
+	"github.com/stevejboyle/sjb-os/internal/nicaddr"
 )
 
 const shellHelp = `SJB-OS commands:

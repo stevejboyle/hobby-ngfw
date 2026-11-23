@@ -14,7 +14,7 @@ import (
 	"io/fs"
 	"os"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/upgrade"
+	"github.com/stevejboyle/sjb-os/internal/upgrade"
 )
 
 const usage = `usage:

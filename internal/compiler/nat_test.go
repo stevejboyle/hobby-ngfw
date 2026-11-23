@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/config"
 )
 
 // natCfg: eth2 (zone b) faces outside; the server 10.9.0.10 sits behind

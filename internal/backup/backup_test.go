@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
+	"github.com/stevejboyle/sjb-os/internal/accounts"
 )
 
 const cfg = "system:\n  hostname: fw1\n"

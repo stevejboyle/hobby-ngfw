@@ -29,9 +29,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/compiler"
-	"github.com/stevejboyle/hobby-ngfw/internal/decrypt"
-	"github.com/stevejboyle/hobby-ngfw/internal/logs"
+	"github.com/stevejboyle/sjb-os/internal/compiler"
+	"github.com/stevejboyle/sjb-os/internal/decrypt"
+	"github.com/stevejboyle/sjb-os/internal/logs"
 )
 
 func main() {

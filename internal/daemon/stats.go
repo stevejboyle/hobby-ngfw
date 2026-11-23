@@ -1,7 +1,7 @@
 package daemon
 
 import (
-	"github.com/stevejboyle/hobby-ngfw/internal/stats"
+	"github.com/stevejboyle/sjb-os/internal/stats"
 )
 
 // SetStats sets where the dashboard statistics are kept, and the root

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
-	"github.com/stevejboyle/hobby-ngfw/internal/logs"
+	"github.com/stevejboyle/sjb-os/internal/accounts"
+	"github.com/stevejboyle/sjb-os/internal/logs"
 )
 
 // Access control. Every management call (CLI over the socket, web UI)

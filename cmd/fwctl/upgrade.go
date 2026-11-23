@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/upgrade"
+	"github.com/stevejboyle/sjb-os/internal/upgrade"
 )
 
 // upgradeRoot is "/" on the appliance; tests and dry runs can point it

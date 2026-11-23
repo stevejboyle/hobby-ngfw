@@ -1,4 +1,4 @@
-module github.com/stevejboyle/hobby-ngfw
+module github.com/stevejboyle/sjb-os
 
 go 1.26.10
 

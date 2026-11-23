@@ -7,7 +7,7 @@ import (
 	"net/netip"
 	"os"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/mgmtcert"
+	"github.com/stevejboyle/sjb-os/internal/mgmtcert"
 )
 
 // certNames is what the management certificate should cover, from the

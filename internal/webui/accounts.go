@@ -3,7 +3,7 @@ package webui
 import (
 	"net/http"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
+	"github.com/stevejboyle/sjb-os/internal/accounts"
 )
 
 // accountRoutes: users and roles (superusers), and every user's own SSH

@@ -30,7 +30,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/decrypt"
+	"github.com/stevejboyle/sjb-os/internal/decrypt"
 )
 
 // Sources.

@@ -4,7 +4,7 @@ import (
 	"crypto/rand"
 
 	"encoding/base64"
-	"github.com/stevejboyle/hobby-ngfw/internal/accounts"
+	"github.com/stevejboyle/sjb-os/internal/accounts"
 	"sync"
 	"time"
 )

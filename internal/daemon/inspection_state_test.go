@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stevejboyle/hobby-ngfw/internal/nfqueue"
+	"github.com/stevejboyle/sjb-os/internal/nfqueue"
 )
 
 // The IPS reports what it does to traffic, from the kernel's queue table,

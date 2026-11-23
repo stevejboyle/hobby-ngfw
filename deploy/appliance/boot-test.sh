@@ -247,6 +247,16 @@ oa=$(root_run "ip -4 -o addr show dev outside")
 [[ $oa == *"192.0.2.88/32"*"outside:nat"* ]] && pass "static NAT's public address put on outside (label outside:nat)" || fail "nat address: [$oa]"
 sn=$(cli_run show nat)
 [[ $sn == *bt-fwd*tcp/8443* && $sn == *bt-static*on* ]] && pass "show nat lists the port forward and the static NAT" || fail "show nat: $sn"
+# Hairpin (on by default): inside reaches both by the public address. The
+# port forward is on outside's own address, from the deployment settings,
+# so its hairpin line matches a set ngfwd fills with that address.
+outip=$(root_run "ip -4 -o addr show dev outside" | awk '$NF != "outside:nat" {sub("/.*", "", $4); print $4; exit}')
+ifset=$(root_run nft list set inet ngfw ifaddr_outside 2>&1)
+[[ $pre == *'iifname "inside" ip daddr @ifaddr_outside tcp dport 8443 counter dnat ip to 10.10.1.77:443 comment "nat:bt-fwd hairpin"'* &&
+	$pre == *'ip daddr 192.0.2.88 counter dnat ip to 10.10.1.77 comment "nat:bt-static hairpin"'* && -n $outip && $ifset == *"$outip"* ]] &&
+	pass "hairpin NAT: inside reaches both entries by the public address; ifaddr_outside holds outside's address ($outip)" || fail "hairpin: set=[$ifset] outip=$outip pre=[$pre]"
+[[ $(root_run nft list chain inet ngfw postrouting) == *'oifname "inside" ip saddr '*' ip daddr 10.10.1.77 counter masquerade comment "nat:hairpin 10.10.1.77"'* ]] &&
+	pass "hairpin NAT: clients on the server's own network are masqueraded" || fail "hairpin masquerade: $(root_run nft list chain inet ngfw postrouting)"
 script=$'configure\ndelete nat bt-fwd\ndelete nat bt-static\ndelete address nat-srv\ndelete address nat-pub\ncommit -m "boot test: nat cleanup"\nexit\nexit\n'
 out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
 oa=$(root_run "ip -4 -o addr show dev outside")
@@ -276,6 +286,51 @@ confirm=$(ui -d '{}' -w '%{http_code}' -o /dev/null "$UI/ui/api/confirm")
 root_run nft list chain inet ngfw forward | grep -q 'ui-block-telnet' &&
 	pass "UI-added rule is in the kernel ruleset" || fail "UI rule not in ruleset"
 root_run fwctl revisions | grep -q "\"author\": \"web:$ADMIN\"" && pass "revision authored web:$ADMIN" || fail "revision author"
+
+# --- management certificate --------------------------------------------------------
+# A lab CA (root, then an issuing CA) issues the firewall's certificate; it
+# is pasted into the CLI, and both TLS listeners present it at once.
+CA=$WORK/labca; mkdir -p "$CA"
+(cd "$CA" && openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 30 -subj "/CN=Boot Test Root" \
+	-addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign -keyout root.key -out root.crt &&
+	openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj "/CN=Boot Test Issuing CA" -keyout iss.key -out iss.csr &&
+	printf 'basicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign\n' >iss.ext &&
+	openssl x509 -req -in iss.csr -CA root.crt -CAkey root.key -CAcreateserial -days 30 -extfile iss.ext -out iss.crt &&
+	openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj "/CN=sjb-fw.boot.test" -keyout leaf.key -out leaf.csr &&
+	printf 'subjectAltName=DNS:sjb-fw.boot.test,IP:127.0.0.1\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\n' >leaf.ext &&
+	openssl x509 -req -in leaf.csr -CA iss.crt -CAkey iss.key -CAcreateserial -days 30 -extfile leaf.ext -out leaf.crt) >/dev/null 2>&1
+served_fp() { openssl s_client -connect "127.0.0.1:$1" -servername sjb-fw.boot.test </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256 2>/dev/null | sed 's/.*=//'; }
+leaf_fp=$(openssl x509 -in "$CA/leaf.crt" -noout -fingerprint -sha256 | sed 's/.*=//')
+before_fp=$(served_fp "$UI_PORT")
+sc=$(cli_run show management-certificate)
+[[ $sc == *"source"*"self-signed"* && $sc == *SHA-256* ]] && pass "show management-certificate: first boot's self-signed certificate" || fail "show management-certificate: $sc"
+script="request management-certificate import
+$(cat "$CA/leaf.crt" "$CA/iss.crt")
+end
+$(cat "$CA/leaf.key")
+exit
+"
+out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
+[[ $out == *"management certificate imported"* && $out == *"Boot Test Issuing CA"* ]] && pass "management certificate imported in the CLI (pasted with its chain)" || fail "cert import: ${out: -400}"
+[[ $(served_fp "$UI_PORT") == "$leaf_fp" && $(served_fp "$API_PORT") == "$leaf_fp" ]] &&
+	pass "web UI and tag API present the imported certificate at once, no restart" || fail "served: ui=$(served_fp "$UI_PORT") api=$(served_fp "$API_PORT") want $leaf_fp"
+code=$(curl -s --cacert "$CA/root.crt" --resolve "sjb-fw.boot.test:$UI_PORT:127.0.0.1" -o /dev/null -w '%{http_code}' "https://sjb-fw.boot.test:$UI_PORT/")
+[[ $code == 200 ]] && pass "a client trusting only the lab root verifies the web UI (chain sent)" || fail "verify against the lab root: $code"
+[[ $(ui "$UI/ui/api/mgmt-cert") == *'"source":"imported"'* ]] && pass "the web UI session survives the import; the UI reports the imported certificate" || fail "ui mgmt-cert after import"
+km=$(root_run "stat -c %a /etc/ngfw/tls.key; grep -c 'BEGIN CERTIFICATE' /etc/ngfw/tls.crt; grep -l 'PRIVATE KEY' /etc/ngfw/initial.yaml /var/lib/ngfw/revisions/*.yaml 2>/dev/null | wc -l")
+[[ $km == $'600\n2\n0' ]] && pass "key 0600 and certificate + chain in /etc/ngfw; nothing in the config" || fail "cert files: $km"
+script="request management-certificate import
+$(cat "$CA/iss.crt")
+end
+$(cat "$CA/iss.key")
+exit
+"
+bad=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
+[[ $bad == *"CA certificate"* && $(served_fp "$UI_PORT") == "$leaf_fp" ]] && pass "a CA certificate is refused as the server certificate; nothing changes" || fail "bad import: ${bad: -300}"
+rs=$(ui -d '{}' "$UI/ui/api/mgmt-cert/self-signed")
+after_fp=$(served_fp "$UI_PORT")
+[[ $rs == *'"source":"self-signed"'* && -n $after_fp && $after_fp != "$leaf_fp" && $after_fp != "$before_fp" && $rs == *'"dns_names":["'* ]] &&
+	pass "back to self-signed through the web UI: a new certificate naming the firewall" || fail "self-signed: fp=$after_fp rs=${rs:0:300}"
 
 # --- logs -------------------------------------------------------------------------
 # No client sits behind inside in QEMU, so write a line in exactly the form the
@@ -807,6 +862,31 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 	[[ $ut == *'"sid":9900001'* && $ut != *'"severity":"major"'* ]] && pass "web UI threat log with a query" || fail "ui threat log: ${ut:0:300}"
 	si=$(cli_run show ips)
 	[[ $si == *"inspection"*"INSPECTING"* ]] && pass "show ips: inspection state INSPECTING (the engine is bound to its queue)" || fail "inspection state: $si"
+
+	# An exception: the critical test signature stops blocking for
+	# 10.83.0.2 under ips-test only. The new rules file takes Suricata a
+	# while to load; until then the exception can't apply (fail closed).
+	script=$'configure\nset address exc-client cidr 10.83.0.2\nset ips-exception bt-exc sid 9900001 rule ips-test source exc-client\ncommit -m "boot test: ips exception"\nexit\nexit\n'
+	out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
+	[[ $out == *"committed revision"* ]] || fail "ips exception commit: $out"
+	ex=$(root_run nft list chain inet ngfw ips_enforce)
+	[[ $ex == *'ct original ip saddr 10.83.0.2'*'comment "ips-exception:bt-exc"'* ]] && pass "the exception is in chain ips_enforce" || fail "ips_enforce: $ex"
+	for _ in $(seq 90); do
+		[[ $(get 10.83.0.2 SJB-IPS-TEST-CRITICAL) == 200 ]] && break
+		sleep 4
+	done
+	r=$(printf '%s ' "$(get 10.83.0.2 SJB-IPS-TEST-CRITICAL)" "$(get 10.83.0.4 SJB-IPS-TEST-CRITICAL)" "$(get 10.83.0.2 SJB-IPS-TEST-MAJOR)")
+	[[ $r == "200 blocked blocked " ]] && pass "IPS exception: the signature passes for its client only; other clients and signatures still blocked" || fail "ips exception: $r (want: 200 blocked blocked)"
+	for _ in $(seq 15); do
+		lt=$(cli_run show log threat 20 columns rule,action,sid,src,exception)
+		[[ $lt == *bt-exc* ]] && break
+		sleep 2
+	done
+	[[ $lt == *ips-test*alert*9900001*10.83.0.2*bt-exc* ]] && pass "threat log: the excepted match is an alert naming the exception" || fail "exception threat log: $lt"
+	[[ $(cli_run show ips) == *bt-exc*9900001*ips-test*exc-client*alert* ]] && pass "show ips lists the exception and its packets" || fail "show ips exceptions: $(cli_run show ips | tail -3)"
+	script=$'configure\ndelete ips-exception bt-exc\ndelete address exc-client\ncommit -m "boot test: ips exception cleanup"\nexit\nexit\n'
+	retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
+	for _ in $(seq 90); do [[ $(get 10.83.0.2 SJB-IPS-TEST-CRITICAL) == blocked && $(cli_run show ips) == *"signatures loaded"* ]] && break; sleep 4; done
 
 	# App Identification and the IPS together: 10.83.0.4 may only use HTTP
 	# (application rule with the default profile); anything else from it is

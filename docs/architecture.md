@@ -112,7 +112,14 @@ The design below is the target. Phase 1 simplified it on purpose:
   the decryption hand-over runs just after it at dstnat + 10, so
   everything after translation sees the server's inside address) and `postrouting` (bidirectional static NAT, then
   masquerade). `internal/natips` puts published public addresses on their
-  interface (label `<dev>:nat`) so SJB-OS answers ARP for them.
+  interface (label `<dev>:nat`) so SJB-OS answers ARP for them. Hairpin NAT
+  (0.9.12-r01) repeats each published entry's translation for the other
+  zoned interfaces of its VRF and masquerades clients on the server's own
+  network; port forwards on an interface's own address match a set ngfwd
+  keeps filled with that address.
+- The web UI and the tag API share the management certificate
+  (`internal/mgmtcert`, `/etc/ngfw/tls.crt`), served from memory so an
+  imported certificate applies to new connections without a restart.
 - Packaged as a VMware OVA (see Deployment model above).
 - The web UI (planned for phase 3) was pulled forward. `ngfwd` serves it on
   mgmt :443: plain HTML/JS embedded in the binary, a session-authenticated
@@ -339,6 +346,17 @@ arrive on a unix datagram socket; ngfwd looks up the connection's ct mark
 (`conntrack -G`, either direction) for the rule, application and profile,
 works out the action, and writes an `ngfw-threat {json}` journal line, the
 threat log. Alerts a profile ignores aren't logged.
+
+IPS exceptions (0.9.12-r01) let one signature through for some rules,
+clients or servers. They are decided in `ips_enforce` too: a signature with
+exceptions marks its matches with an exception code (packet mark bits
+17-23) beside its severity, every other signature sets a "plain" bit (31),
+and an exception passes a packet only when its code alone is set and the
+connection matches (rule tag, `ct original ip saddr`, `ct reply ip saddr`).
+Anything else, two signatures with exceptions or another signature on the
+same packet, goes to the profile as before. ngfwd applies the same test to
+the alert for the threat log (action `alert` with the exception's name, or
+nothing for `ignore`).
 
 ### TLS decryption as built (0.9.9-r04 to r06)
 

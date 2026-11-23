@@ -178,7 +178,10 @@ internal/decrypt/   decryption CA (generate/import/forge), hello parser,
 internal/ips/       IPS: ET Open download (md5-checked) and processing (every rule
                     alert + nfq_set_mark by severity, test sigs 9900001-4), status,
                     EVE alert socket; Suricata itself runs as sjb-ips.service
-internal/natips/    published public addresses on their interfaces (label <dev>:nat)
+internal/natips/    published public addresses on their interfaces (label <dev>:nat);
+                    interface addresses for hairpin NAT's ifaddr_<iface> sets
+internal/mgmtcert/  the management certificate (web UI, tag API): import (checks
+                    shared with decrypt.ParseKeyPair), self-signed, hot swap
 internal/routes/    static routes: sync the config's routes into the kernel
                     (`ip route ... proto 222`; ngfwd owns only proto 222)
 internal/sysname/   system.hostname -> the live hostname, /etc/hostname and /etc/hosts
@@ -243,7 +246,16 @@ packets to Suricata (NFQUEUE 2-3, bypass), which only marks packets with the
 signature severity (packet mark bits 24-27); chain ips_enforce (filter + 20)
 drops what the rule's profile blocks and sets the denied bit; ngfwd turns
 Suricata's EVE alerts into "ngfw-threat" journal lines (rule and action from
-the connection's ct mark via conntrack -G). Trunks (0.9.10-r02): a non-mgmt interface with no zone must carry VLAN
+the connection's ct mark via conntrack -G). IPS exceptions (0.9.12-r01,
+`ips_exceptions`): decided in ips_enforce, not Suricata. A signature with
+exceptions marks its matches with its severity plus a code in packet-mark
+bits 17-23 (3 of 7 bits set: 35 codes); every other signature also sets
+bit 31 (plain). An exception line needs exactly its code and no plain bit
+(two codes OR into a non-code: fail closed), the rule tag, `ct original ip
+saddr` (client) and `ct reply ip saddr` (server's inside address). Codes are
+kept stable across commits (compiler.AssignIPSCodes, saved in
+`<state>/ips-codes.json`) because Suricata loads a new rules file well after
+the ruleset changes; the rules file and ruleset must use the same codes. Trunks (0.9.10-r02): a non-mgmt interface with no zone must carry VLAN
 subinterfaces and has no address; the compiler drops untagged traffic on it
 in forward (in and out) and input, and nicaddr gives it an override with no
 address (TrunkOnly). Never let a zoneless data interface exist otherwise:
@@ -258,7 +270,14 @@ after it), so rules, App Identification, the IPS and decryption all see the
 server's inside address (rules name it, not the public one); the compiler
 warns when no allow rule lets a published server in. internal/natips puts
 extra public addresses on their interface (label `<dev>:nat`, synced with
-routes). No hairpin NAT yet; the server must be in the arrival interface's
+routes). Hairpin NAT (0.9.12-r01, on per entry unless `hairpin: off`):
+extra prerouting_nat lines for the other zoned interfaces of the published
+interface's VRF, the same translation, so rules still name the server's
+inside address; a port forward on an interface's own address without a
+configured address matches set `ifaddr_<iface>`, which ngfwd fills with the
+live address (commit and the 10 s resync); clients on the server's own
+network are masqueraded (postrouting, first, no `ct status dnat` so tlsd's
+loop leg matches too). The server must be in the arrival interface's
 VRF (conntrack zones). A commit (or rollback) that changes the compiled
 policy flushes conntrack, so established sessions are re-evaluated against
 it; tag registration flushes the host's entries, daemon start flushes all.
@@ -274,8 +293,10 @@ fail-open); tlsd sends the bytes through the cleartext loop (veth sjbd-c ->
 forward chain -> veth sjbd-s, conntrack zone 0xfff0, zone code in DSCP), and
 every security rule has a loop form of its zone match. The CA lives in
 /etc/ngfw/decryption, keys readable only by user sjb-tls. Config is edited as YAML
-(`fwctl load`), not with `set`-style commands yet. The appliance's tag API
-certificate is self-signed. Upgrades (signed bundles, `fwctl upgrade`) cover
+(`fwctl load`), not with `set`-style commands yet. The management certificate (web UI and tag API, `/etc/ngfw/tls.crt` and
+`tls.key`) is self-signed at first boot; operators import their own or go
+back to self-signed (internal/mgmtcert, area `certificates`); ngfwd serves
+it from memory (GetCertificate), so a change needs no restart. Upgrades (signed bundles, `fwctl upgrade`) cover
 SJB-OS files only, not the kernel or Debian packages; 0.2.0 and earlier
 must be redeployed once to get the updater. Users are local only (no
 LDAP/RADIUS/SAML/OIDC yet); web and SSH/console lockouts count separately.

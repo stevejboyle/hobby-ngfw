@@ -183,13 +183,14 @@ on Steve's own ESXi lab):
 
 - Commit, rollback and commit-confirmed; zones and rules compiled to
   nftables; source NAT, port forwarding and 1:1 static NAT (0.9.10-r01) for
-  publishing servers; a policy change re-evaluates existing
-  connections.
+  publishing servers, with hairpin NAT (0.9.12-r01); a policy change
+  re-evaluates existing connections.
 - Host tags through a REST API (and XML user-ID messages for existing
   integrations), applied in about 20 ms, no commit needed.
 - App Identification (nDPI) with application, category and group rules.
 - IPS (Suricata, Emerging Threats Open) on chosen allow rules, with
-  per-rule profiles and a threat log.
+  per-rule profiles, a threat log, and exceptions for one signature by
+  rule, client or server (0.9.12-r01).
 - Outbound TLS decryption (0.9.9-r04 to r06) with a CA on the appliance:
   the rules, App Identification and the IPS see inside HTTPS; banking,
   payment, health and government sites excluded; pinned apps passed
@@ -209,6 +210,8 @@ on Steve's own ESXi lab):
   lockout, and every change recorded under the user the firewall verified.
   Directory sign-in (LDAP, RADIUS, SAML, OIDC) is not built yet.
 - Signed in-place upgrades with automatic restore and rollback.
+- An operator's own certificate (e.g. from a lab CA) for the web UI and
+  tag API (0.9.12-r01), applied without a restart.
 
 **Not implemented** (from the original plan, and not claimed): high
 availability, a packet-capture test suite, performance testing or tuning,

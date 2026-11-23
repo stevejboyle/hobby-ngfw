@@ -84,7 +84,8 @@ NICs, 2 vCPU, 2 GB RAM, 8 GB disk. Give it 4 GB of RAM to use the IPS.
   only on mgmt.
 - User `admin`, the permanent superuser, whose login (SSH and console) is
   the SJB-OS CLI, not a Unix shell, and who has no sudo. SSH host keys, a
-  self-signed TLS certificate (web UI and tag API), a tag API key, and one
+  self-signed TLS certificate (web UI and tag API; replace it with your own,
+  see [Management certificate](#management-certificate)), a tag API key, and one
   password for `admin` that works for SSH, the console and the web UI. Add
   more users, each with a role, later (see [Users and roles](#users-and-roles)).
 - Root: only what you set at deploy time, `root_ssh_key` and/or
@@ -119,7 +120,7 @@ NICs, 2 vCPU, 2 GB RAM, 8 GB disk. Give it 4 GB of RAM to use the IPS.
   the IPS logs. `show statistics [1h|24h|7d]` in the CLI shows the same.
 The menu groups the pages: **Security** (Policy, NAT, Objects, Applications,
 IPS, Tags), **Networking** (Interfaces, Routing, DHCP) and **System** (Logs,
-Log forwarding, Revisions, Backup, Administration).
+Log forwarding, Revisions, Backup, Certificate, Administration).
 
 - **Policy, NAT, Objects, Interfaces:** add, edit, delete and reorder security
   rules, NAT (port forwarding, static NAT, source NAT, with live connection
@@ -144,6 +145,8 @@ Log forwarding, Revisions, Backup, Administration).
   [Forwarding logs to a SIEM](#forwarding-logs-to-a-siem).
 - **Backup:** download a backup, restore one; see
   [Backing up and restoring the configuration](#backing-up-and-restoring-the-configuration).
+- **Certificate:** the web UI and tag API certificate: import your own, or
+  go back to self-signed; see [Management certificate](#management-certificate).
 - **Administration:** upgrades (below).
 - **Users** and **Roles** (superusers): see [Users and roles](#users-and-roles).
 - **My account** (top right): your password, your SSH keys and what your
@@ -160,6 +163,44 @@ hidden; the firewall refuses those calls anyway.
 
 Saving from the UI rewrites the candidate YAML, so comments in it are not
 kept.
+
+## Management certificate
+
+The web UI (port 443) and the tag API (port 8443) present one certificate.
+First boot makes it self-signed, so browsers warn and API clients need
+`curl -k`. To stop that, import a certificate your clients trust, for
+example one your lab CA issues for the firewall's name or management
+address:
+
+- **Web UI:** System → **Certificate**: paste (or load from files) the
+  certificate, then the intermediates that issued it in order (not the
+  root), and its private key.
+- **CLI:** `request management-certificate import`, then paste the same,
+  as the prompts ask (finish the certificates with a line `end`).
+
+The firewall checks that the certificate comes first and each intermediate
+signed the one before it, that the key belongs to it and isn't encrypted,
+that it is ECDSA or RSA of 2048 bits or more, that it is valid now, and
+that it is for a server (not a CA; server authentication allowed). It
+warns, but accepts it, when it names neither the hostname nor the
+management address, when no chain was given for a certificate a CA issued,
+or when it expires within 30 days.
+
+New connections get the new certificate at once, with no restart. Open
+ones, including the page you imported from, keep the old one until they
+reconnect, so the import never cuts you off. If a client doesn't trust it,
+a new tab shows the warning: `request management-certificate self-signed`
+(or **Back to self-signed** on the page) makes a fresh self-signed
+certificate naming the hostname and the management address.
+
+`show management-certificate` (and the page) shows the subject, issuer,
+names (SANs), validity, chain and SHA-256 fingerprint; `show
+management-certificate pem` adds the certificate. The files live in
+`/etc/ngfw` (`tls.crt`, `tls.key`, mode 0600), never in the config,
+a backup or an upgrade bundle, and upgrades leave them alone. Importing
+needs the `certificates` permission (superusers and the `admin` role).
+There is no ACME (automatic renewal) yet: import a new certificate before
+the old one expires.
 
 ## Sayings
 
@@ -198,7 +239,8 @@ show the same):
 | `show tags [TAG]`, `show interfaces`, `show api-keys` | Registrations, addresses, tag API keys |
 | `show arp [INTERFACE]` | ARP table: which neighbours answered, with their MACs |
 | `show routes [vrf NAME]` | Static routes from the config (installed or not, and why), then the routing tables: default, each VRF, mgmt |
-| `show nat` | NAT entries (port forwards, static NAT, source NAT) with the connections each has translated |
+| `show nat` | NAT entries (port forwards, static NAT, source NAT) with the connections each has translated, and hairpinned |
+| `show management-certificate [pem]`, `request management-certificate import\|self-signed` | The web UI and tag API certificate; import your own or go back to self-signed (see [Management certificate](#management-certificate)) |
 | `show vrf` | VRFs with their table, interfaces and state |
 | `show bgp`, `show ospf` | BGP neighbors (state, uptime, prefixes) and OSPF neighbors, every VRF |
 | `show rib [vrf NAME]` | The routing table as FRR sees it, with the protocol of each route |
@@ -692,10 +734,53 @@ Things to know:
   decrypts it, as it would outbound traffic, and visitors then see the
   SJB-OS decryption CA's certificate, which their devices don't trust. Only
   useful in a lab; write decryption rules for outbound traffic.
-- **No hairpin yet.** Inside clients reach a published server by its inside
-  address, not its public one.
+- **Hairpin NAT** is on for every entry unless it says `hairpin: "off"`;
+  see below.
 - Order matters only among entries of the same kind: `move nat NAME ...`
   (or the arrows on the NAT page) reorders them.
+
+### Hairpin NAT
+
+Clients on SJB-OS's other interfaces (inside, a DMZ, VLANs) can also reach
+a published server by its **public** address, so the same name works inside
+and out. Each port forward and static NAT entry is published this way too,
+unless you turn it off:
+
+```yaml
+nat:
+  - name: game
+    type: port-forward
+    interface: outside
+    public_address: game-public
+    protocol: udp
+    public_port: 27015-27020
+    server: game-server
+    hairpin: "off"            # outside only; inside clients use the inside address
+```
+
+`set nat game hairpin off` in configure mode, or untick **Hairpin** on the
+NAT page.
+
+- **The rules still decide**, as for any inside traffic. A hairpinned
+  connection is judged from the client's zone to the server's zone, with the
+  server's inside address and port. In `examples/nat.yaml`, rule
+  `inside-to-web` (from inside to dmz, destination `web-server`, service
+  `web-alt`) lets inside clients use the web server's public address. Without
+  such a rule they are dropped like any other inside-to-DMZ traffic.
+- **The server sees the real client address**, except for clients on the
+  server's own network. Their replies would go straight back without passing
+  the firewall, so SJB-OS gives those connections its own address on that
+  network (masquerade).
+- Which interfaces: every zoned interface in the published interface's VRF
+  (the server's) except the published interface itself. Never mgmt.
+- A port forward on the interface's own address follows that address. For
+  one from DHCP or the deployment settings, SJB-OS keeps the current address
+  in the ruleset (set `ifaddr_<interface>`), updated within about 10 seconds
+  of a change.
+- `show nat` and the NAT page count hairpinned connections separately
+  (**Hairpin** column).
+- Hairpinned HTTPS is decrypted if a decryption rule matches it (from the
+  client's zone to the server's), like any other connection.
 
 ## Users and roles
 
@@ -712,7 +797,7 @@ disabling a user or deleting one takes effect at once.
 | Role | May |
 | --- | --- |
 | `superuser` | Everything: users and roles, upgrades, the decryption CA, tag API keys, and all the below |
-| `admin` | See everything except secrets; change and commit the config (log forwarding included), roll back, confirm, tags, IPS signature updates, config-only backups and restores |
+| `admin` | See everything except secrets; change and commit the config (log forwarding included), roll back, confirm, tags, IPS signature updates, the management certificate, config-only backups and restores |
 | `read-only` | See everything except secrets (tag API keys); change nothing |
 
 `admin` (the user) is a permanent superuser: it can't be deleted, disabled
@@ -726,9 +811,10 @@ their own account.
 | `policy` | Rules, addresses, address groups, services, application groups, zones, NAT, App Identification on/off |
 | `network` | Interfaces, static routes, VRFs, BGP/OSPF, prefix lists, the hostname |
 | `dhcp` | DHCP servers, reservations and leases |
-| `ips` | IPS profiles, on/off, disabled signatures; signature updates |
+| `ips` | IPS profiles and exceptions, on/off, disabled signatures; signature updates |
 | `decryption` | Decryption rules, profiles and exclusions; the learned list |
 | `decryption-ca` | The decryption CA: generate or import |
+| `certificates` | The management certificate (web UI and tag API): import, or back to self-signed |
 | `logging` | Log forwarding: the syslog servers (a SIEM) the logs go to |
 | `tags` | Tag registrations |
 | `monitoring` | Logs, statistics, applications, ARP, routing status, ping (view only) |
@@ -986,8 +1072,41 @@ Suricata as not installed.
   version and counts by severity, the last update and which rules are
   inspected. The firewall needs to reach rules.emergingthreats.net over the
   outside link.
-- **False positives:** leave a signature out by its ID (from the threat log):
-  `set system ips-disabled-signatures [ 2013504 ]`.
+- **False positives:** leave a signature out everywhere by its ID (from the
+  threat log), `set system ips-disabled-signatures [ 2013504 ]`, or only
+  where it misfires, with an exception (below).
+- **Exceptions** stop one signature from blocking for part of the
+  inspected traffic only: the traffic of some rules, from some clients
+  (source) and/or to some servers (destination, by inside address as rules
+  name them). Everything you give must match, and you must give at least
+  one. **alert** (the default) still logs each match, with the exception's
+  name in the threat log's Exception column, and **ignore** logs nothing.
+  Add them on the **IPS** page (**Exceptions**) or:
+
+  ```
+  set ips-exception scanner-to-web sid 2019876 rule web-in source vuln-scanner destination web-server
+  set ips-exception build-downloads sid 2027758 source build-hosts action ignore
+  ```
+
+  ```yaml
+  ips_exceptions:
+    - name: scanner-to-web
+      sid: "2019876"
+      rules: [web-in]           # rules with an IPS profile
+      source: [vuln-scanner]    # the connection's client
+      destination: [web-server] # its server's inside address
+    - name: build-downloads
+      sid: "2027758"
+      source: [build-hosts]
+      action: ignore
+  ```
+
+  `show ips` and the IPS page list them, with the packets each has let
+  through. Up to 35 different signatures can have exceptions. The firewall
+  decides them, not Suricata: it rebuilds the signatures when you add or
+  remove one, and until Suricata has loaded them (a minute or so) the
+  signature keeps blocking. When another signature matches the same packet,
+  the profile decides as usual: an exception never hides a different match.
 - **Test it** from a client behind the firewall: any traffic containing
   `SJB-IPS-TEST-CRITICAL` (or `-MAJOR`, `-MINOR`, `-INFO`) matches SJB-OS's
   own test signatures at that severity, e.g.
@@ -1018,8 +1137,7 @@ Suricata as not installed.
 - It ships in the upgrade bundle: Debian 13's Suricata 7.0.10 (kept patched
   by `apt upgrade`), installed in the background after the upgrade, run as
   `sjb-ips.service`.
-- Not yet: exceptions per profile, reset instead of drop, file and URL
-  filtering, IPv6.
+- Not yet: reset instead of drop, file and URL filtering, IPv6.
 
 ## TLS decryption
 
@@ -1493,16 +1611,16 @@ unchanged. The full history lives in `/var/lib/ngfw/revisions/`.
   VMware's device models.
 - IPv4 only. The management default route comes only from the deployment
   settings.
-- No hairpin NAT: inside clients reach a published server by its inside
-  address. A published server must be in the same VRF as the interface its
-  traffic arrives on.
-- App Identification rules can't use nDPI's risk scores yet. The IPS has no per-profile
-  exceptions yet, and blocks by dropping (no reset).
+- A published server must be in the same VRF as the interface its traffic
+  arrives on; hairpin NAT reaches it from that VRF only.
+- App Identification rules can't use nDPI's risk scores yet. The IPS blocks by
+  dropping (no reset); at most 35 signatures can have exceptions.
 - TLS decryption is meant for outbound connections in the default VRF (it
   decrypts published servers' traffic only if a rule says so, and visitors
   then get certificate warnings), with no revocation checking; decrypted web traffic uses HTTP/1.1 where the client
   allows it.
-- The web UI and tag API certificate is self-signed (`curl -k`).
+- The web UI and tag API certificate is self-signed (`curl -k`) until you
+  import your own; there is no ACME (automatic certificates) yet.
 - Users are local to the appliance: no LDAP, RADIUS, SAML or OIDC yet. The
   web UI and SSH/console count failed logins separately.
 - Upgrades cover SJB-OS itself and the packages it ships (FRR, Kea,

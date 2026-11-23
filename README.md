@@ -46,7 +46,7 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
   took 0.6 hours. Later work (multiple users, inbound NAT, trunks, the
   DMZ lab, review follow-ups, log forwarding and backups, and the
   management certificate, hairpin NAT and IPS exceptions, through
-  2026-11-22 and 0.9.12-r01) brings the total to 30.9 hours. The hours are estimates of active time derived from the session
+  2026-11-23 and 0.9.12-r01) brings the total to 31.6 hours. The hours are estimates of active time derived from the session
   transcripts, not stopwatch measurements: a gap between Steve's messages
   counts in full up to 30 minutes and as 5 minutes beyond that, and one
   0.5-hour figure (his ChatGPT review) is his own estimate. Row by row:
@@ -87,7 +87,7 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 | --- | --- | --- |
 | Time to build | About a year | 9 days, Nov 8 to 16, 2026 (to 0.9.9-r08) |
 | People | One specialist, or about six engineers | One person directing AI |
-| Human hours | 2,400 to 12,300 engineering hours | About 27.3 hours in those nine days (30.9 through Nov 22), estimated from the session transcripts |
+| Human hours | 2,400 to 12,300 engineering hours | About 27.3 hours in those nine days (31.6 through Nov 23), estimated from the session transcripts |
 | Cost | $350,000 to $1.1 million in salary and benefits | A $20/month Claude Pro plan ($510 of tokens at API list prices) |
 
 The left column is a model-based estimate; the right comes from the

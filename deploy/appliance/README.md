@@ -1107,6 +1107,14 @@ Suricata as not installed.
   remove one, and until Suricata has loaded them (a minute or so) the
   signature keeps blocking. When another signature matches the same packet,
   the profile decides as usual: an exception never hides a different match.
+  Each signature with exceptions gets one of 35 internal codes, and a code
+  that an earlier signature set gave another signature stays out of use
+  until SJB-OS has had Suricata reload and seen it finish, so an old match
+  can never pass as a new exception. If you swap many exceptions to other
+  signatures in quick succession (or Suricata isn't answering), a new
+  exception can find no code free: the commit warns, `show ips` and the IPS
+  page mark it **inactive**, and its signature keeps blocking. Commit again
+  once `show ips` reports the signatures loaded.
 - **Test it** from a client behind the firewall: any traffic containing
   `SJB-IPS-TEST-CRITICAL` (or `-MAJOR`, `-MINOR`, `-INFO`) matches SJB-OS's
   own test signatures at that severity, e.g.
@@ -1614,7 +1622,8 @@ unchanged. The full history lives in `/var/lib/ngfw/revisions/`.
 - A published server must be in the same VRF as the interface its traffic
   arrives on; hairpin NAT reaches it from that VRF only.
 - App Identification rules can't use nDPI's risk scores yet. The IPS blocks by
-  dropping (no reset); at most 35 signatures can have exceptions.
+  dropping (no reset); at most 35 signatures can have exceptions, and an
+  exception that finds no free code stays inactive until a later commit.
 - TLS decryption is meant for outbound connections in the default VRF (it
   decrypts published servers' traffic only if a rule says so, and visitors
   then get certificate warnings), with no revocation checking; decrypted web traffic uses HTTP/1.1 where the client

@@ -255,7 +255,17 @@ bit 31 (plain). An exception line needs exactly its code and no plain bit
 saddr` (client) and `ct reply ip saddr` (server's inside address). Codes are
 kept stable across commits (compiler.AssignIPSCodes, saved in
 `<state>/ips-codes.json`) because Suricata loads a new rules file well after
-the ruleset changes; the rules file and ruleset must use the same codes. Trunks (0.9.10-r02): a non-mgmt interface with no zone must carry VLAN
+the ruleset changes; the rules file and ruleset must use the same codes.
+Every rules file ngfwd writes is recorded with its codes, under d.mu, before
+it is written (`<state>/ips-files.json`); a code is never given a different
+signature while any recorded file gives it another. Older records are
+released only when a blocking `reload-rules` on Suricata's command socket
+(ips.Runner.ReloadRules, sent by ngfwd itself; no USR2) returns OK after a
+newer file was written: Suricata handles socket commands serially and reads
+the file after the command arrives (checked with Suricata 7.0).
+`ruleset-reload-time` is no proof (it changes at the end of a reload). No
+free code: the exception stays inactive with a warning, never a reused
+code. Trunks (0.9.10-r02): a non-mgmt interface with no zone must carry VLAN
 subinterfaces and has no address; the compiler drops untagged traffic on it
 in forward (in and out) and input, and nicaddr gives it an override with no
 address (TrunkOnly). Never let a zoneless data interface exist otherwise:

@@ -39,28 +39,31 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 
 ## The evidence
 
-- **Time:** the first milestone took nine days of calendar time
-  (2026-11-08 to 2026-11-16, 38 releases through 0.9.9-r08) and about
-  27.3 hours of Steve's active time. Of that, 22.9 hours took it to its
-  first full release (0.9.9-r03), and TLS decryption (0.9.9-r04 to r06)
-  took 0.6 hours. Later work (multiple users, inbound NAT, trunks, the
-  DMZ lab, review follow-ups, log forwarding and backups, and the
-  management certificate, hairpin NAT and IPS exceptions, through
-  2026-11-23 and 0.9.12-r02) brings the total to 32.1 hours. The hours are estimates of active time derived from the session
+- **Time:** 16 days of calendar time (2026-11-08 to 2026-11-23, 45
+  releases through 0.9.12-r02) and about 32.1 hours of Steve's active
+  time. The first milestone took nine days (to 0.9.9-r08, 38 releases)
+  and 27.3 hours, of which 22.9 took it to its first full release
+  (0.9.9-r03) and 0.6 went on TLS decryption (0.9.9-r04 to r06). The
+  rest went on multiple users, inbound NAT, trunks, the DMZ lab, review
+  follow-ups, log forwarding and backups, and the management
+  certificate, hairpin NAT and IPS exceptions. The hours are estimates of active time derived from the session
   transcripts, not stopwatch measurements: a gap between Steve's messages
-  counts in full up to 30 minutes and as 5 minutes beyond that, and one
-  0.5-hour figure (his ChatGPT review) is his own estimate. Row by row:
+  counts in full up to 30 minutes and as 5 minutes beyond that, and three
+  0.5-hour figures (his ChatGPT reviews and the 2026-11-21 follow-ups) are
+  his own estimates. Row by row:
   [docs/effort-log.md](docs/effort-log.md).
-- **AI cost:** a $20/month Claude Pro plan. The 1.60 billion tokens it
-  used through 2026-11-17 (nearly all cached context, counted from the
-  session transcripts) would cost about $510 at Claude API list prices.
+- **AI cost:** a $20/month Claude Pro plan. The 2.2 billion tokens it
+  used through 2026-11-23 (nearly all cached context, counted from the
+  session transcripts) would cost about $700 at Claude API list prices.
   ChatGPT's review isn't included.
-- **Size:** on 2026-11-17, about 28,500 lines of Go, C, JavaScript, shell
-  and Python, not counting comments and blank lines: 21,500 product, 7,000
-  tests.
+- **Size:** on 2026-11-23, about 39,800 lines of Go, C, JavaScript, shell
+  and Python, not counting comments and blank lines: 26,800 product,
+  13,000 tests and test tools (the lab gates and client harnesses), with
+  265 Go test functions. (Counted with a simpler script than the 28,500
+  published for 2026-11-17; it gives 27,700 for that date.)
 - **Testing:** unit tests, network-namespace gates in CI (including
   established sessions across policy changes), and a QEMU boot test with
-  VMware's device models: about 150 end-to-end checks of first boot,
+  VMware's device models: about 190 end-to-end checks of first boot,
   policy, application identification, intrusion prevention, TLS
   decryption, routing, DHCP, upgrades and rollback (every release through
   0.9.9-r08; since then, version bumps, while revisions run the tests that
@@ -74,8 +77,8 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
   local curl failure, such as an untrusted certificate, as a block. They
   now count only a refused, dropped or reset connection, and
   `make harness-test` checks the harnesses' verdicts offline.
-- **Releases:** 38 in the first nine days (through 0.9.9-r08), each gated
-  by the boot test; 42 through 2026-11-20 (0.9.10-r02). Since r08,
+- **Releases:** 45 through 2026-11-23 (0.9.12-r02); the 38 in the first
+  nine days (through 0.9.9-r08) were each gated by the boot test. Since r08,
   version bumps and the r10 fix get the boot test, and other revisions
   run the tests that cover their change. The public history starts at
   0.9.9-r01; the earlier releases are kept privately.
@@ -85,24 +88,31 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 
 | | Built the usual way (estimate) | Built with AI (from the record) |
 | --- | --- | --- |
-| Time to build | About a year | 9 days, Nov 8 to 16, 2026 (to 0.9.9-r08) |
-| People | One specialist, or about six engineers | One person directing AI |
-| Human hours | 2,400 to 12,300 engineering hours | About 27.3 hours in those nine days (32.1 through Nov 23), estimated from the session transcripts |
-| Cost | $350,000 to $1.1 million in salary and benefits | A $20/month Claude Pro plan ($510 of tokens at API list prices) |
+| Time to build | About 15 months | 16 days, Nov 8 to 23, 2026 (to 0.9.12-r02) |
+| People | One specialist, or about seven or eight engineers | One person directing AI |
+| Human hours | 3,000 to 17,400 engineering hours | About 32.1 hours over those 16 days (27.3 in the first nine), estimated from the session transcripts |
+| Cost | $450,000 to $1.6 million in salary and benefits | A $20/month Claude Pro plan ($700 of tokens at API list prices) |
 
 The left column is a model-based estimate; the right comes from the
 effort log and the release history:
 
 - **Low end:** a component-by-component estimate for one senior specialist
-  who already knows this stack: 49 weeks of work (6 of them for TLS
-  decryption) plus 20% for integration and testing, about 59 weeks or
-  2,350 hours. Priced at the 90th-percentile US wage for software
+  who already knows this stack: 63 weeks of work plus 20% for integration
+  and testing, about 76 weeks or 3,000 hours. The 63 weeks are the
+  original 49 (6 of them for TLS decryption) plus 14 for what was added
+  after the first milestone: multiple users and roles (3), inbound NAT
+  (2), trunks (1), log forwarding (2), backups (1), the management
+  certificate (1), hairpin NAT (1), IPS exceptions (2) and the client
+  test harnesses (1). Priced at the 90th-percentile US wage for software
   developers ($214,670 a year), about $147 an hour with benefits: about
-  $350,000.
-- **High end:** the basic COCOMO model (organic mode) applied to the 28,500
-  lines (2026-11-17): 81 person-months, about six people for about 13
-  months, or 12,300 hours. Priced at the median wage ($64.44 an hour),
-  about $92 an hour with benefits: about $1.1 million.
+  $450,000. (For the first milestone it was 59 weeks, 2,350 hours and
+  $350,000.)
+- **High end:** the basic COCOMO model (organic mode) applied to the 39,800
+  lines (2026-11-23): 115 person-months, about seven or eight people for
+  about 15 months, or 17,400 hours. Priced at the median wage ($64.44 an
+  hour), about $92 an hour with benefits: about $1.6 million. (For the
+  first milestone's 28,500 lines it gave 81 person-months, 12,300 hours
+  and $1.1 million.)
 - **Benefits:** wages are about 70% of what employers pay in total (BLS
   Employer Costs for Employee Compensation), so wages are divided by 0.7.
 - **Caveats:** COCOMO dates from 1981 and tends to run high for modern

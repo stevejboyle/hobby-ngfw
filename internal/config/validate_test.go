@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -311,6 +312,58 @@ func TestIPSValidation(t *testing.T) {
 	}
 	if (IPSProfile{Minor: IPSBlock}).Action("major") != IPSBlock {
 		t.Error("unset severities fall back to the default's action")
+	}
+}
+
+func TestIPSExceptions(t *testing.T) {
+	c := base()
+	c.Rules = append(c.Rules,
+		Rule{Name: "web-in", From: []string{"internet"}, To: []string{"users"}, Action: "allow", IPSProfile: "default"},
+		Rule{Name: "plain", From: []string{"users"}, To: []string{"internet"}, Action: "allow"},
+	)
+	c.IPSExceptions = []IPSException{
+		{Name: "scanner", SID: "2019876", Source: []string{"h1"}},
+		{Name: "web", SID: "2019876", Rules: []string{"web-in"}, Destination: []string{"lan", "quarantine"}, Action: "ignore"},
+		{Name: "other", SID: "9900001", Rules: []string{"web-in"}, Action: "alert"},
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("exceptions should be valid: %v", err)
+	}
+	if got := c.IPSExceptionSIDs(); len(got) != 2 || got[0] != 2019876 || got[1] != 9900001 {
+		t.Errorf("IPSExceptionSIDs = %v", got)
+	}
+	if c.IPSExceptions[0].ActionOf() != IPSAlert || c.IPSExceptions[1].ActionOf() != IPSIgnore {
+		t.Error("ActionOf: alert by default")
+	}
+	c.IPSExceptions = []IPSException{
+		{Name: "no-scope", SID: "1"},
+		{Name: "bad-sid", SID: "ET-1", Source: []string{"h1"}},
+		{Name: "bad-rule", SID: "2", Rules: []string{"nope", "plain"}},
+		{Name: "bad-addr", SID: "3", Source: []string{"nowhere"}, Destination: []string{"any"}},
+		{Name: "bad-action", SID: "4", Source: []string{"h1"}, Action: "block"},
+		{Name: "bad-action", SID: "5", Source: []string{"h1"}},
+	}
+	err := c.Validate()
+	for _, want := range []string{
+		`ips_exceptions[0] "no-scope": give rules, source or destination`,
+		`"bad-sid": sid must be a signature ID`,
+		`rules: unknown rule "nope"`,
+		`rules: rule "plain" has no ips_profile`,
+		`source: unknown address or group "nowhere"`,
+		`destination: leave it out rather than "any"`,
+		`action must be alert or ignore, got "block"`,
+		"duplicate IPS exception name",
+	} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("want %q in %v", want, err)
+		}
+	}
+	c.IPSExceptions = nil
+	for i := 0; i <= MaxIPSExceptionSIDs; i++ {
+		c.IPSExceptions = append(c.IPSExceptions, IPSException{Name: fmt.Sprintf("e%d", i), SID: fmt.Sprint(1000 + i), Source: []string{"h1"}})
+	}
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "at most 35 can have exceptions") {
+		t.Errorf("want the SID limit, got %v", err)
 	}
 }
 

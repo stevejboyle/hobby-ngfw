@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 )
 
@@ -15,6 +16,58 @@ const (
 	IPSAlert  = "alert"  // let it through; log
 	IPSIgnore = "ignore" // let it through; don't log
 )
+
+// IPSException stops one signature (SID) from blocking for some of the
+// traffic the IPS inspects: connections of the named rules, from the
+// source addresses (the connection's client) and/or to the destination
+// addresses (its server's inside address, as rules name it). Every field
+// given must match; at least one of rules, source and destination is
+// needed (ips_disabled_signatures turns a signature off everywhere).
+// Action alert (the default) still logs the match in the threat log,
+// marked with the exception's name; ignore doesn't.
+type IPSException struct {
+	Name        string   `yaml:"name" json:"name"`
+	SID         string   `yaml:"sid" json:"sid"`
+	Rules       []string `yaml:"rules,omitempty" json:"rules"`
+	Source      []string `yaml:"source,omitempty" json:"source"`
+	Destination []string `yaml:"destination,omitempty" json:"destination"`
+	Action      string   `yaml:"action,omitempty" json:"action"` // alert (default) or ignore
+}
+
+// ActionOf is the exception's action: alert unless set to ignore.
+func (e IPSException) ActionOf() string {
+	if e.Action == IPSIgnore {
+		return IPSIgnore
+	}
+	return IPSAlert
+}
+
+// SIDNumber is the exception's signature ID (0 if it isn't a number).
+func (e IPSException) SIDNumber() int {
+	n, err := strconv.ParseUint(e.SID, 10, 32)
+	if err != nil {
+		return 0
+	}
+	return int(n)
+}
+
+// MaxIPSExceptionSIDs is how many different signatures exceptions can
+// name: each gets a code in the packet mark (see internal/compiler).
+const MaxIPSExceptionSIDs = 35
+
+// IPSExceptionSIDs lists the signatures exceptions name, in numeric order.
+func (c *Config) IPSExceptionSIDs() []int {
+	seen := map[int]bool{}
+	var out []int
+	for _, e := range c.IPSExceptions {
+		if n := e.SIDNumber(); n != 0 && !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	sort.Ints(out)
+	return out
+}
 
 // DefaultIPSProfile is the built-in profile name; a config may redefine it.
 const DefaultIPSProfile = "default"
@@ -123,5 +176,58 @@ func (v *validator) ips(c *Config) {
 		if _, ok := c.IPSProfile(r.IPSProfile); !ok {
 			v.add(path, "unknown IPS profile %q", r.IPSProfile)
 		}
+	}
+}
+
+func (v *validator) ipsExceptions(c *Config, addrs map[string]bool) {
+	names := map[string]bool{}
+	for i, e := range c.IPSExceptions {
+		p := fmt.Sprintf("ips_exceptions[%d] %q", i, e.Name)
+		v.checkName(p, e.Name)
+		if names[e.Name] {
+			v.add(p, "duplicate IPS exception name")
+		}
+		names[e.Name] = true
+		if e.SIDNumber() == 0 {
+			v.add(p, "sid must be a signature ID (a number, as the threat log shows it), got %q", e.SID)
+		}
+		if len(e.Rules) == 0 && len(e.Source) == 0 && len(e.Destination) == 0 {
+			v.add(p, "give rules, source or destination (to turn the signature off everywhere, use system ips_disabled_signatures)")
+		}
+		for _, name := range e.Rules {
+			found := false
+			for _, r := range c.Rules {
+				if r.Name != name {
+					continue
+				}
+				found = true
+				if r.Action != "allow" || r.IPSProfile == "" {
+					v.add(p, "rules: rule %q has no ips_profile, so the IPS doesn't inspect its traffic", name)
+				}
+			}
+			if !found {
+				v.add(p, "rules: unknown rule %q", name)
+			}
+		}
+		for _, f := range []struct {
+			field string
+			vals  []string
+		}{{"source", e.Source}, {"destination", e.Destination}} {
+			for _, s := range f.vals {
+				if s == Any {
+					v.add(p, "%s: leave it out rather than %q", f.field, Any)
+				} else if !addrs[s] {
+					v.add(p, "%s: unknown address or group %q", f.field, s)
+				}
+			}
+		}
+		switch e.Action {
+		case "", IPSAlert, IPSIgnore:
+		default:
+			v.add(p, "action must be alert or ignore, got %q", e.Action)
+		}
+	}
+	if n := len(c.IPSExceptionSIDs()); n > MaxIPSExceptionSIDs {
+		v.add("ips_exceptions", "name %d different signatures; at most %d can have exceptions", n, MaxIPSExceptionSIDs)
 	}
 }

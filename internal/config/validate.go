@@ -431,6 +431,7 @@ func (c *Config) Validate() error {
 	}
 	v.dhcp(c)
 	v.ips(c)
+	v.ipsExceptions(c, addrs)
 	v.decryption(c, zones, addrs)
 	v.logServers(c)
 

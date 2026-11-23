@@ -32,6 +32,9 @@ type Config struct {
 
 	// IPS (Suricata).
 	IPSProfiles []IPSProfile `yaml:"ips_profiles,omitempty" json:"ips_profiles"`
+	// IPSExceptions stop one signature from blocking (or being logged)
+	// for some rules or addresses, rather than everywhere.
+	IPSExceptions []IPSException `yaml:"ips_exceptions,omitempty" json:"ips_exceptions"`
 
 	// TLS decryption (tlsd).
 	DecryptionRules      []DecryptionRule      `yaml:"decryption_rules,omitempty" json:"decryption_rules"`

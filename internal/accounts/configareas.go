@@ -31,6 +31,7 @@ var configFieldArea = map[string]Area{
 	"DHCPServers":          DHCP,
 	"DHCPReservations":     DHCP,
 	"IPSProfiles":          IPS,
+	"IPSExceptions":        IPS,
 	"DecryptionRules":      Decryption,
 	"DecryptionProfiles":   Decryption,
 	"DecryptionExclusions": Decryption,

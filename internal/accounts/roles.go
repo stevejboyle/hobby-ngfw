@@ -59,7 +59,7 @@ var Areas = []AreaInfo{
 	{Policy, "Policy", "rules, addresses, address groups, services, application groups, zones, NAT, App Identification on/off", false},
 	{Network, "Network", "interfaces, static routes, VRFs, BGP/OSPF, prefix lists, hostname", false},
 	{DHCP, "DHCP", "DHCP servers, reservations and leases", false},
-	{IPS, "IPS", "IPS profiles, on/off, disabled signatures; signature updates", false},
+	{IPS, "IPS", "IPS profiles, exceptions, on/off, disabled signatures; signature updates", false},
 	{Decryption, "Decryption", "decryption rules, profiles and exclusions; the learned list", false},
 	{DecryptionCA, "Decryption CA", "the decryption CA: generate or import", false},
 	{Certificates, "Management certificate", "the web UI and tag API certificate: import, or back to self-signed", false},

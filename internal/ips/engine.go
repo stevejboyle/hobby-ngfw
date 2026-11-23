@@ -85,7 +85,7 @@ func (e *Engine) Installed() bool {
 
 // Update downloads the rule set, keeps it, and rebuilds the rules file.
 // On a failed download the rules in place stay, and the status says why.
-func (e *Engine) Update(ctx context.Context, disabled map[int]bool) (Status, error) {
+func (e *Engine) Update(ctx context.Context, tu Tuning) (Status, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	st := e.Status()
@@ -116,7 +116,7 @@ func (e *Engine) Update(ctx context.Context, disabled map[int]bool) (Status, err
 	if err := e.saveStatus(st); err != nil {
 		return st, err
 	}
-	return e.build(disabled)
+	return e.build(tu)
 }
 
 // versionOf reads the rule set's version.txt beside the tarball ("" if
@@ -143,13 +143,13 @@ func versionOf(ctx context.Context, client *http.Client, url string) string {
 // Build rewrites the rules file from the kept download (or the test
 // signatures alone when nothing has been downloaded), leaving out the
 // disabled signatures, and reloads Suricata.
-func (e *Engine) Build(disabled map[int]bool) (Status, error) {
+func (e *Engine) Build(tu Tuning) (Status, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.build(disabled)
+	return e.build(tu)
 }
 
-func (e *Engine) build(disabled map[int]bool) (Status, error) {
+func (e *Engine) build(tu Tuning) (Status, error) {
 	st := e.Status()
 	files := map[string][]byte{}
 	if tgz, err := os.ReadFile(e.path(CacheFile)); err == nil {
@@ -162,14 +162,14 @@ func (e *Engine) build(disabled map[int]bool) (Status, error) {
 	} else {
 		return st, err
 	}
-	rules, counts := Process(files, disabled)
+	rules, counts := Process(files, tu)
 	class := files["classification.config"]
 	if class == nil {
 		class = []byte("config classification: misc-activity,Misc activity,3\n")
 	}
 	st.Counts = counts
 	st.Signatures = counts.Total()
-	st.Disabled = len(disabled)
+	st.Disabled = len(tu.Disabled)
 	// Unchanged rules (a daily check with nothing new, a restart): no
 	// rewrite, no reload. Loading the full set takes Suricata a while.
 	if old, err := os.ReadFile(e.path(RulesFile)); err == nil && bytes.Equal(old, rules) {

@@ -29,6 +29,8 @@ type Threat struct {
 	DPort     int       `json:"dport,omitempty"`
 	// Decrypted: the match was in TLS-decrypted traffic.
 	Decrypted bool `json:"decrypted,omitempty"`
+	// Exception names the IPS exception that let the match through.
+	Exception string `json:"exception,omitempty"`
 }
 
 // Line is the journal line for t.
@@ -55,9 +57,9 @@ var ThreatColumns = []Column{
 	{"time", "Time", "when the signature matched"},
 	{"rule", "Rule", "the rule whose traffic it was"},
 	{"profile", "Profile", "the rule's IPS profile"},
-	{"action", "Action", "block (packet and connection dropped) or alert (let through)"},
+	{"action", "Action", "block (packet and connection dropped) or alert (let through; also by an IPS exception)"},
 	{"severity", "Severity", "critical, major, minor or informational"},
-	{"sid", "SID", "signature ID (ips_disabled_signatures takes these)"},
+	{"sid", "SID", "signature ID (ips_disabled_signatures and ips_exceptions take these)"},
 	{"signature", "Signature", "what the signature detects"},
 	{"category", "Category", "the signature's class"},
 	{"app", "Application", "application, when known"},
@@ -67,6 +69,7 @@ var ThreatColumns = []Column{
 	{"dport", "Dst port", "destination port"},
 	{"proto", "Protocol", "tcp, udp, ..."},
 	{"decrypted", "Decrypted", "yes when the match was inside decrypted TLS"},
+	{"exception", "Exception", "the IPS exception that let it through"},
 }
 
 // DefaultThreatColumns are shown when no columns are chosen.
@@ -90,6 +93,7 @@ var ThreatSchema = Schema{
 	"port":      {kNum, []string{"sport", "dport"}, "either port"},
 	"proto":     {kText, []string{"proto"}, "tcp, udp, ..."},
 	"decrypted": {kText, []string{"decrypted"}, "yes: inside decrypted TLS"},
+	"exception": {kText, []string{"exception"}, "IPS exception name"},
 }
 
 // Value is the text of one column of t.
@@ -134,6 +138,8 @@ func (t Threat) Value(col string) string {
 			return "yes"
 		}
 		return ""
+	case "exception":
+		return t.Exception
 	}
 	return ""
 }

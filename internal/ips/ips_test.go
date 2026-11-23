@@ -27,14 +27,18 @@ alert ip any any -> any any (msg:"unknown sev"; sid:2000006; rev:1; metadata:sig
 `
 
 func TestProcess(t *testing.T) {
-	out, counts := Process(map[string][]byte{"emerging-scan.rules": []byte(sample), "notes.txt": []byte("alert junk")}, map[int]bool{2000005: true, 9900004: true})
+	// 2000002 and the critical test signature have IPS exceptions: their
+	// matches carry the exception code instead of the plain bit.
+	tu := Tuning{Disabled: map[int]bool{2000005: true, 9900004: true}, Codes: map[int]uint32{2000002: 0x000e0000, 9900001: 0x00160000}}
+	out, counts := Process(map[string][]byte{"emerging-scan.rules": []byte(sample), "notes.txt": []byte("alert junk")}, tu)
 	got := string(out)
 	for _, want := range []string{
-		`sid:2001219; rev:20; metadata:created_at 2010_07_30, signature_severity Major; nfq_set_mark:0x02000000/0x02000000;)`,
-		`alert ip any any -> any any (msg:"was drop"; sid:2000002; rev:1; metadata:signature_severity Critical; nfq_set_mark:0x01000000/0x01000000;)`,
-		`(msg:"no severity"; sid:2000003; rev:1; nfq_set_mark:0x08000000/0x08000000;)`,
+		`sid:2001219; rev:20; metadata:created_at 2010_07_30, signature_severity Major; nfq_set_mark:0x82000000/0x82000000;)`,
+		`alert ip any any -> any any (msg:"was drop"; sid:2000002; rev:1; metadata:signature_severity Critical; nfq_set_mark:0x010e0000/0x010e0000;)`,
+		`(msg:"no severity"; sid:2000003; rev:1; nfq_set_mark:0x88000000/0x88000000;)`,
 		`pass ip 10.0.0.1 any -> any any (msg:"pass"; sid:2000004; rev:1;)`,
-		`content:"SJB-IPS-TEST-CRITICAL"; nfq_set_mark:0x01000000/0x01000000; sid:9900001;`,
+		`content:"SJB-IPS-TEST-CRITICAL"; nfq_set_mark:0x01160000/0x01160000; sid:9900001;`,
+		`content:"SJB-IPS-TEST-MAJOR"; nfq_set_mark:0x82000000/0x82000000; sid:9900002;`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
@@ -90,15 +94,15 @@ func TestUpdateAndBuild(t *testing.T) {
 		Reload: func() error { reloads++; return nil }, Now: func() time.Time { return time.Date(2026, 11, 14, 3, 0, 0, 0, time.UTC) }}
 
 	// Before any download: test signatures only.
-	st, err := e.Build(nil)
+	st, err := e.Build(Tuning{})
 	if err != nil || st.Source != "test signatures only" || st.Signatures != 4 || !e.Installed() {
 		t.Fatalf("%+v %v", st, err)
 	}
 	// The same rules again: no reload.
-	if _, err := e.Build(nil); err != nil || reloads != 1 {
+	if _, err := e.Build(Tuning{}); err != nil || reloads != 1 {
 		t.Fatalf("unchanged rules reloaded: %d %v", reloads, err)
 	}
-	st, err = e.Update(context.Background(), map[int]bool{2000003: true})
+	st, err = e.Update(context.Background(), Tuning{Disabled: map[int]bool{2000003: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +114,7 @@ func TestUpdateAndBuild(t *testing.T) {
 	}
 	// A bad checksum keeps the rules and says why.
 	corrupt = true
-	if _, err := e.Update(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+	if _, err := e.Update(context.Background(), Tuning{}); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("got %v", err)
 	}
 	if st := e.Status(); st.LastError == "" || st.Signatures != 9 || st.Source != "ET Open" {
@@ -118,7 +122,7 @@ func TestUpdateAndBuild(t *testing.T) {
 	}
 	// Rebuilding from the kept download needs no network.
 	srv.Close()
-	if st, err := e.Build(nil); err != nil || st.Signatures != 10 {
+	if st, err := e.Build(Tuning{}); err != nil || st.Signatures != 10 {
 		t.Fatalf("rebuild: %+v %v", st, err)
 	}
 }

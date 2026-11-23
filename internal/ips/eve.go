@@ -25,6 +25,11 @@ type Alert struct {
 	SPort    int
 	Dst      string
 	DPort    int
+	// Client and Server are the connection's ends, whichever way the
+	// packet went: Suricata's flow addresses (it sits after destination
+	// NAT, so Server is the server's inside address), else the packet's
+	// by its direction.
+	Client, Server string
 }
 
 type eveRecord struct {
@@ -35,7 +40,12 @@ type eveRecord struct {
 	DestIP    string `json:"dest_ip"`
 	DestPort  int    `json:"dest_port"`
 	Proto     string `json:"proto"`
-	Alert     struct {
+	Direction string `json:"direction"` // to_server or to_client (Suricata 7)
+	Flow      struct {
+		SrcIP  string `json:"src_ip"`
+		DestIP string `json:"dest_ip"`
+	} `json:"flow"`
+	Alert struct {
 		SignatureID int                 `json:"signature_id"`
 		Signature   string              `json:"signature"`
 		Category    string              `json:"category"`
@@ -53,6 +63,14 @@ func ParseEVE(b []byte) (Alert, bool) {
 		SID: r.Alert.SignatureID, Message: r.Alert.Signature, Category: r.Alert.Category,
 		Proto: strings.ToLower(r.Proto), Src: r.SrcIP, SPort: r.SrcPort, Dst: r.DestIP, DPort: r.DestPort,
 		Severity: "informational",
+	}
+	switch {
+	case r.Flow.SrcIP != "" && r.Flow.DestIP != "":
+		a.Client, a.Server = r.Flow.SrcIP, r.Flow.DestIP
+	case r.Direction == "to_client":
+		a.Client, a.Server = r.DestIP, r.SrcIP
+	default:
+		a.Client, a.Server = r.SrcIP, r.DestIP
 	}
 	if s := r.Alert.Metadata["signature_severity"]; len(s) > 0 {
 		a.Severity = Severity(s[0])

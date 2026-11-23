@@ -159,6 +159,9 @@ func CEF(version string, r logs.Record) string {
 		if e.Decrypted {
 			ext = append(ext, kv{"cs4Label", "decrypted"}, kv{"cs4", "yes"})
 		}
+		if e.Exception != "" {
+			ext = append(ext, kv{"cs5Label", "ipsException"}, kv{"cs5", e.Exception})
+		}
 	case logs.Decryption:
 		sig, name = "decryption-"+e.Decision, "TLS "+e.Decision
 		if e.Decision == logs.DecBlocked || e.Decision == logs.DecFailed {

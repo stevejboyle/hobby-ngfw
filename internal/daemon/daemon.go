@@ -100,6 +100,8 @@ type Daemon struct {
 	// what it should name, kept apart from d.mu for the same reason.
 	mgmtCert  *mgmtcert.Manager
 	certNames atomic.Pointer[certNames]
+	// ipsCodes are the running config's IPS exception codes (ips.go).
+	ipsCodes map[int]uint32
 	// recovery, when set, says live enforcement may not match the recorded
 	// running revision (a failed commit could not restore the previous
 	// ruleset, or an auto-rollback failed). Status reports it; the next
@@ -476,6 +478,7 @@ func (d *Daemon) Routes() []routes.State {
 func (d *Daemon) Start() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.loadIPSCodes()
 	n, data, err := d.store.Running()
 	if err != nil {
 		return err
@@ -486,7 +489,7 @@ func (d *Daemon) Start() error {
 			return fmt.Errorf("running revision %d: %w", n, err)
 		}
 	}
-	res, err := compiler.Compile(cfg, d.snapshot())
+	res, err := compiler.CompileWith(cfg, d.snapshot(), d.compileOpts(cfg))
 	if err != nil {
 		return err
 	}
@@ -653,7 +656,7 @@ func (d *Daemon) Preview() (*compiler.Result, error) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return compiler.Compile(cfg, d.snapshot())
+	return compiler.CompileWith(cfg, d.snapshot(), d.compileOpts(cfg))
 }
 
 // Status reports the running revision and any pending confirmation.
@@ -696,7 +699,7 @@ func (d *Daemon) commitLocked(data []byte, author, message string, confirm time.
 	if err != nil {
 		return nil, err
 	}
-	res, err := compiler.Compile(cfg, d.snapshot())
+	res, err := compiler.CompileWith(cfg, d.snapshot(), d.compileOpts(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
@@ -820,6 +823,7 @@ func (d *Daemon) setRunningLocked(cfg *config.Config) {
 	}
 	d.statsIfaces.Store(&names)
 	d.certNames.Store(&certNames{hostname: cfg.System.Hostname, mgmt: cfg.System.MgmtInterface})
+	d.setIPSCodesLocked(cfg)
 }
 
 // restorePendingRecordLocked puts the on-disk confirmation record back to
@@ -843,7 +847,7 @@ func (d *Daemon) reapplyRunningLocked() error {
 	if cfg == nil {
 		cfg = &config.Config{}
 	}
-	res, err := compiler.Compile(cfg, d.snapshot())
+	res, err := compiler.CompileWith(cfg, d.snapshot(), d.compileOpts(cfg))
 	if err != nil {
 		return err
 	}
@@ -936,7 +940,7 @@ func (d *Daemon) rollbackUnconfirmedLocked(p *pending, msg string) {
 // default-deny.
 func (d *Daemon) rollbackToNothingLocked() error {
 	empty := &config.Config{}
-	res, err := compiler.Compile(empty, d.snapshot())
+	res, err := compiler.CompileWith(empty, d.snapshot(), d.compileOpts(empty))
 	if err != nil {
 		return err
 	}

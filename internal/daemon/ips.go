@@ -2,8 +2,14 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"maps"
+	"net/netip"
+	"os"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +19,7 @@ import (
 	"github.com/stevejboyle/hobby-ngfw/internal/config"
 	"github.com/stevejboyle/hobby-ngfw/internal/ips"
 	"github.com/stevejboyle/hobby-ngfw/internal/logs"
+	"github.com/stevejboyle/hobby-ngfw/internal/nft"
 )
 
 // ipsState is the daemon's IPS bookkeeping.
@@ -39,10 +46,70 @@ func (d *Daemon) SetIPS(r ips.Runner, e *ips.Engine) {
 	}
 }
 
-func disabledKey(c *config.Config) string {
+// ipsCodesFile, in the state directory, keeps the running config's IPS
+// exception codes, so they survive restarts.
+const ipsCodesFile = "ips-codes.json"
+
+// compileOpts are the compile options for cfg: its IPS exception codes,
+// kept stable against the running config's (compiler.AssignIPSCodes).
+// Callers hold d.mu.
+func (d *Daemon) compileOpts(cfg *config.Config) compiler.Options {
+	return compiler.Options{IPSCodes: compiler.AssignIPSCodes(d.ipsCodes, cfg)}
+}
+
+// loadIPSCodes reads the codes the last running config used.
+func (d *Daemon) loadIPSCodes() {
+	b, err := os.ReadFile(filepath.Join(d.store.Dir(), ipsCodesFile))
+	if err != nil {
+		return
+	}
+	var m map[string]uint32
+	if json.Unmarshal(b, &m) != nil {
+		return
+	}
+	d.ipsCodes = map[int]uint32{}
+	for k, v := range m {
+		if n, err := strconv.Atoi(k); err == nil {
+			d.ipsCodes[n] = v
+		}
+	}
+}
+
+// setIPSCodesLocked records cfg's codes as the running ones. Callers hold d.mu.
+func (d *Daemon) setIPSCodesLocked(cfg *config.Config) {
+	codes := compiler.AssignIPSCodes(d.ipsCodes, cfg)
+	if maps.Equal(codes, d.ipsCodes) {
+		return
+	}
+	d.ipsCodes = codes
+	m := map[string]uint32{}
+	for k, v := range codes {
+		m[strconv.Itoa(k)] = v
+	}
+	b, _ := json.Marshal(m)
+	if err := os.WriteFile(filepath.Join(d.store.Dir(), ipsCodesFile), append(b, '\n'), 0o600); err != nil {
+		d.log.Warn("could not save the IPS exception codes", "err", err)
+	}
+}
+
+// tuningLocked is what the running config changes in the rules file.
+// Callers hold d.mu.
+func (d *Daemon) tuningLocked() ips.Tuning {
+	return ips.Tuning{Disabled: ips.Disabled(d.running.System.IPSDisabledSignatures), Codes: maps.Clone(d.ipsCodes)}
+}
+
+// disabledKey identifies a rules file's tuning: when it changes (a
+// signature disabled, an exception's signature or code), the file is
+// rebuilt. Callers hold d.mu.
+func (d *Daemon) disabledKey(c *config.Config) string {
 	s := slices.Clone(c.System.IPSDisabledSignatures)
 	slices.Sort(s)
-	return strings.Join(s, ",")
+	var ex []string
+	for sid, code := range d.ipsCodes {
+		ex = append(ex, fmt.Sprintf("%d=%x", sid, code))
+	}
+	slices.Sort(ex)
+	return strings.Join(s, ",") + "|" + strings.Join(ex, ",")
 }
 
 // syncIPSLocked starts, stops or rebuilds the IPS for the running config.
@@ -68,8 +135,8 @@ func (d *Daemon) syncIPSLocked() []string {
 	if m := d.ips.run.MemTotal(); m > 0 && m < MinIPSMemory {
 		warns = append(warns, fmt.Sprintf("IPS on a VM with %.1f GB of RAM: give it 4 GB (Suricata with the full signature set uses about 1 GB)", float64(m)/(1<<30)))
 	}
-	if key := disabledKey(cfg); !d.ips.engine.Installed() || key != d.ips.built {
-		if _, err := d.ips.engine.Build(ips.Disabled(cfg.System.IPSDisabledSignatures)); err != nil {
+	if key := d.disabledKey(cfg); !d.ips.engine.Installed() || key != d.ips.built {
+		if _, err := d.ips.engine.Build(d.tuningLocked()); err != nil {
 			warns = append(warns, fmt.Sprintf("IPS rules not rebuilt: %v", err))
 		} else {
 			d.ips.built = key
@@ -113,16 +180,13 @@ func (d *Daemon) UpdateIPS(ctx context.Context) (ips.Status, error) {
 	}
 	defer d.ips.updating.Unlock()
 	d.mu.Lock()
-	var disabled []string
-	if d.running != nil {
-		disabled = d.running.System.IPSDisabledSignatures
-	}
+	var tu ips.Tuning
 	key := ""
 	if d.running != nil {
-		key = disabledKey(d.running)
+		tu, key = d.tuningLocked(), d.disabledKey(d.running)
 	}
 	d.mu.Unlock()
-	st, err := d.ips.engine.Update(ctx, ips.Disabled(disabled))
+	st, err := d.ips.engine.Update(ctx, tu)
 	if err == nil {
 		d.mu.Lock()
 		d.ips.built = key
@@ -181,15 +245,41 @@ type IPSStatus struct {
 	// (inspecting with the signatures loaded so far) or "inspecting".
 	State  string `json:"state"`
 	Detail string `json:"state_detail"`
+	// Exceptions are the running config's IPS exceptions.
+	Exceptions []IPSExceptionStatus `json:"exceptions"`
+}
+
+// IPSExceptionStatus is an IPS exception with how many packets it let
+// through (nil when the counters can't be read or it has no ruleset line,
+// e.g. none of its rules is inspected).
+type IPSExceptionStatus struct {
+	config.IPSException
+	Action string  `json:"action"` // alert or ignore, the default filled in
+	Hits   *uint64 `json:"hits"`
 }
 
 // IPS reports the IPS state.
 func (d *Daemon) IPS() IPSStatus {
 	d.mu.Lock()
 	cfg := d.running
+	reader, _ := d.nft.(counterReader)
 	d.mu.Unlock()
-	st := IPSStatus{Rules: []string{}}
+	st := IPSStatus{Rules: []string{}, Exceptions: []IPSExceptionStatus{}}
 	if cfg != nil {
+		var counters map[string]nft.Counter
+		if reader != nil && len(cfg.IPSExceptions) > 0 {
+			if all, err := reader.Counters(compiler.Table, "ips_enforce"); err == nil {
+				counters = all["ips_enforce"]
+			}
+		}
+		for _, e := range cfg.IPSExceptions {
+			es := IPSExceptionStatus{IPSException: e, Action: e.ActionOf()}
+			if c, ok := counters["ips-exception:"+e.Name]; ok {
+				n := c.Packets
+				es.Hits = &n
+			}
+			st.Exceptions = append(st.Exceptions, es)
+		}
 		st.Enabled, st.InUse = cfg.System.IPSOn(), cfg.IPSRules()
 		for _, r := range cfg.Rules {
 			if r.Action == "allow" && r.IPSProfile != "" {
@@ -274,6 +364,11 @@ func (d *Daemon) IPSAlert(a ips.Alert) {
 			t.Action = p.Action(a.Severity)
 		}
 	}
+	if t.Action != config.IPSIgnore && t.Rule != "" && cfg != nil {
+		if e, ok := d.ipsExceptionFor(cfg, a.SID, t.Rule, a.Client, a.Server); ok {
+			t.Action, t.Exception = e.ActionOf(), e.Name
+		}
+	}
 	if t.Action == config.IPSIgnore {
 		return
 	}
@@ -285,4 +380,74 @@ func (d *Daemon) IPSAlert(a ips.Alert) {
 	if d.stats != nil {
 		d.stats.AddThreat(t.Severity, t.Action, t.SID, t.Signature, t.Src)
 	}
+}
+
+// ipsExceptionFor is the IPS exception that let a match through: the same
+// test as the ruleset's (chain ips_enforce): the signature, the rule
+// whose traffic it was, the connection's client and its server's inside
+// address. The first matching exception in the config's order names it.
+func (d *Daemon) ipsExceptionFor(cfg *config.Config, sid int, rule, client, server string) (config.IPSException, bool) {
+	cl, _ := netip.ParseAddr(client)
+	sv, _ := netip.ParseAddr(server)
+	for _, e := range cfg.IPSExceptions {
+		if e.SIDNumber() != sid {
+			continue
+		}
+		if len(e.Rules) > 0 && !slices.Contains(e.Rules, rule) {
+			continue
+		}
+		if len(e.Source) > 0 && !d.addrNamesCover(cfg, e.Source, cl) {
+			continue
+		}
+		if len(e.Destination) > 0 && !d.addrNamesCover(cfg, e.Destination, sv) {
+			continue
+		}
+		return e, true
+	}
+	return config.IPSException{}, false
+}
+
+// addrNamesCover reports whether ip is in any of the named addresses or
+// groups (a tag group: registered with the tag now).
+func (d *Daemon) addrNamesCover(cfg *config.Config, names []string, ip netip.Addr) bool {
+	if !ip.IsValid() {
+		return false
+	}
+	inAddr := func(name string) bool {
+		for _, a := range cfg.Addresses {
+			if a.Name != name {
+				continue
+			}
+			if p, err := netip.ParsePrefix(a.CIDR); err == nil {
+				return p.Contains(ip)
+			}
+			if x, err := netip.ParseAddr(a.CIDR); err == nil {
+				return x == ip
+			}
+		}
+		return false
+	}
+	for _, n := range names {
+		if inAddr(n) {
+			return true
+		}
+		for _, g := range cfg.AddressGroups {
+			if g.Name != n {
+				continue
+			}
+			if g.Tag != "" {
+				for _, e := range d.tags.List(g.Tag, d.Now()) {
+					if e.IP == ip {
+						return true
+					}
+				}
+			}
+			for _, m := range g.Static {
+				if inAddr(m) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

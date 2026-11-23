@@ -54,6 +54,9 @@ func Open(dir string) (*Store, error) {
 	return &Store{dir: dir}, nil
 }
 
+// Dir is the store's directory (ngfwd's state directory).
+func (s *Store) Dir() string { return s.dir }
+
 func (s *Store) path(parts ...string) string {
 	return filepath.Join(append([]string{s.dir}, parts...)...)
 }

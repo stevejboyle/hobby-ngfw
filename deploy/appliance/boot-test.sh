@@ -252,10 +252,11 @@ sn=$(cli_run show nat)
 # so its hairpin line matches a set ngfwd fills with that address.
 outip=$(root_run "ip -4 -o addr show dev outside" | awk '$NF != "outside:nat" {sub("/.*", "", $4); print $4; exit}')
 ifset=$(root_run nft list set inet ngfw ifaddr_outside 2>&1)
-[[ $pre == *'iifname "inside" ip daddr @ifaddr_outside tcp dport 8443 counter dnat ip to 10.10.1.77:443 comment "nat:bt-fwd hairpin"'* &&
-	$pre == *'ip daddr 192.0.2.88 counter dnat ip to 10.10.1.77 comment "nat:bt-static hairpin"'* && -n $outip && $ifset == *"$outip"* ]] &&
+# (The live ruleset shows counter values: "counter packets N bytes N".)
+[[ $pre == *'iifname "inside" ip daddr @ifaddr_outside tcp dport 8443 counter '*' dnat ip to 10.10.1.77:443 comment "nat:bt-fwd hairpin"'* &&
+	$pre == *'iifname "inside" ip daddr 192.0.2.88 counter '*' dnat ip to 10.10.1.77 comment "nat:bt-static hairpin"'* && -n $outip && $ifset == *"$outip"* ]] &&
 	pass "hairpin NAT: inside reaches both entries by the public address; ifaddr_outside holds outside's address ($outip)" || fail "hairpin: set=[$ifset] outip=$outip pre=[$pre]"
-[[ $(root_run nft list chain inet ngfw postrouting) == *'oifname "inside" ip saddr '*' ip daddr 10.10.1.77 counter masquerade comment "nat:hairpin 10.10.1.77"'* ]] &&
+[[ $(root_run nft list chain inet ngfw postrouting) == *'oifname "inside" ip saddr 10.10.1.0/24 ip daddr 10.10.1.77 counter '*' masquerade comment "nat:hairpin 10.10.1.77"'* ]] &&
 	pass "hairpin NAT: clients on the server's own network are masqueraded" || fail "hairpin masquerade: $(root_run nft list chain inet ngfw postrouting)"
 script=$'configure\ndelete nat bt-fwd\ndelete nat bt-static\ndelete address nat-srv\ndelete address nat-pub\ncommit -m "boot test: nat cleanup"\nexit\nexit\n'
 out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)

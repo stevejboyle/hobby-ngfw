@@ -86,44 +86,121 @@ func TestIPSExceptionIPSOff(t *testing.T) {
 	}
 }
 
-func TestAssignIPSCodesIsStable(t *testing.T) {
-	cfg := func(sids ...string) *config.Config {
-		c := &config.Config{}
-		for _, s := range sids {
-			c.IPSExceptions = append(c.IPSExceptions, config.IPSException{Name: "e" + s, SID: s})
-		}
-		return c
+func excCfg(sids ...string) *config.Config {
+	c := &config.Config{}
+	for _, s := range sids {
+		c.IPSExceptions = append(c.IPSExceptions, config.IPSException{Name: "e" + s, SID: s})
 	}
-	first := AssignIPSCodes(nil, cfg("500", "700"))
-	// A lower SID arrives: the others keep their codes, and the newcomer
-	// gets a code nobody had.
-	second := AssignIPSCodes(first, cfg("100", "500", "700"))
+	return c
+}
+
+func TestAssignIPSCodesIsStable(t *testing.T) {
+	first, none := AssignIPSCodes(nil, nil, excCfg("500", "700"))
+	if len(none) != 0 || len(first) != 2 {
+		t.Fatalf("first: %v, without code %v", first, none)
+	}
+	// A lower SID arrives, with first's rules file still live: the others
+	// keep their codes, and the newcomer gets a code nobody had.
+	second, _ := AssignIPSCodes(first, []map[int]uint32{first}, excCfg("100", "500", "700"))
 	if second[500] != first[500] || second[700] != first[700] {
 		t.Fatalf("codes moved: %v -> %v", first, second)
 	}
 	if second[100] == first[500] || second[100] == first[700] || second[100] == 0 {
 		t.Fatalf("new SID took a used code: %v", second)
 	}
-	// 500 goes away and 900 arrives at once: 900 doesn't inherit 500's code
-	// (Suricata may still mark 500's matches with it for a while).
-	third := AssignIPSCodes(second, cfg("100", "700", "900"))
-	if third[900] == second[500] {
-		t.Fatalf("900 took 500's code while others were free: %v", third)
+}
+
+// ChatGPT's review: remove 9900001's exception and commit, then add
+// 9900002's before Suricata has loaded the rules file without 9900001.
+// Both files are live, so 9900002 must not take 9900001's code.
+func TestAssignIPSCodesAcrossSuccessiveCommits(t *testing.T) {
+	a, _ := AssignIPSCodes(nil, nil, excCfg("9900001"))
+	live := []map[int]uint32{a}
+	none1, _ := AssignIPSCodes(a, live, excCfg()) // exception removed
+	live = append(live, none1)                    // its file written, not yet loaded
+	b, without := AssignIPSCodes(none1, live, excCfg("9900002"))
+	if len(without) != 0 || b[9900002] == 0 {
+		t.Fatalf("9900002 got no code: %v %v", b, without)
 	}
-	// Full: codes are reused rather than refused.
-	var many []string
+	if b[9900002] == a[9900001] {
+		t.Fatalf("9900002 took code %#x, which Suricata may still give 9900001", b[9900002])
+	}
+	// Once Suricata confirms the newer file, 9900001's file is released
+	// and its code may be given again.
+	c, _ := AssignIPSCodes(nil, []map[int]uint32{b}, excCfg("9900002", "9900003"))
+	if c[9900002] != b[9900002] {
+		t.Fatalf("9900002 moved: %v", c)
+	}
+	if c[9900003] != a[9900001] {
+		t.Fatalf("after release, the first free code is reusable: got %#x, want %#x", c[9900003], a[9900001])
+	}
+	// A signature may keep a code only it ever had, from an older file.
+	d, _ := AssignIPSCodes(nil, []map[int]uint32{a, none1}, excCfg("9900001"))
+	if d[9900001] != a[9900001] {
+		t.Fatalf("9900001 came back with another code: %v", d)
+	}
+}
+
+// ChatGPT's review: all 35 codes in use, then every signature replaced
+// while the old file is live. Nothing may be reused: the new exceptions
+// get no code (inactive) until the old file is released.
+func TestAssignIPSCodesExhausted(t *testing.T) {
+	var old, repl []string
 	for i := 0; i < config.MaxIPSExceptionSIDs; i++ {
-		many = append(many, fmt.Sprint(1000+i))
+		old = append(old, fmt.Sprint(1000+i))
+		repl = append(repl, fmt.Sprint(5000+i))
 	}
-	full := AssignIPSCodes(third, cfg(many...))
+	full, none := AssignIPSCodes(nil, nil, excCfg(old...))
+	if len(full) != config.MaxIPSExceptionSIDs || len(none) != 0 {
+		t.Fatalf("%d codes, %d without", len(full), len(none))
+	}
+	live := []map[int]uint32{full}
+	got, without := AssignIPSCodes(full, live, excCfg(repl...))
+	if len(got) != 0 || len(without) != config.MaxIPSExceptionSIDs {
+		t.Fatalf("codes reused while the old file is live: %v (without %d)", got, len(without))
+	}
+	// Half replaced: the kept half keep their codes, the new half wait.
+	mixed := append(append([]string{}, old[:17]...), repl[:18]...)
+	got, without = AssignIPSCodes(full, live, excCfg(mixed...))
+	if len(got) != 17 || len(without) != 18 {
+		t.Fatalf("mixed: %d codes, %d without", len(got), len(without))
+	}
+	for _, sid := range old[:17] {
+		n := 0
+		fmt.Sscan(sid, &n)
+		if got[n] != full[n] {
+			t.Fatalf("%d moved", n)
+		}
+	}
+	// After release every new signature gets a code, all distinct.
+	got, without = AssignIPSCodes(nil, nil, excCfg(repl...))
 	seen := map[uint32]bool{}
-	for _, c := range full {
+	for _, c := range got {
 		if seen[c] {
 			t.Fatal("a code given twice")
 		}
 		seen[c] = true
 	}
-	if len(full) != config.MaxIPSExceptionSIDs {
-		t.Fatalf("%d codes for %d SIDs", len(full), config.MaxIPSExceptionSIDs)
+	if len(got) != config.MaxIPSExceptionSIDs || len(without) != 0 {
+		t.Fatalf("after release: %d codes, %d without", len(got), len(without))
+	}
+}
+
+// A code two live files give different signatures is never handed out.
+func TestAssignIPSCodesNeverMixesMeanings(t *testing.T) {
+	a, _ := AssignIPSCodes(nil, nil, excCfg("1", "2"))
+	b, _ := AssignIPSCodes(nil, []map[int]uint32{a}, excCfg("3"))
+	live := []map[int]uint32{a, b}
+	for _, sids := range [][]string{{"1"}, {"3"}, {"4"}, {"1", "3", "4"}, {"2", "4", "5"}} {
+		got, _ := AssignIPSCodes(nil, live, excCfg(sids...))
+		for sid, c := range got {
+			for _, m := range live {
+				for o, oc := range m {
+					if oc == c && o != sid {
+						t.Fatalf("%v: %d got %#x, which a live file gives %d", sids, sid, c, o)
+					}
+				}
+			}
+		}
 	}
 }

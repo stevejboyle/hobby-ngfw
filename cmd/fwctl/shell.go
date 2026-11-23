@@ -1353,6 +1353,7 @@ func showIPS() error {
 			Name, SID, Action          string
 			Rules, Source, Destination []string
 			Hits                       *uint64
+			Inactive                   bool
 		}
 		Signatures struct {
 			Source, Version string
@@ -1422,7 +1423,11 @@ func showIPS() error {
 		tw = tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 		fmt.Fprintln(tw, "EXCEPTION\tSID\tRULES\tSOURCE\tDESTINATION\tACTION\tPACKETS")
 		for _, e := range st.Exceptions {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", e.Name, e.SID, anyList(e.Rules), anyList(e.Source), anyList(e.Destination), e.Action, count(e.Hits))
+			action := e.Action
+			if e.Inactive {
+				action += " (inactive: no free code yet; commit again once the rules are loaded)"
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", e.Name, e.SID, anyList(e.Rules), anyList(e.Source), anyList(e.Destination), action, count(e.Hits))
 		}
 		return tw.Flush()
 	}

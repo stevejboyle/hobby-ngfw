@@ -1044,7 +1044,10 @@ const ipsExceptionSpec = (live) => ({
     ["Name", (e) => h("strong", {}, e.name)], ["SID", (e) => h("span", { class: "mono" }, e.sid)],
     ["Rules", (e) => chips(e.rules)], ["Source", (e) => chips(e.source)], ["Destination", (e) => chips(e.destination)],
     ["Action", (e) => (e.action === "ignore" ? h("span", { class: "muted" }, "ignore") : h("span", { class: "action-reset" }, "alert"))],
-    ["Packets", (e) => hitCount(((live || []).find((x) => x.name === e.name) || {}).hits)],
+    ["Packets", (e) => {
+      const x = (live || []).find((y) => y.name === e.name) || {};
+      return x.inactive ? h("span", { class: "muted", title: "No exception code was free at the last commit (Suricata may still use the earlier rules' codes). Commit again once the IPS reports the rules loaded." }, "inactive") : hitCount(x.hits);
+    }],
   ],
   form: (e) => {
     const f = {

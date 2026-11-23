@@ -86,6 +86,16 @@ func (e *Engine) Installed() bool {
 // Update downloads the rule set, keeps it, and rebuilds the rules file.
 // On a failed download the rules in place stay, and the status says why.
 func (e *Engine) Update(ctx context.Context, tu Tuning) (Status, error) {
+	if st, err := e.Fetch(ctx); err != nil {
+		return st, err
+	}
+	return e.Build(tu)
+}
+
+// Fetch downloads the rule set and keeps it, without touching the rules
+// file Suricata reads (Build makes that). ngfwd builds under its own lock,
+// so every rules file it writes is recorded as it is written.
+func (e *Engine) Fetch(ctx context.Context) (Status, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	st := e.Status()
@@ -113,10 +123,7 @@ func (e *Engine) Update(ctx context.Context, tu Tuning) (Status, error) {
 	st.Updated = st.LastAttempt
 	st.LastError = ""
 	st.Version = versionOf(ctx, client, url)
-	if err := e.saveStatus(st); err != nil {
-		return st, err
-	}
-	return e.build(tu)
+	return st, e.saveStatus(st)
 }
 
 // versionOf reads the rule set's version.txt beside the tarball ("" if

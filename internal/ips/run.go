@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/stevejboyle/sjb-os/internal/compiler"
 	"net"
@@ -25,8 +26,11 @@ type Runner interface {
 	Start() error
 	Stop() error
 	Running() bool
-	// Reload makes a running engine load the rules file again.
-	Reload() error
+	// ReloadRules has the running engine load the rules file again and
+	// returns only once it has: nil means Suricata finished loading a
+	// rules file at least as new as the one on disk when it was called.
+	// It blocks for as long as the load takes (seconds to minutes).
+	ReloadRules() error
 	// MemTotal is the appliance's RAM in bytes (0 if unknown).
 	MemTotal() uint64
 	// ConnMark is the ct mark of the connection a packet with this
@@ -47,7 +51,7 @@ func (Noop) Available() bool                                                { re
 func (Noop) Start() error                                                   { return nil }
 func (Noop) Stop() error                                                    { return nil }
 func (Noop) Running() bool                                                  { return false }
-func (Noop) Reload() error                                                  { return nil }
+func (Noop) ReloadRules() error                                             { return errors.New("no IPS engine") }
 func (Noop) MemTotal() uint64                                               { return 0 }
 func (Noop) ConnMark(string, string, int, string, int) (uint32, bool, bool) { return 0, false, false }
 func (Noop) LoadedRules() (int, bool)                                       { return 0, false }
@@ -120,10 +124,42 @@ func (Exec) Running() bool {
 	return exec.Command("systemctl", "is-active", "--quiet", Unit).Run() == nil
 }
 
-// Reload sends Suricata the live rule-reload signal (its unit's
-// ExecReload); a stopped engine is left alone.
-func (Exec) Reload() error {
-	return systemctl("--no-block", "try-reload-or-restart", Unit)
+// ReloadRules asks Suricata over its command socket to reload the rules
+// file and waits for its answer. Suricata handles socket commands one at a
+// time, and its blocking reload reads the rules file after the command
+// arrives and answers "done" only once the new rules are in use (checked
+// against Suricata 7.0: a file replaced during an earlier reload was
+// picked up by the next request). Anything but OK is an error.
+func (e Exec) ReloadRules() error {
+	path := e.Socket
+	if path == "" {
+		path = CommandSocket
+	}
+	c, err := net.DialTimeout("unix", path, time.Second)
+	if err != nil {
+		return fmt.Errorf("Suricata's command socket: %w", err)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(10 * time.Minute))
+	dec := json.NewDecoder(c)
+	var hello struct{ Return string }
+	if _, err := c.Write([]byte(`{"version": "0.2"}` + "\n")); err != nil || dec.Decode(&hello) != nil || hello.Return != "OK" {
+		return errors.New("Suricata's command socket didn't answer")
+	}
+	var resp struct {
+		Return  string
+		Message any
+	}
+	if _, err := c.Write([]byte(`{"command": "reload-rules"}` + "\n")); err != nil {
+		return err
+	}
+	if err := dec.Decode(&resp); err != nil {
+		return fmt.Errorf("reload-rules: %w", err)
+	}
+	if resp.Return != "OK" {
+		return fmt.Errorf("reload-rules: %v", resp.Message)
+	}
+	return nil
 }
 
 func (Exec) MemTotal() uint64 {

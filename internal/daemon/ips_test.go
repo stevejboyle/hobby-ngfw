@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,13 +18,47 @@ type fakeSuricata struct {
 	mark          uint32
 	decrypted     bool
 	src, dst      string
+	reload        reloadCtl
 }
 
-func (f *fakeSuricata) Available() bool          { return true }
-func (f *fakeSuricata) Start() error             { f.starts++; f.running = true; return nil }
-func (f *fakeSuricata) Stop() error              { f.stops++; f.running = false; return nil }
-func (f *fakeSuricata) Running() bool            { return f.running }
-func (f *fakeSuricata) Reload() error            { return nil }
+// reloadCtl is fakeSuricata's blocking reload (ReloadRules): gate, when
+// set, holds each reload until it is closed (a slow reload); err fails it.
+// The daemon calls it from its own goroutine, hence the lock.
+type reloadCtl struct {
+	mu   sync.Mutex
+	gate chan struct{}
+	err  error
+	n    int
+}
+
+func (r *reloadCtl) set(gate chan struct{}, err error) {
+	r.mu.Lock()
+	r.gate, r.err = gate, err
+	r.mu.Unlock()
+}
+
+func (r *reloadCtl) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.n
+}
+
+func (f *fakeSuricata) Available() bool { return true }
+func (f *fakeSuricata) Start() error    { f.starts++; f.running = true; return nil }
+func (f *fakeSuricata) Stop() error     { f.stops++; f.running = false; return nil }
+func (f *fakeSuricata) Running() bool   { return f.running }
+func (f *fakeSuricata) ReloadRules() error {
+	f.reload.mu.Lock()
+	gate, err := f.reload.gate, f.reload.err
+	f.reload.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
+	f.reload.mu.Lock()
+	f.reload.n++
+	f.reload.mu.Unlock()
+	return err
+}
 func (f *fakeSuricata) MemTotal() uint64         { return f.mem }
 func (f *fakeSuricata) LoadedRules() (int, bool) { return 4, f.running }
 func (f *fakeSuricata) ConnMark(proto, src string, sport int, dst string, dport int) (uint32, bool, bool) {

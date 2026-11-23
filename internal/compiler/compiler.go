@@ -55,11 +55,14 @@ type Options struct {
 	// IPSCodes is the exception code of each signature with IPS
 	// exceptions (AssignIPSCodes); nil assigns them afresh.
 	IPSCodes map[int]uint32
+	// IPSInactive are signatures AssignIPSCodes found no safe code for:
+	// their exceptions are left out, with a warning.
+	IPSInactive []int
 }
 
 // CompileWith is Compile with options.
 func CompileWith(cfg *config.Config, tags map[string][]TagEntry, opt Options) (*Result, error) {
-	c := &compiler{cfg: cfg, ipsCodes: opt.IPSCodes, res: &Result{Sets: map[string]string{}, IfAddrSets: map[string]string{}}}
+	c := &compiler{cfg: cfg, ipsCodes: opt.IPSCodes, ipsInactive: opt.IPSInactive, res: &Result{Sets: map[string]string{}, IfAddrSets: map[string]string{}}}
 	if c.ipsCodes == nil {
 		c.ipsCodes = IPSExceptionCodes(cfg)
 	}
@@ -242,51 +245,88 @@ var ipsCodes = func() []uint32 {
 	return out
 }()
 
+// IPSCodeValues are all the exception codes, in order.
+func IPSCodeValues() []uint32 { return slices.Clone(ipsCodes) }
+
 // IPSExceptionCodes gives each signature with exceptions a code, in
-// signature order (AssignIPSCodes with nothing before).
-func IPSExceptionCodes(cfg *config.Config) map[int]uint32 { return AssignIPSCodes(nil, cfg) }
+// signature order (AssignIPSCodes with nothing before or in use).
+func IPSExceptionCodes(cfg *config.Config) map[int]uint32 {
+	codes, _ := AssignIPSCodes(nil, nil, cfg)
+	return codes
+}
 
 // AssignIPSCodes gives each signature with exceptions in cfg its code. The
 // rules file (Suricata) and the ruleset must agree, and they change at
-// different moments: Suricata takes a while to load a new rules file, and
-// meanwhile still marks with the codes of prev. So a signature keeps its
-// code from prev, and a new one takes a code prev didn't use, where one is
-// left: an old mark then never meets another signature's exception.
-func AssignIPSCodes(prev map[int]uint32, cfg *config.Config) map[int]uint32 {
+// different moments: Suricata loads a new rules file well after the
+// ruleset changes, and until it has, it still marks matches with the codes
+// of whichever earlier rules file it runs. live are the code mappings of
+// every rules file Suricata may still be running (the daemon releases one
+// only once Suricata confirms it loaded a newer file). A code is never
+// given to a signature while a live mapping gives it to another one: an
+// old mark would then meet the new signature's exception. keep is the
+// running ruleset's mapping; a signature keeps its code from it (or from a
+// live mapping) where that is safe, and otherwise takes a code no live
+// mapping uses. There is no fallback: signatures left without a safe code
+// are returned, in order, and their exceptions stay inactive (no
+// exception line; their matches mark as plain, so the profile applies)
+// until codes are released.
+func AssignIPSCodes(keep map[int]uint32, live []map[int]uint32, cfg *config.Config) (map[int]uint32, []int) {
 	sids := cfg.IPSExceptionSIDs()
+	owners := map[uint32]map[int]bool{} // code -> signatures live mappings give it to
+	for _, m := range live {
+		for sid, c := range m {
+			if owners[c] == nil {
+				owners[c] = map[int]bool{}
+			}
+			owners[c][sid] = true
+		}
+	}
 	out := map[int]uint32{}
 	used := map[uint32]bool{}
-	for _, sid := range sids {
-		if c, ok := prev[sid]; ok && slices.Contains(ipsCodes, c) {
-			out[sid], used[c] = c, true
+	// safe: c is a code, unused here, and means sid (or nothing) in every
+	// live mapping.
+	safe := func(c uint32, sid int) bool {
+		if used[c] || !slices.Contains(ipsCodes, c) {
+			return false
 		}
-	}
-	old := map[uint32]bool{}
-	for _, c := range prev {
-		old[c] = true
-	}
-	next := func(avoidOld bool) (uint32, bool) {
-		for _, c := range ipsCodes {
-			if !used[c] && !(avoidOld && old[c]) {
-				return c, true
+		for o := range owners[c] {
+			if o != sid {
+				return false
 			}
 		}
-		return 0, false
+		return true
 	}
+	// First, signatures that already have a code keep it.
+	for _, sid := range sids {
+		if c, ok := keep[sid]; ok && safe(c, sid) {
+			out[sid], used[c] = c, true
+			continue
+		}
+		for i := len(live) - 1; i >= 0; i-- {
+			if c, ok := live[i][sid]; ok && safe(c, sid) {
+				out[sid], used[c] = c, true
+				break
+			}
+		}
+	}
+	// Then the rest take a code no live mapping uses.
+	var none []int
 	for _, sid := range sids {
 		if _, ok := out[sid]; ok {
 			continue
 		}
-		c, ok := next(true)
-		if !ok {
-			c, ok = next(false)
+		got := false
+		for _, c := range ipsCodes {
+			if len(owners[c]) == 0 && safe(c, sid) {
+				out[sid], used[c], got = c, true, true
+				break
+			}
 		}
-		if !ok {
-			break // more than MaxIPSExceptionSIDs: validation refuses it
+		if !got {
+			none = append(none, sid)
 		}
-		out[sid], used[c] = c, true
 	}
-	return out
+	return out, none
 }
 
 // IPSSeverityMark is the packet mark bit for a severity.
@@ -314,14 +354,15 @@ type ipsRule struct {
 }
 
 type compiler struct {
-	cfg        *config.Config
-	ipsCodes   map[int]uint32 // exception code per signature
-	ruleIdx    int            // position of the rule being compiled
-	appMode    bool           // some rule names applications (and App Identification is on)
-	firstApp   int            // position of the first such rule (-1: none)
-	ipsRules   []ipsRule      // rules whose traffic the IPS inspects
-	res        *Result
-	zoneIfaces map[string][]string
+	cfg         *config.Config
+	ipsCodes    map[int]uint32 // exception code per signature
+	ipsInactive []int          // signatures whose exceptions wait for a code
+	ruleIdx     int            // position of the rule being compiled
+	appMode     bool           // some rule names applications (and App Identification is on)
+	firstApp    int            // position of the first such rule (-1: none)
+	ipsRules    []ipsRule      // rules whose traffic the IPS inspects
+	res         *Result
+	zoneIfaces  map[string][]string
 	// inVRF holds interfaces in a non-default VRF. For their traffic the
 	// forward and input hooks see the VRF device as iif, so they are matched
 	// with meta sdifname, and in NAT postrouting (where sdif isn't available)
@@ -1046,6 +1087,9 @@ func (c *compiler) ipsExceptions(b *strings.Builder) {
 		}
 		code, ok := codes[e.SIDNumber()]
 		if !ok {
+			if slices.Contains(c.ipsInactive, e.SIDNumber()) {
+				c.res.Warnings = append(c.res.Warnings, fmt.Sprintf("ips exception %q inactive: no exception code for signature %s is free yet (Suricata may still be using the codes of earlier rules files). It applies once `show ips` reports the new rules loaded and the config is committed again", e.Name, e.SID))
+			}
 			continue
 		}
 		head := fmt.Sprintf("meta mark and 0x%08x == 0x%08x", IPSExcMask|IPSPlainBit, code)

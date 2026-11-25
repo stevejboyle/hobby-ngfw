@@ -55,7 +55,9 @@ outside) and manages it over SSH and the tag API on mgmt.
   caller (`Caller.Author()`). `admin` is the permanent superuser. Each
   user is a Unix login ngfwd creates (comment "SJB-OS user"); sjb-migrate
   undo locks those before a rollback to a version before 0.9.9-r09
-  (`RBAC_VERSION` there: change it if this ships under another version).
+  (`RBAC_VERSION` there: change it if this ships under another version;
+  likewise `SNMP_VERSION`, 0.9.13-r01, below which undo stops snmpd and
+  removes its config).
 - Root: only what the operator sets at deploy time: `root_ssh_key` (SSH,
   key only, written by first boot to `/etc/ngfw/root_authorized_keys`,
   which upgrades never touch) and `root_password` (VMware console only).
@@ -196,6 +198,11 @@ internal/logfwd/    log forwarding: journal follower (cursor in /var/lib/ngfw),
                     RFC 5424 over UDP/TCP/TLS, JSON or CEF, a queue per server
 internal/backup/    backup files: armoured text, AES-256-GCM when they hold
                     accounts; restores go through the candidate
+internal/metrics/   the monitoring snapshot (Prometheus text for GET /metrics
+                    on the tag API, JSON in /run/sjb-os for SNMP)
+internal/snmp/      SNMP agent: config + credentials -> snmpd.conf (goldens in
+                    testdata/), apply via systemd, SJB-OS-MIB pass_persist
+                    helper (fwctl snmp-pass)
 internal/upgrade/   signed upgrade bundles: build, verify, apply, auto-restore,
                     rollback (run by `fwctl upgrade`; a rollback re-commits
                     the config running at the upgrade if it changed since)
@@ -316,7 +323,24 @@ rsyslog); it configures the forwarder after its start-up conntrack flush
 reply). Queues are in memory (10,000 per server). Backups (0.9.11-r01):
 a config restore only ever sets the candidate (`SetCandidateAs`); accounts
 restores merge, are superuser-only, need an encrypted backup and apply at
-once. IPv4 only, and IPv6 is out of scope until Steve says otherwise. In real
+once. Monitoring (0.9.13-r01): `Daemon.Metrics()` never waits on d.mu for
+more than 3 s (the parts behind it are read in the background and the last
+values reused), since a commit can hold it for minutes and a stale
+snapshot makes SNMP report ngfwd down. GET /metrics on the tag API needs
+scope `metrics:read`; API keys are added and deleted by superusers
+(rewrites /etc/ngfw/api-keys, hot swap; the XML endpoint uses the live keys
+too). SNMP is net-snmp's snmpd (shipped like FRR), run by a unit drop-in
+in vrf-mgmt (`ip vrf exec`) with the trigger modules on; ngfwd writes
+/etc/snmp/snmpd.conf (0640 root:Debian-snmp) only while `snmp.enabled` is
+on and removes it otherwise (the unit needs it, so it can't start at
+boot). Secrets live in /etc/ngfw/snmp-credentials (never the config);
+the config names them and a commit naming a missing one is refused. Each
+start strips `usmUser` lines from /var/lib/snmp/snmpd.conf: stored users
+clash with changed passphrases. snmpd's internal queries (traps) use user
+sjb-internal at authNoPriv (net-snmp's iquery can't encrypt) with a random
+passphrase; scalar monitors need `-I`. SJB-OS-MIB is under
+1.3.6.1.4.1.8072.9999.9999.7 (net-snmp's playpen) until there is a PEN.
+Checked against Debian 13's net-snmp 5.9.4 in Docker. IPv4 only, and IPv6 is out of scope until Steve says otherwise. In real
 use on ESXi; boot-test.sh in QEMU is the pre-release check for version
 bumps (revision builds run the relevant tests only).
 

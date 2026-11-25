@@ -254,6 +254,8 @@ show the same):
 | `ssh-key add`, `ssh-key delete N` | Add (paste) or delete your own SSH keys |
 | `show users`, `show user NAME`, `show roles`, `show role NAME` | Users and roles (superusers) |
 | `request user ...`, `request role ...` | Add, change and delete users and custom roles (superusers; see [Users and roles](#users-and-roles)) |
+| `request api-key add NAME scopes ...\|delete NAME`, `show metrics [TEXT]` | API keys for the tag API and Prometheus (superusers); the Prometheus metrics (see [Monitoring](#monitoring-prometheus-and-snmp)) |
+| `show snmp`, `request snmp credential add\|change\|delete ...` | The SNMP agent; its v3 users and v2c communities (superusers) |
 | `ping HOST [COUNT]`, `passwd`, `sjb`, `exit` | |
 | `configure` | Configuration mode (below) |
 
@@ -908,9 +910,7 @@ root key or password ships with SJB-OS, and the vendor has no way in.
   moves that appliance's key to `/etc/ngfw/root_authorized_keys`, so its
   owner keeps access; new deployments never get it.
 
-Root-only tasks for now: editing tag API keys (`/etc/ngfw/api-keys`, one
-`<name> <scopes> <key>` per line, scopes `tags:read`/`tags:write`, keys of
-24+ characters, then `systemctl restart ngfwd`), resetting a forgotten
+Root-only tasks for now: resetting a forgotten
 password (`fwctl web-passwd -user NAME`, `admin` by default, which sets SSH,
 console and web UI together, clears any lockout and takes effect at once, no
 restart needed; superusers can do the same from the CLI or web UI), and Debian updates (`apt update && apt upgrade`). The full
@@ -1460,10 +1460,152 @@ How it behaves:
 - Logging a lot of traffic (every rule with `log: yes`) sends a lot of
   messages: one or two per connection.
 
+## Monitoring (Prometheus and SNMP)
+
+External monitoring systems can poll SJB-OS (0.9.13-r01 and later) two
+ways, both from the management network only. Zoned interfaces never reach
+them.
+
+### Prometheus
+
+`https://<management address>:8443/metrics` (the tag API's port and
+certificate) serves Prometheus metrics, all named `sjbos_*`:
+
+- **Interfaces:** bytes, packets, errors and drops in and out, and up/down.
+- **Sessions:** connections tracked, and the limit.
+- **Security rules:** packets and bytes each rule matched, plus the default
+  deny.
+- **NAT:** translations per entry, and hairpinned connections.
+- **IPS:** its state, signatures loaded and their age, matches by severity
+  and action, and exceptions active or inactive.
+- **App Identification:** bytes and connections of the top 50 applications.
+- **TLS decryption:** its state, active connections and outcomes.
+- **Log forwarding:** sent, dropped and queued messages per server.
+- **Tags:** addresses per tag.
+- **Services:** up or down, and whether the config needs them.
+- **System health:** CPU, load, memory, disk and uptime.
+- **Config:** the running revision, uncommitted changes, and whether the
+  last commit succeeded.
+
+A scrape needs an API key with the `metrics:read` scope. Superusers manage
+keys in the CLI or on **System → Monitoring**:
+
+```
+admin@sjb-fw> request api-key add prometheus scopes metrics:read
+API key prometheus (metrics:read), in use now:
+
+  Yk3...
+
+admin@sjb-fw> request api-key delete prometheus
+```
+
+Keys work, and stop working, at once; there's no restart. `show api-keys`
+lists them, and `show metrics` prints what a scrape gets (`show metrics
+ips` shows only the lines containing "ips"). Prometheus's scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: sjb-os
+    scheme: https
+    tls_config: {ca_file: lab-ca.crt}   # or insecure_skip_verify: true with the self-signed certificate
+    authorization: {type: Bearer, credentials: Yk3...}
+    static_configs:
+      - targets: ["192.168.1.1:8443"]
+```
+
+Counters start again from zero when what they count restarts:
+- **Rule counters** reset when the ruleset is reloaded.
+- **IPS matches and log forwarding counts** reset when ngfwd restarts.
+- **Application totals** reset when appidd restarts.
+
+Prometheus's `rate()` handles these resets.
+
+### SNMP
+
+A read-only SNMP agent (net-snmp's snmpd, in the management VRF) answers:
+- **v3 users:** SHA-256 or SHA-512 authentication, AES or AES-256
+  encryption.
+- **v2c communities:** only from the addresses listed in `managers`, since
+  v2c sends the community in clear text.
+
+It serves the standard MIBs (IF-MIB for interfaces, HOST-RESOURCES-MIB,
+UCD-SNMP-MIB) and SJB-OS's own, SJB-OS-MIB. That MIB covers the version,
+config, sessions, IPS, decryption and App Identification, and has tables of
+services, security rules, NAT entries, log servers and IPS matches by
+severity. Its file is `/usr/share/sjb-os/mibs/SJB-OS-MIB.txt` on the
+appliance (also in the repository). Its subtree is
+`1.3.6.1.4.1.8072.9999.9999.7`, under net-snmp's experimental arc, until
+SJB Consulting has an enterprise number. The values are at most 15
+seconds old.
+
+Secrets never go in the config, which is kept in revisions, diffs and
+backups of the config alone. v3 users and v2c communities are
+*credentials*:
+- **Who manages them:** superusers, with the commands below.
+- **Where they live:** `/etc/ngfw/snmp-credentials`, readable by root only.
+- **Backups:** backups with accounts carry them, encrypted.
+
+The config names the credentials that may poll, and the ones traps use:
+
+```
+admin@sjb-fw> request snmp credential add nms v3 auth sha256 priv aes
+Authentication passphrase for nms (8+ characters):
+Again:
+Privacy (encryption) passphrase, a different one:
+Again:
+admin@sjb-fw> configure
+admin@sjb-fw# set snmp enabled on
+admin@sjb-fw# set snmp location "Lab rack 1"
+admin@sjb-fw# set snmp v3-users nms
+admin@sjb-fw# set snmp-trap-receiver nms-server address 192.168.1.62 credential nms inform on
+admin@sjb-fw# commit -m "SNMP"
+admin@sjb-fw# exit
+admin@sjb-fw> show snmp
+```
+
+Here is the same config in YAML:
+
+```yaml
+snmp:
+  enabled: "on"
+  location: Lab rack 1
+  contact: lab admin
+  v3_users: [nms]
+  v2c_communities: [lab-ro]     # only with managers
+  managers: [192.168.1.0/24]    # where v2c polls may come from
+snmp_trap_receivers:
+  - {name: nms-server, address: 192.168.1.62, credential: nms, inform: "on"}
+```
+
+Poll it from a manager on the management network, for example:
+
+```
+snmpwalk -v3 -u nms -l authPriv -a SHA-256 -A '<auth>' -x AES -X '<priv>' 192.168.1.1 1.3.6.1.4.1.8072.9999.9999.7
+```
+
+**Traps** go to every trap receiver: v2c traps, v3 traps, or v3 informs,
+which are acknowledged and retried. They are sent on:
+- **Link up/down:** IF-MIB `linkUp` and `linkDown`.
+- **`sjbServiceDown`:** a service the config needs isn't running. It names
+  the service, for example `suricata`, or `ngfwd` when its values are older
+  than 60 seconds.
+- **`sjbIpsEngineDown`:** rules use the IPS and Suricata isn't running.
+- **`sjbCommitFailed`:** a commit failed to apply, or an unconfirmed
+  commit was rolled back. It gives the reason. A config refused as invalid
+  changes nothing and doesn't count.
+
+The last three are DISMAN-EVENT-MIB `mteTriggerFired` notifications
+carrying the trigger's name, checked every 30 seconds.
+
+`request snmp credential change NAME ...` gives a credential new secrets,
+in use at once. That's how to rotate them; the old ones stop working. A
+credential the running or candidate config names can't be deleted. With
+`enabled: off` (the default) snmpd is stopped and its config file removed.
+
 ## Backing up and restoring the configuration
 
 A backup is one text file holding the running config, and optionally the
-users, roles and tag API keys. It is plain text so it can travel through
+users, roles, API keys and SNMP credentials. It is plain text so it can travel through
 the CLI's copy and paste as well as the web UI:
 
 ```
@@ -1478,7 +1620,8 @@ eyJoZWFkZXIiOnsiZm9ybWF0Ijoic2piLW9zLWJhY2t1cCIs...
   file (but not a deliberate edit).
 - **With users, roles and API keys:** superusers only, and always
   encrypted (AES-256-GCM, with a key made from your passphrase by
-  PBKDF2-SHA256): the file then holds the API keys and both password
+  PBKDF2-SHA256): the file then holds the API keys, the SNMP credentials
+  and both password
   hashes of every user (the web UI's and the login's), so keep it like a
   password. Without the passphrase it can't be restored.
 
@@ -1507,7 +1650,7 @@ give the passphrase if it has one.
   CLI use `commit -m "restore" -confirm 10m`, so a backup from another
   firewall (other interfaces, other addresses) rolls back on its own if
   you lose access. `revert` discards it.
-- **Users, roles and API keys** (superusers) take effect at once: they are
+- **Users, roles, API keys and SNMP credentials** (superusers) take effect at once: they are
   not part of the config's revisions, so a config rollback never undoes
   them. The backup's custom roles are added or replace those of the same
   name; its users are added or updated with their role, enabled or
@@ -1639,12 +1782,17 @@ unchanged. The full history lives in `/var/lib/ngfw/revisions/`.
   each user an SSH key and a strong password.
 - No root key or password ships with SJB-OS; root has only what you set at
   deploy time.
-- Some admin tasks (API key edits, logs, Debian updates) still need root;
-  they move into the CLI over time.
+- Some admin tasks (logs, Debian updates) still need root; they move into
+  the CLI over time.
 - Log forwarding sends what is written from the first commit of a server
   on, with a per-server queue of 10,000 messages (dropped oldest first,
   and counted); no store-and-forward to disk, no RELP. Servers are IPv4
   addresses, not names.
+- SNMP is read-only (no sets) and has no SNMPv1. Traps are the four kinds
+  above, with no custom thresholds. An inform to an unreachable receiver
+  holds up the agent's answers for a few seconds, so prefer traps for a
+  receiver that is often down. SJB-OS-MIB sits under an experimental OID
+  until there is an enterprise number, so expect it to move once.
 - Restoring users and roles merges (it never deletes a user or role) and
   applies at once; only the config restore goes through commit and
   rollback.

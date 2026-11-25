@@ -345,3 +345,21 @@ log_servers:
       address: 192.168.1.62
       transport: udp
       port: 514
+
+# Monitoring (0.9.13-r01 or later). Prometheus needs no config: add a key
+# with request api-key add prometheus scopes metrics:read and scrape
+# https://192.168.1.75:8443/metrics. For SNMP, add the credential first
+# (request snmp credential add nms v3 auth sha256 priv aes; a commit naming
+# a credential that doesn't exist is refused), then uncomment:
+#
+# snmp:
+#     enabled: "on"
+#     location: Lab
+#     v3_users: [nms]
+# snmp_trap_receivers:
+#     # Link up/down, a service down, the IPS engine down, a commit failed,
+#     # as acknowledged v3 informs to the monitoring host on mgmt.
+#     - name: lab-nms
+#       address: 192.168.1.62
+#       credential: nms
+#       inform: "on"

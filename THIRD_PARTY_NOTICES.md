@@ -23,7 +23,7 @@ Debian's (below).
 ## Debian packages
 
 The image is Debian 13 ("trixie"). Upgrade bundles carry Debian's own
-packages for what older images lack (FRR, Kea, Suricata,
+packages for what older images lack (FRR, Kea, Suricata, net-snmp's snmpd,
 libnetfilter-queue1, ca-certificates and their dependencies) under
 `/usr/share/sjb-os/packages`. The main ones:
 
@@ -32,6 +32,7 @@ libnetfilter-queue1, ca-certificates and their dependencies) under
 | suricata | IPS engine | GPL-2.0-only |
 | frr, frr-pythontools | BGP and OSPF | GPL-2.0-or-later |
 | kea-dhcp4-server | DHCP server | MPL-2.0 |
+| snmpd (net-snmp) | SNMP agent | BSD-style (net-snmp's COPYING, several BSD licenses) |
 | nftables, conntrack | Packet filtering, connection tracking | GPL-2.0 |
 | libnetfilter-queue1, libnetfilter-conntrack3, libnfnetlink0 | appidd's kernel interfaces | GPL-2.0-or-later |
 | libmnl0 | netlink library | LGPL-2.1-or-later |

@@ -470,6 +470,43 @@ in the default VRF, writes the queue, and reconnects with backoff (1 s to
   `lab/fake-journalctl.py` (the lab has no journal) into UDP, TCP and TLS
   sinks; the boot test sends to a sink on the test host through mgmt.
 
+### Monitoring as built (0.9.13-r01)
+
+`internal/metrics` holds one snapshot type. `Daemon.Metrics()` assembles
+it from what ngfwd already reads:
+- `/sys/class/net` and `/proc` (interfaces, sessions, CPU, memory, disk);
+- nft counters (rules, by their `rule:` comments, summed across lines;
+  the default deny; NAT, as in `show nat`);
+- the IPS, decryption, App Identification and log forwarding status
+  methods, and the tag registry;
+- IPS matches counted in `IPSAlert`;
+- the last commit's outcome, recorded by Commit, Rollback and
+  auto-rollback.
+
+The parts behind d.mu (IPS, NAT, decryption, Status) are read in a
+goroutine that the snapshot waits on for at most 3 s, reusing the last
+values when a commit holds the lock. The SNMP agent would otherwise see a
+stale snapshot and report ngfwd down.
+
+- **Prometheus:** `GET /metrics` on the tag API listener (TLS, the
+  management certificate), keys with scope `metrics:read`. The text format
+  is written by hand (no client library), each family's samples together.
+- **SNMP:** net-snmp's snmpd (v3 USM, v2c with source restrictions, the
+  standard MIBs), shipped in bundles like FRR. `internal/snmp` compiles
+  `snmp`, `snmp_trap_receivers` and the credentials file into
+  `/etc/snmp/snmpd.conf`. `syncSNMPLocked` applies it after commits and
+  every 10 s (restart when it changed, stop and remove when SNMP is off).
+  A unit drop-in runs snmpd in `vrf-mgmt` with the DISMAN trigger modules
+  on, and strips stored `usmUser` lines at each start.
+- **SJB-OS-MIB:** `pass_persist` to `fwctl snmp-pass`, which reads
+  `/run/sjb-os/metrics.json` (saved every 15 s while SNMP is on, group
+  Debian-snmp). It needs no access to ngfwd's socket. A snapshot older
+  than 60 s turns the service table into "ngfwd down".
+- **Traps:** IF-MIB link up/down, plus `monitor` triggers on SJB-OS-MIB
+  (a service needed and down, the IPS engine down, the last commit
+  failed). They are sent by snmpd's internal queries (user `sjb-internal`,
+  authNoPriv) to the receivers as v2c traps or v3 traps/informs.
+
 ### Backup and restore as built (0.9.11-r01)
 
 `internal/backup` makes one armoured text file (so the captive CLI can
@@ -478,7 +515,8 @@ take it by paste): `-----BEGIN SJB-OS BACKUP-----`, base64 of
 hostname, running revision, contents, SHA-256 of the payload) is readable
 without the passphrase; the payload holds the running config's YAML and,
 for superusers, an `accounts.Snapshot` (users with role, state, SSH keys,
-web hash and shadow hash; custom roles) and the tag API key file.
+web hash and shadow hash; custom roles), the API key file and (from
+0.9.13-r01) the SNMP credentials.
 Accounts mean encryption: AES-256-GCM with a PBKDF2-SHA256 key (600,000
 iterations), the header as additional data, so neither part can be
 changed unnoticed.

@@ -212,6 +212,11 @@ on Steve's own ESXi lab):
   decryption and system logs with queries; dashboard statistics.
 - Log forwarding to syslog servers or a SIEM (0.9.11-r01): RFC 5424 over
   TLS, TCP or UDP, JSON or CEF, per-server log types.
+- Monitoring (0.9.13-r01): Prometheus metrics (interfaces, sessions,
+  per-rule hits, NAT, the IPS, decryption, log forwarding, system health)
+  behind an API key, and a read-only SNMP agent (v3, v2c from listed
+  managers) with SJB-OS's own MIB and traps for link, service, IPS engine
+  and commit failures.
 - Config backup and restore (0.9.11-r01), optionally with users, roles and
   tag API keys (then always encrypted); restores go through the candidate
   and a normal commit.

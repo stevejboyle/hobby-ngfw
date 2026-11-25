@@ -39,9 +39,9 @@ import (
 	"github.com/stevejboyle/sjb-os/internal/nft"
 	"github.com/stevejboyle/sjb-os/internal/nicaddr"
 	"github.com/stevejboyle/sjb-os/internal/routes"
+	"github.com/stevejboyle/sjb-os/internal/snmp"
 	"github.com/stevejboyle/sjb-os/internal/stats"
 	"github.com/stevejboyle/sjb-os/internal/store"
-	"github.com/stevejboyle/sjb-os/internal/snmp"
 	"github.com/stevejboyle/sjb-os/internal/sysname"
 	"github.com/stevejboyle/sjb-os/internal/tags"
 	"github.com/stevejboyle/sjb-os/internal/upgrade"
@@ -134,11 +134,16 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 		d.SetDHCP(dhcp.Exec{Binary: keaPath})
 	}
 	if snmpdPath != "" {
-		d.SetSNMP(snmp.Exec{Binary: snmpdPath}, snmpCreds)
+		d.SetSNMP(snmp.Exec{Binary: snmpdPath}, snmpCreds, metrics.SnapshotPath)
 		// The SNMP agent's SJB-OS-MIB reads a snapshot saved every 15 s
-		// while SNMP is on.
+		// while SNMP is on, and at once when it turns on.
 		go func() {
-			for range time.Tick(15 * time.Second) {
+			tick := time.NewTicker(15 * time.Second)
+			for {
+				select {
+				case <-tick.C:
+				case <-d.SnapshotKick():
+				}
 				if err := d.SaveMetricsSnapshot(metrics.SnapshotPath); err != nil {
 					log.Warn("monitoring snapshot", "err", err)
 				}

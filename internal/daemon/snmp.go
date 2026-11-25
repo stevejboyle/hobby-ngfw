@@ -17,15 +17,16 @@ import (
 type snmpState struct {
 	run       snmp.Runner
 	credsPath string // "" : SNMP not managed
+	snapshot  string // where the monitoring snapshot is saved for the agent
 	applied   string // snmpd.conf last applied without error
 	lastErr   string // the last apply's error
 	credsMu   sync.Mutex
 }
 
-// SetSNMP sets how the SNMP agent runs and where its credentials live.
-// Call before Start.
-func (d *Daemon) SetSNMP(r snmp.Runner, credsPath string) {
-	d.snmp.run, d.snmp.credsPath = r, credsPath
+// SetSNMP sets how the SNMP agent runs, where its credentials live and
+// where the monitoring snapshot it reads is saved. Call before Start.
+func (d *Daemon) SetSNMP(r snmp.Runner, credsPath, snapshotPath string) {
+	d.snmp.run, d.snmp.credsPath, d.snmp.snapshot = r, credsPath, snapshotPath
 	d.metrics.snmpRunning = r.Running
 }
 
@@ -94,6 +95,10 @@ func (d *Daemon) syncSNMPLocked() []string {
 			return []string{"snmp: " + err.Error()}
 		}
 	}
+	if want == "" && d.snmp.snapshot != "" {
+		// The agent's values go with it.
+		os.Remove(d.snmp.snapshot)
+	}
 	if want == "" {
 		// Off: stop it if it runs (the package starts it on install) and
 		// keep its file away so it can't start at boot.
@@ -112,8 +117,12 @@ func (d *Daemon) syncSNMPLocked() []string {
 		return []string{"snmp: " + err.Error()}
 	}
 	d.snmp.applied, d.snmp.lastErr = want, ""
-	if want == "" {
-		d.snmp.applied = ""
+	if want != "" {
+		// Its first values now, not at the next 15 s tick.
+		select {
+		case d.kickChan() <- struct{}{}:
+		default:
+		}
 	}
 	return nil
 }

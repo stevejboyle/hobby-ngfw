@@ -22,8 +22,9 @@ type metricsState struct {
 	running atomic.Pointer[config.Config] // the running config
 	commit  atomic.Pointer[commitRecord]  // the last commit's outcome
 
-	matchMu sync.Mutex
-	matches map[string]map[string]uint64 // severity -> action -> IPS matches
+	kickOnce sync.Once
+	matchMu  sync.Mutex
+	matches  map[string]map[string]uint64 // severity -> action -> IPS matches
 
 	// slow holds the parts read through methods that take d.mu (IPS, NAT,
 	// decryption, Status); slowBusy is set while a read is under way.
@@ -35,6 +36,17 @@ type metricsState struct {
 	serviceActive func(unit string) bool
 	// snmpRunning reports whether the SNMP agent runs (nil: not managed).
 	snmpRunning func() bool
+	// kick asks the snapshot saver for a snapshot now (SNMP just turned
+	// on: the agent shouldn't wait 15 s for its first values).
+	kick chan struct{}
+}
+
+// SnapshotKick is signalled when a snapshot should be saved at once.
+func (d *Daemon) SnapshotKick() <-chan struct{} { return d.kickChan() }
+
+func (d *Daemon) kickChan() chan struct{} {
+	d.metrics.kickOnce.Do(func() { d.metrics.kick = make(chan struct{}, 1) })
+	return d.metrics.kick
 }
 
 type commitRecord struct {

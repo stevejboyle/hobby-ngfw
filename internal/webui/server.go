@@ -28,8 +28,8 @@ import (
 	"github.com/stevejboyle/sjb-os/internal/daemon"
 	"github.com/stevejboyle/sjb-os/internal/logs"
 	"github.com/stevejboyle/sjb-os/internal/netdev"
-	"github.com/stevejboyle/sjb-os/internal/snmp"
 	"github.com/stevejboyle/sjb-os/internal/nicaddr"
+	"github.com/stevejboyle/sjb-os/internal/snmp"
 	"github.com/stevejboyle/sjb-os/internal/upgrade"
 )
 

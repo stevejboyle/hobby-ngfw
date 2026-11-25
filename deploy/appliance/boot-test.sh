@@ -4,8 +4,9 @@
 # QEMU's software emulation is slow on Apple Silicon; allow several minutes.
 #
 # Needs qemu-system-x86_64, sshpass, curl, python3, net-snmp's client tools
-# (snmpget, snmpwalk, snmptrapd), and Go plus the upgrade signing key for
-# the upgrade checks (run it inside `nix develop`).
+# (snmpget, snmpwalk), Docker (the SNMP trap receiver runs in a Debian
+# container), and Go plus the upgrade signing key for the upgrade checks
+# (run it inside `nix develop`).
 # Usage: deploy/appliance/boot-test.sh build/appliance/sjb-os-<v>.raw [NEW.upgrade]
 #   With NEW.upgrade, the image is upgraded to it right after first boot and
 #   every check then runs against the new version (for bundle-only builds).
@@ -44,7 +45,8 @@ qemu-system-x86_64 -m 4096 -smp 2 -cpu max -display none -serial "file:$LOG" \
 	-netdev user,id=outside,net=10.98.0.0/24 \
 	-device vmxnet3,netdev=outside,addr=0x12 &
 QEMU=$!
-trap 'kill $QEMU ${SINK_PID:-} ${TRAPD_PID:-} 2>/dev/null; rm -rf "$WORK"' EXIT
+TRAPD=sjb-boot-trapd-$$
+trap 'kill $QEMU ${SINK_PID:-} 2>/dev/null; docker rm -f $TRAPD >/dev/null 2>&1; rm -rf "$WORK"' EXIT
 
 # The console's ready line.
 READY='SJB-OS ready'
@@ -976,13 +978,17 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 	[[ ${crit:-0} -ge 1 && $m =~ sjbos_rule_packets_total\{rule=\"ips-test\",action=\"allow\"\}\ [1-9] && $m == *'sjbos_service_up{service="suricata"} 1'* && $m == *'sjbos_interface_receive_bytes_total{interface="mgmt",zone=""}'* ]] &&
 		pass "the scrape shows the IPS blocks ($crit critical), rule hits, Suricata up and interface counters" ||
 		fail "metrics content: crit=$crit $(grep -E 'ips-test|service_up|interface_up' <<<"$m" | head -8)"
-	if command -v snmpget >/dev/null && command -v snmptrapd >/dev/null; then
+	if command -v snmpget >/dev/null && docker info >/dev/null 2>&1; then
 		export MIBS= SNMP_PERSISTENT_DIR=$WORK/snmp-host
-		mkdir -p "$SNMP_PERSISTENT_DIR"
+		mkdir -p "$SNMP_PERSISTENT_DIR" "$WORK/trapd"
 		A1='bt-auth-pass-1' P1='bt-priv-pass-1' COMM='bt-community-1'
-		printf 'createUser bt-nms SHA-256 %s AES %s\nauthUser log bt-nms\nauthCommunity log %s\n' "$A1" "$P1" "$COMM" >"$WORK/trapd.conf"
-		snmptrapd -f -C -c "$WORK/trapd.conf" -Lf "$WORK/traps.log" "udp:127.0.0.1:$TRAP_PORT" >/dev/null 2>&1 &
-		TRAPD_PID=$!
+		printf 'createUser bt-nms SHA-256 %s AES %s\nauthUser log bt-nms\nauthCommunity log %s\n' "$A1" "$P1" "$COMM" >"$WORK/trapd/trapd.conf"
+		# The trap receiver: Debian's snmptrapd in a container, published on
+		# this host's TRAP_PORT, which the appliance reaches as 10.0.2.2.
+		docker run -d --rm --name "$TRAPD" -p "127.0.0.1:$TRAP_PORT:162/udp" -v "$WORK/trapd:/t" debian:trixie sh -c \
+			'apt-get update -qq >/dev/null && apt-get install -y -qq snmptrapd >/dev/null 2>&1 && exec snmptrapd -f -C -c /t/trapd.conf -Lf /t/traps.log udp:162' >/dev/null
+		for _ in $(seq 120); do grep -q 'NET-SNMP version' "$WORK/trapd/traps.log" 2>/dev/null && break; sleep 1; done
+		ln -sf "$WORK/trapd/traps.log" "$WORK/traps.log"
 		script=$'request snmp credential add bt-nms v3 auth sha256 priv aes\n'"$A1"$'\n'"$A1"$'\n'"$P1"$'\n'"$P1"$'\nrequest snmp credential add bt-ro v2c\n'"$COMM"$'\n'"$COMM"$'\nexit\n'
 		out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
 		[[ $out == *"credential bt-nms added"* && $out == *"credential bt-ro added"* && $(root_run stat -c %a /etc/ngfw/snmp-credentials) == 600 ]] &&
@@ -997,6 +1003,7 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 		g=$(snmpget "${V3[@]}" "$AG" .1.3.6.1.2.1.1.6.0 .1.3.6.1.2.1.1.5.0 2>&1)
 		w=$(snmpwalk "${V3[@]}" "$AG" .1.3.6.1.2.1.2.2.1.2 2>&1)
 		[[ $g == *'"boot-test"'* && $w == *mgmt* && $w == *inside* ]] && pass "snmpget/snmpwalk v3 authPriv from the mgmt side: sysLocation, IF-MIB interfaces" || fail "snmp v3: $g / ${w:0:300}"
+		for _ in $(seq 20); do [[ $(snmpget "${V3[@]}" -Oqv "$AG" .1.3.6.1.4.1.8072.9999.9999.7.1.1.0 2>/dev/null) == *0.9.* ]] && break; sleep 1; done
 		sw=$(snmpwalk "${V3[@]}" "$AG" .1.3.6.1.4.1.8072.9999.9999.7 2>&1)
 		[[ $sw == *'"ips-test"'* && $sw == *'"suricata"'* && $sw =~ \.7\.1\.4\.0\ =\ INTEGER:\ 1 ]] && pass "SJB-OS-MIB: rules, services, ngfwd up (pass_persist from the snapshot)" || fail "sjb-os-mib: ${sw:0:400}"
 		v2=$(snmpget -v2c -c "$COMM" -t 3 -r 1 -On "$AG" .1.3.6.1.2.1.1.5.0 2>&1)
@@ -1034,16 +1041,19 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 		und="$(root_run systemctl is-active snmpd 2>&1) $(root_run 'ls /etc/snmp/snmpd.conf 2>&1')"
 		root_run systemctl restart ngfwd
 		for _ in $(seq 30); do [[ $(root_run systemctl is-active snmpd) == active ]] && break; sleep 2; done
+		# Web UI sessions live in ngfwd: log in again for the checks below.
+		login=$(curl -sk -c "$JAR" -H 'Content-Type: application/json' -d "{\"user\":\"$ADMIN\",\"password\":\"$PW\"}" "$UI/ui/api/login")
+		CSRF=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("csrf",""))' <<<"$login" 2>/dev/null)
 		[[ $und == *inactive*"No such file"* && $(root_run systemctl is-active snmpd) == active ]] &&
 			pass "sjb-migrate undo (rollback below 0.9.13) stops snmpd and removes its config; ngfwd brings it back" || fail "snmp undo: $und / $(root_run systemctl is-active snmpd)"
 		script=$'configure\nset snmp enabled off\ncommit -m "boot test: snmp off"\nexit\nexit\n'
 		retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
-		sleep 3
+		for _ in $(seq 20); do [[ $(root_run 'ls /etc/snmp/snmpd.conf /run/sjb-os/metrics.json 2>&1') == *"No such file"*"No such file"* ]] && break; sleep 1; done
 		[[ $(root_run systemctl is-active snmpd) != active && $(root_run 'ls /etc/snmp/snmpd.conf /run/sjb-os/metrics.json 2>&1') == *"No such file"*"No such file"* ]] &&
 			pass "SNMP off: snmpd stopped, its config and the snapshot removed" || fail "snmp off: $(root_run 'systemctl is-active snmpd; ls /etc/snmp /run/sjb-os' 2>&1)"
-		kill $TRAPD_PID 2>/dev/null
+		docker rm -f "$TRAPD" >/dev/null 2>&1
 	else
-		fail "net-snmp's client tools (snmpget, snmptrapd) aren't on this host: run the boot test with them (nix shell nixpkgs#net-snmp)"
+		fail "SNMP checks need net-snmp's client tools (nix shell nixpkgs#net-snmp) and Docker on this host"
 	fi
 	script=$'configure\nset system ips off\ncommit -m "boot test: ips off"\nexit\nexit\n'
 	out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)

@@ -51,7 +51,8 @@ func TestSNMPLifecycle(t *testing.T) {
 	withAccounts(t, d)
 	fake := &fakeSNMPD{}
 	creds := filepath.Join(t.TempDir(), "snmp-credentials")
-	d.SetSNMP(fake, creds)
+	snap := filepath.Join(t.TempDir(), "run", "metrics.json")
+	d.SetSNMP(fake, creds, snap)
 	root := accounts.Root
 	ops := accounts.Caller{Name: "ops", Via: "cli"}
 
@@ -72,6 +73,11 @@ func TestSNMPLifecycle(t *testing.T) {
 	}
 	if _, err := d.Commit("steve", "snmp", 0); err != nil {
 		t.Fatal(err)
+	}
+	select {
+	case <-d.SnapshotKick():
+	default:
+		t.Error("turning SNMP on didn't ask for a snapshot at once")
 	}
 	conf := fake.last()
 	for _, want := range []string{`createUser nms SHA-256 "auth-pass-1" AES "priv-pass-1"`, "sysLocation Lab rack 1", "trapsess -Ci", "192.168.1.62:162", "createUser sjb-internal SHA-256"} {
@@ -109,7 +115,6 @@ func TestSNMPLifecycle(t *testing.T) {
 	}
 
 	// The snapshot is saved while SNMP is on.
-	snap := filepath.Join(t.TempDir(), "run", "metrics.json")
 	if err := d.SaveMetricsSnapshot(snap); err != nil {
 		t.Fatal(err)
 	}
@@ -125,11 +130,8 @@ func TestSNMPLifecycle(t *testing.T) {
 	if fake.last() != "" || fake.Running() {
 		t.Errorf("snmpd not stopped: %q", fake.last())
 	}
-	if err := d.SaveMetricsSnapshot(snap); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := os.Stat(snap); !os.IsNotExist(err) {
-		t.Error("snapshot left behind with SNMP off")
+		t.Error("snapshot left behind when SNMP turned off")
 	}
 	if err := d.DeleteSNMPCredential(root, "nms"); err != nil {
 		t.Error(err)
@@ -149,7 +151,7 @@ func TestSNMPCredentialsInBackups(t *testing.T) {
 	d, _ := setup(t)
 	withAccounts(t, d)
 	creds := filepath.Join(t.TempDir(), "snmp-credentials")
-	d.SetSNMP(&fakeSNMPD{}, creds)
+	d.SetSNMP(&fakeSNMPD{}, creds, "")
 	d.SetCandidate(lab(t))
 	d.Commit("steve", "lab", 0)
 	if err := d.AddSNMPCredential(accounts.Root, snmp.Credential{Name: "ro", Kind: "v2c", Community: "lab-community"}, false); err != nil {

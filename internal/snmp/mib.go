@@ -107,10 +107,11 @@ func cleanString(s string) string {
 }
 
 // Objects turns a snapshot into SJB-OS-MIB's objects, sorted. ok is false
-// when there's no snapshot: everything reads as ngfwd down. age is how old
-// the snapshot is.
+// when there's no snapshot yet (SNMP just turned on): nothing to report,
+// and no alarm. A snapshot older than StaleAfter means ngfwd stopped
+// saving them: ngfwd reads as down. age is how old the snapshot is.
 func Objects(s metrics.Snapshot, ok bool, age time.Duration) []varbind {
-	stale := !ok || age > StaleAfter
+	stale := ok && age > StaleAfter
 	var out []varbind
 	add := func(rel, typ, val string) {
 		out = append(out, varbind{parseOID(Base + rel), typ, val})
@@ -167,6 +168,9 @@ func Objects(s metrics.Snapshot, ok bool, age time.Duration) []varbind {
 
 	// Tables: column-major order is OID order (entry.column.index).
 	services := s.Services
+	if !ok {
+		services = nil
+	}
 	if stale {
 		// ngfwd isn't saving snapshots: say so, whatever the old one said.
 		services = []metrics.Service{{Name: "ngfwd", Up: false, Used: true}}

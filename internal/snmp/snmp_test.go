@@ -244,10 +244,10 @@ func TestPass(t *testing.T) {
 	if v[".1.4.0"] != "integer 0" || v[".10.1.2.1"] != "string ngfwd" || v[".10.1.5.1"] != "integer 1" || v[".10.1.2.2"] != "" {
 		t.Errorf("stale: %v", v)
 	}
-	// No snapshot at all: the same, and no false IPS or commit alarm.
+	// No snapshot yet (SNMP just turned on): no alarm of any kind.
 	os.Remove(path)
 	v = walk(now)
-	if v[".1.4.0"] != "integer 0" || v[".4.7.0"] != "integer 0" || v[".2.3.0"] != "integer 1" {
+	if v[".1.4.0"] != "integer 1" || v[".1.3.0"] != "integer -1" || v[".4.7.0"] != "integer 0" || v[".2.3.0"] != "integer 1" || v[".10.1.5.1"] != "" {
 		t.Errorf("missing: %v", v)
 	}
 }

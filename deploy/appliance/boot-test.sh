@@ -3,8 +3,9 @@
 # disk, three vmxnet3 NICs) and check first boot end to end. No VMware needed.
 # QEMU's software emulation is slow on Apple Silicon; allow several minutes.
 #
-# Needs qemu-system-x86_64, sshpass, curl, python3, and Go plus the upgrade
-# signing key for the upgrade checks (run it inside `nix develop`).
+# Needs qemu-system-x86_64, sshpass, curl, python3, net-snmp's client tools
+# (snmpget, snmpwalk, snmptrapd), and Go plus the upgrade signing key for
+# the upgrade checks (run it inside `nix develop`).
 # Usage: deploy/appliance/boot-test.sh build/appliance/sjb-os-<v>.raw [NEW.upgrade]
 #   With NEW.upgrade, the image is upgraded to it right after first boot and
 #   every check then runs against the new version (for bundle-only builds).
@@ -17,6 +18,8 @@ LOG=$WORK/console.log
 SSH_PORT=${SSH_PORT:-2222}
 API_PORT=${API_PORT:-18443}
 UI_PORT=${UI_PORT:-18444}
+SNMP_PORT=${SNMP_PORT:-18161}  # host UDP port forwarded to the appliance's 161
+TRAP_PORT=${TRAP_PORT:-16162}  # traps to 10.0.2.2 (this host) on this port
 SIGNING_KEY=${SIGNING_KEY:-$HOME/.config/sjb-os/upgrade-signing.key}
 SRC=$(cd "$(dirname "$0")/../.." && pwd)
 FAILS=0
@@ -34,14 +37,14 @@ qemu-system-x86_64 -m 4096 -smp 2 -cpu max -display none -serial "file:$LOG" \
 	-device pvscsi,id=scsi0 \
 	-drive "file=$RAW,format=raw,if=none,id=d0,snapshot=on" \
 	-device scsi-hd,drive=d0,bus=scsi0.0 \
-	-netdev "user,id=mgmt,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22,hostfwd=tcp:127.0.0.1:$API_PORT-:8443,hostfwd=tcp:127.0.0.1:$UI_PORT-:443" \
+	-netdev "user,id=mgmt,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22,hostfwd=tcp:127.0.0.1:$API_PORT-:8443,hostfwd=tcp:127.0.0.1:$UI_PORT-:443,hostfwd=udp:127.0.0.1:$SNMP_PORT-:161" \
 	-device vmxnet3,netdev=mgmt,addr=0x10 \
 	-netdev user,id=inside,restrict=on,net=10.99.0.0/24 \
 	-device vmxnet3,netdev=inside,addr=0x11 \
 	-netdev user,id=outside,net=10.98.0.0/24 \
 	-device vmxnet3,netdev=outside,addr=0x12 &
 QEMU=$!
-trap 'kill $QEMU ${SINK_PID:-} 2>/dev/null; rm -rf "$WORK"' EXIT
+trap 'kill $QEMU ${SINK_PID:-} ${TRAPD_PID:-} 2>/dev/null; rm -rf "$WORK"' EXIT
 
 # The console's ready line.
 READY='SJB-OS ready'
@@ -953,6 +956,95 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 	[[ $r == 200 && $(root_run systemctl is-active sjb-ips) == active ]] &&
 		pass "traffic flows with Suricata stopped (queue bypass); ngfwd restarts it" ||
 		fail "ips fail-open: $r / $(root_run systemctl is-active sjb-ips) / $(root_run 'journalctl -u sjb-ips -b --no-pager -o short-monotonic -n 14 | cut -c1-160' 2>&1)"
+	# --- monitoring: Prometheus and SNMP (here, while rules use the IPS) ----------
+	# snmpd comes with the bundle (or the image) and stays stopped until the
+	# config turns SNMP on.
+	if [[ -n $NEWBUNDLE ]]; then
+		for _ in $(seq 60); do [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' snmpd" 2>/dev/null) == installed ]] && break; sleep 2; done
+	fi
+	sact=$(root_run systemctl is-active snmpd 2>&1)
+	[[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' snmpd" 2>/dev/null) == installed && $sact != active && $(root_run 'ls /etc/snmp/snmpd.conf 2>&1') == *"No such file"* ]] &&
+		pass "snmpd installed ($(root_run "dpkg-query -W -f='\${Version}' snmpd")) and stopped, with no config, until SNMP is turned on" ||
+		fail "snmpd before SNMP is on: $sact / $(root_run 'ls -l /etc/snmp/snmpd.conf' 2>&1)"
+	# Prometheus: a metrics:read key from the CLI, then a scrape.
+	pk=$(cli_run request api-key add bt-prom scopes metrics:read | grep -o '^  [A-Za-z0-9_-]\{40,\}' | tr -d ' ')
+	scrape() { curl -sk -o "$WORK/metrics.txt" -w '%{http_code}' ${1:+-H "Authorization: Bearer $1"} "https://127.0.0.1:$API_PORT/metrics"; }
+	c1=$(scrape "$pk"); c2=$(scrape ""); c3=$(scrape "$KEY"); scrape "$pk" >/dev/null
+	m=$(cat "$WORK/metrics.txt")
+	crit=$(grep '^sjbos_ips_matches_total{severity="critical",action="block"}' <<<"$m" | awk '{print $2}')
+	[[ -n $pk && $c1 == 200 && $c2 == 401 && $c3 == 403 ]] && pass "GET /metrics: 200 with a metrics:read key (made in the CLI), 401 without one, 403 with the tag key" || fail "metrics auth: key=${pk:0:6}… $c1/$c2/$c3"
+	[[ ${crit:-0} -ge 1 && $m =~ sjbos_rule_packets_total\{rule=\"ips-test\",action=\"allow\"\}\ [1-9] && $m == *'sjbos_service_up{service="suricata"} 1'* && $m == *'sjbos_interface_receive_bytes_total{interface="mgmt",zone=""}'* ]] &&
+		pass "the scrape shows the IPS blocks ($crit critical), rule hits, Suricata up and interface counters" ||
+		fail "metrics content: crit=$crit $(grep -E 'ips-test|service_up|interface_up' <<<"$m" | head -8)"
+	if command -v snmpget >/dev/null && command -v snmptrapd >/dev/null; then
+		export MIBS= SNMP_PERSISTENT_DIR=$WORK/snmp-host
+		mkdir -p "$SNMP_PERSISTENT_DIR"
+		A1='bt-auth-pass-1' P1='bt-priv-pass-1' COMM='bt-community-1'
+		printf 'createUser bt-nms SHA-256 %s AES %s\nauthUser log bt-nms\nauthCommunity log %s\n' "$A1" "$P1" "$COMM" >"$WORK/trapd.conf"
+		snmptrapd -f -C -c "$WORK/trapd.conf" -Lf "$WORK/traps.log" "udp:127.0.0.1:$TRAP_PORT" >/dev/null 2>&1 &
+		TRAPD_PID=$!
+		script=$'request snmp credential add bt-nms v3 auth sha256 priv aes\n'"$A1"$'\n'"$A1"$'\n'"$P1"$'\n'"$P1"$'\nrequest snmp credential add bt-ro v2c\n'"$COMM"$'\n'"$COMM"$'\nexit\n'
+		out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
+		[[ $out == *"credential bt-nms added"* && $out == *"credential bt-ro added"* && $(root_run stat -c %a /etc/ngfw/snmp-credentials) == 600 ]] &&
+			pass "SNMP credentials added in the CLI (secrets asked for, file root-only)" || fail "snmp credentials: ${out: -300}"
+		script=$'configure\nset snmp enabled on\nset snmp location boot-test\nset snmp v3-users bt-nms\nset snmp v2c-communities bt-ro\nset snmp managers 10.0.2.2\nset snmp-trap-receiver bt-trapd address 10.0.2.2 port '"$TRAP_PORT"$' credential bt-nms inform on\ncommit -m "boot test: snmp"\nexit\nexit\n'
+		out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
+		for _ in $(seq 30); do [[ $(root_run systemctl is-active snmpd) == active ]] && break; sleep 1; done
+		[[ $out == *"committed revision"* && $(root_run systemctl is-active snmpd) == active && $(root_run 'ip vrf identify $(systemctl show -p MainPID --value snmpd)') == vrf-mgmt ]] &&
+			pass "SNMP on: snmpd runs, in the management VRF" || fail "snmp on: ${out: -300} / $(root_run 'systemctl status snmpd --no-pager | tail -5' 2>&1)"
+		V3=(-v3 -u bt-nms -l authPriv -a SHA-256 -A "$A1" -x AES -X "$P1" -t 3 -r 1 -On)
+		AG=127.0.0.1:$SNMP_PORT
+		g=$(snmpget "${V3[@]}" "$AG" .1.3.6.1.2.1.1.6.0 .1.3.6.1.2.1.1.5.0 2>&1)
+		w=$(snmpwalk "${V3[@]}" "$AG" .1.3.6.1.2.1.2.2.1.2 2>&1)
+		[[ $g == *'"boot-test"'* && $w == *mgmt* && $w == *inside* ]] && pass "snmpget/snmpwalk v3 authPriv from the mgmt side: sysLocation, IF-MIB interfaces" || fail "snmp v3: $g / ${w:0:300}"
+		sw=$(snmpwalk "${V3[@]}" "$AG" .1.3.6.1.4.1.8072.9999.9999.7 2>&1)
+		[[ $sw == *'"ips-test"'* && $sw == *'"suricata"'* && $sw =~ \.7\.1\.4\.0\ =\ INTEGER:\ 1 ]] && pass "SJB-OS-MIB: rules, services, ngfwd up (pass_persist from the snapshot)" || fail "sjb-os-mib: ${sw:0:400}"
+		v2=$(snmpget -v2c -c "$COMM" -t 3 -r 1 -On "$AG" .1.3.6.1.2.1.1.5.0 2>&1)
+		v2bad=$(snmpget -v2c -c wrong-community -t 2 -r 0 -On "$AG" .1.3.6.1.2.1.1.5.0 2>&1)
+		[[ $v2 == *STRING* && $v2bad == *Timeout* ]] && pass "v2c: the community works from the listed manager; a wrong one gets no answer" || fail "v2c: $v2 / $v2bad"
+		for _ in $(seq 20); do grep -q '1.3.6.1.6.3.1.1.5.1' "$WORK/traps.log" 2>/dev/null && break; sleep 1; done
+		grep -q '1.3.6.1.6.3.1.1.5.1' "$WORK/traps.log" && pass "coldStart inform reached the receiver over the management network" || fail "no coldStart: $(tail -c 300 "$WORK/traps.log" 2>/dev/null)"
+		# A link going down, and Suricata kept down while rules need it.
+		root_run 'ip link set ip2 down'
+		for _ in $(seq 30); do grep -q '1.3.6.1.6.3.1.1.5.3' "$WORK/traps.log" && break; sleep 1; done
+		root_run 'ip link set ip2 up'
+		grep -q '1.3.6.1.6.3.1.1.5.3' "$WORK/traps.log" && pass "linkDown trap when an interface goes down" || fail "no linkDown trap"
+		root_run 'systemctl mask --runtime --quiet sjb-ips; systemctl stop sjb-ips'
+		for _ in $(seq 90); do grep -q sjbServiceDown "$WORK/traps.log" && grep -q sjbIpsEngineDown "$WORK/traps.log" && break; sleep 1; done
+		root_run 'systemctl unmask --runtime --quiet sjb-ips'
+		grep -q sjbServiceDown "$WORK/traps.log" && grep -q '"suricata"' "$WORK/traps.log" && grep -q sjbIpsEngineDown "$WORK/traps.log" &&
+			pass "sjbServiceDown (suricata) and sjbIpsEngineDown traps while Suricata is down" || fail "service traps: $(grep -ao 'sjb[A-Za-z]*' "$WORK/traps.log" | sort | uniq -c | tr '\n' ' ')"
+		for _ in $(seq 30); do [[ $(root_run systemctl is-active sjb-ips) == active ]] && break; sleep 2; done
+		# An unconfirmed commit rolled back is a failed commit.
+		script=$'configure\nset snmp contact boot-test-rollback\ncommit -m "boot test: unconfirmed" -confirm 1m\nexit\nexit\n'
+		retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
+		for _ in $(seq 150); do grep -q sjbCommitFailed "$WORK/traps.log" && break; sleep 1; done
+		grep -q sjbCommitFailed "$WORK/traps.log" && grep -q 'auto-rollback' "$WORK/traps.log" && pass "sjbCommitFailed trap (with the reason) after an unconfirmed commit rolled back" || fail "no sjbCommitFailed trap"
+		# New secrets: the old passphrase stops working, the new one works.
+		A2='bt-auth-pass-2'
+		script=$'request snmp credential change bt-nms v3 auth sha256 priv aes\n'"$A2"$'\n'"$A2"$'\n'"$P1"$'\n'"$P1"$'\nexit\n'
+		retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
+		sleep 5
+		old=$(snmpget "${V3[@]}" "$AG" .1.3.6.1.2.1.1.5.0 2>&1)
+		new=$(snmpget -v3 -u bt-nms -l authPriv -a SHA-256 -A "$A2" -x AES -X "$P1" -t 3 -r 1 -On "$AG" .1.3.6.1.2.1.1.5.0 2>&1)
+		[[ $old != *STRING* && $new == *STRING* ]] && pass "request snmp credential change: the new passphrase works at once, the old one doesn't" || fail "rotation: old=$old new=$new"
+		# A rollback to a version without SNMP stops it and removes its config;
+		# ngfwd starts it again here.
+		root_run 'sjb-migrate undo 0.9.12-r01' >/dev/null 2>&1
+		und="$(root_run systemctl is-active snmpd 2>&1) $(root_run 'ls /etc/snmp/snmpd.conf 2>&1')"
+		root_run systemctl restart ngfwd
+		for _ in $(seq 30); do [[ $(root_run systemctl is-active snmpd) == active ]] && break; sleep 2; done
+		[[ $und == *inactive*"No such file"* && $(root_run systemctl is-active snmpd) == active ]] &&
+			pass "sjb-migrate undo (rollback below 0.9.13) stops snmpd and removes its config; ngfwd brings it back" || fail "snmp undo: $und / $(root_run systemctl is-active snmpd)"
+		script=$'configure\nset snmp enabled off\ncommit -m "boot test: snmp off"\nexit\nexit\n'
+		retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
+		sleep 3
+		[[ $(root_run systemctl is-active snmpd) != active && $(root_run 'ls /etc/snmp/snmpd.conf /run/sjb-os/metrics.json 2>&1') == *"No such file"*"No such file"* ]] &&
+			pass "SNMP off: snmpd stopped, its config and the snapshot removed" || fail "snmp off: $(root_run 'systemctl is-active snmpd; ls /etc/snmp /run/sjb-os' 2>&1)"
+		kill $TRAPD_PID 2>/dev/null
+	else
+		fail "net-snmp's client tools (snmpget, snmptrapd) aren't on this host: run the boot test with them (nix shell nixpkgs#net-snmp)"
+	fi
 	script=$'configure\nset system ips off\ncommit -m "boot test: ips off"\nexit\nexit\n'
 	out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
 	for _ in $(seq 10); do [[ $(root_run systemctl is-active sjb-ips) != active ]] && break; sleep 1; done

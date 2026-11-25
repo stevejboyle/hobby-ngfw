@@ -10,6 +10,7 @@ import (
 	"github.com/stevejboyle/sjb-os/internal/accounts"
 	"github.com/stevejboyle/sjb-os/internal/backup"
 	"github.com/stevejboyle/sjb-os/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/snmp"
 )
 
 // SetVersion records the SJB-OS version (for backup headers and logs).
@@ -71,6 +72,14 @@ func (d *Daemon) ExportBackup(c accounts.Caller, withAccounts bool, passphrase s
 				return nil, err
 			}
 		}
+		if d.snmp.credsPath != "" {
+			if b, err := os.ReadFile(d.snmp.credsPath); err == nil {
+				s := string(b)
+				pl.SNMPCredentials = &s
+			} else if !os.IsNotExist(err) {
+				return nil, err
+			}
+		}
 	}
 	data, err := backup.Seal(h, pl, passphrase)
 	if err != nil {
@@ -110,7 +119,9 @@ type RestoreResult struct {
 	Diff     string                  `json:"diff,omitempty"`
 	Accounts *accounts.RestoreResult `json:"accounts,omitempty"`
 	APIKeys  *int                    `json:"api_keys,omitempty"` // keys restored
-	Warnings []string                `json:"warnings,omitempty"`
+	// SNMPCredentials is how many SNMP credentials were restored.
+	SNMPCredentials *int     `json:"snmp_credentials,omitempty"`
+	Warnings        []string `json:"warnings,omitempty"`
 }
 
 // RestoreBackup restores a backup. The config only ever goes into the
@@ -144,6 +155,14 @@ func (d *Daemon) RestoreBackup(c accounts.Caller, req RestoreRequest) (*RestoreR
 		}
 		if keys, err = ParseKeys(strings.NewReader(*pl.APIKeys), "backup api-keys"); err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+		}
+	}
+	var snmpCreds *snmp.Credentials
+	if req.Accounts && pl.SNMPCredentials != nil {
+		if d.snmp.credsPath == "" {
+			res.Warnings = append(res.Warnings, "the backup's SNMP credentials weren't restored: the SNMP agent isn't available here")
+		} else if snmpCreds, err = snmp.Parse([]byte(*pl.SNMPCredentials)); err != nil {
+			return nil, fmt.Errorf("%w: the backup's SNMP credentials: %v", ErrInvalid, err)
 		}
 	}
 	if req.Config {
@@ -183,6 +202,22 @@ func (d *Daemon) RestoreBackup(c accounts.Caller, req RestoreRequest) (*RestoreR
 			n := len(keys)
 			res.APIKeys = &n
 			d.log.Info("tag API keys restored from a backup", "keys", n, "by", c.Author())
+		}
+		if snmpCreds != nil {
+			d.snmp.credsMu.Lock()
+			err := snmp.Save(d.snmp.credsPath, snmpCreds)
+			d.snmp.credsMu.Unlock()
+			if err != nil {
+				return nil, err
+			}
+			n := len(snmpCreds.List)
+			res.SNMPCredentials = &n
+			d.log.Info("snmp credentials restored from a backup", "credentials", n, "by", c.Author())
+			d.mu.Lock()
+			if w := d.syncSNMPLocked(); len(w) > 0 {
+				res.Warnings = append(res.Warnings, w...)
+			}
+			d.mu.Unlock()
 		}
 	}
 	return res, nil

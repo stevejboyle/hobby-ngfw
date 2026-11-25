@@ -19,6 +19,8 @@ import (
 
 	"github.com/stevejboyle/sjb-os/internal/compiler"
 	"github.com/stevejboyle/sjb-os/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/metrics"
+	"github.com/stevejboyle/sjb-os/internal/snmp"
 )
 
 const usage = `usage: fwctl [-socket PATH] <command> [args]
@@ -145,6 +147,9 @@ func dispatch(cmd string, args []string) error {
 		return webPasswd(args)
 	case "sjb":
 		return sjbCmd()
+	case "snmp-pass":
+		// snmpd's pass_persist helper for SJB-OS-MIB (run by snmpd, not people).
+		return snmp.Pass(os.Stdin, os.Stdout, metrics.SnapshotPath, time.Now)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil

@@ -89,6 +89,14 @@ type Payload struct {
 	Config   string             `json:"config"` // YAML
 	Accounts *accounts.Snapshot `json:"accounts,omitempty"`
 	APIKeys  *string            `json:"api_keys,omitempty"` // the tag API key file
+	// SNMPCredentials is the SNMP agent's credentials file (v3 users,
+	// v2c communities): secrets, so it travels with the accounts.
+	SNMPCredentials *string `json:"snmp_credentials,omitempty"`
+}
+
+// hasSecrets reports whether the payload holds accounts or other secrets.
+func (p Payload) hasSecrets() bool {
+	return p.Accounts != nil || p.APIKeys != nil || p.SNMPCredentials != nil
 }
 
 type envelope struct {
@@ -102,7 +110,7 @@ type envelope struct {
 func Seal(h Header, p Payload, passphrase string) ([]byte, error) {
 	h.Format, h.Version = Format, Version
 	h.Contents = []string{ContentConfig}
-	if p.Accounts != nil || p.APIKeys != nil {
+	if p.hasSecrets() {
 		h.Contents = append(h.Contents, ContentAccounts)
 	}
 	if strings.TrimSpace(p.Config) == "" {
@@ -271,7 +279,7 @@ func Open(data []byte, passphrase string) (Header, Payload, error) {
 	if err := json.Unmarshal(body, &p); err != nil {
 		return Header{}, Payload{}, fmt.Errorf("%w: damaged payload: %v", ErrInvalid, err)
 	}
-	if (p.Accounts != nil || p.APIKeys != nil) != h.Has(ContentAccounts) {
+	if p.hasSecrets() != h.Has(ContentAccounts) {
 		return Header{}, Payload{}, fmt.Errorf("%w: contents don't match the header", ErrInvalid)
 	}
 	if h.Has(ContentAccounts) && !h.Encrypted() {

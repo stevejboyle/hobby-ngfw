@@ -189,6 +189,20 @@ var Kinds = []*Kind{
 		{Name: "server-name", Field: "server_name", Kind: vStr, Hint: "<name>", Help: "tls: the name checked on the server's certificate (unset: the address)"},
 		{Name: "ca", Field: "ca", Kind: vStr, Hint: `"<pem>"`, Help: "tls: CA certificate (PEM, quoted, on one line is fine) the server's certificate must chain to (unset: the system's trusted roots)"},
 	}},
+	{Name: "snmp", Key: "snmp", Singleton: true, Help: "the SNMP agent (read-only; credentials: request snmp credential ...)", Attrs: []Attr{
+		{Name: "enabled", Field: "enabled", Kind: vEnum, Enum: []string{"on", "off"}, Help: "run the SNMP agent (off unless set on)"},
+		{Name: "location", Field: "location", Kind: vStr, Hint: `"<text>"`, Help: "sysLocation"},
+		{Name: "contact", Field: "contact", Kind: vStr, Hint: `"<text>"`, Help: "sysContact"},
+		{Name: "v3-users", Field: "v3_users", Kind: vList, Hint: "<credential>", Help: "v3 credentials that may poll (show snmp lists them)"},
+		{Name: "v2c-communities", Field: "v2c_communities", Kind: vList, Hint: "<credential>", Help: "v2c credentials that may poll, from the managers only"},
+		{Name: "managers", Field: "managers", Kind: vList, Hint: "<ip or cidr>", Help: "addresses v2c polls are accepted from"},
+	}},
+	{Name: "snmp-trap-receiver", Key: "snmp_trap_receivers", Help: "managers the SNMP agent sends traps to (link up/down, service down, IPS engine down, commit failed)", Attrs: []Attr{
+		{Name: "address", Field: "address", Kind: vStr, Hint: "<ip>", Help: "the receiver's IPv4 address (on the management network)"},
+		{Name: "port", Field: "port", Kind: vInt, Hint: "<1-65535>", Help: "UDP port (unset: 162)"},
+		{Name: "credential", Field: "credential", Kind: vStr, Hint: "<credential>", Help: "a v3 user or v2c community credential (show snmp)"},
+		{Name: "inform", Field: "inform", Kind: vEnum, Enum: []string{"on", "off"}, Help: "on: v3 informs, acknowledged and retried (v3 credentials only)"},
+	}},
 	{Name: "bgp-neighbor", Key: "bgp_neighbors", Help: "BGP peers", Attrs: []Attr{
 		{Name: "address", Field: "address", Kind: vStr, Hint: "<ip>", Help: "the peer's address"},
 		{Name: "remote-as", Field: "remote_as", Kind: vInt, Hint: "<asn>", Help: "the peer's AS (same as ours for iBGP)"},

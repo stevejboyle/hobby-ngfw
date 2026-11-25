@@ -1,0 +1,315 @@
+SJB-OS-MIB DEFINITIONS ::= BEGIN
+
+-- SJB-OS's own objects, served read-only by the appliance's SNMP agent.
+-- Experimental: the module sits under net-snmp's experimental arc
+-- (netSnmpPlaypen) until SJB Consulting has a Private Enterprise Number.
+-- Values come from ngfwd's monitoring snapshot (every 15 seconds).
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, Gauge32, Counter64, TimeTicks
+        FROM SNMPv2-SMI
+    TruthValue, DisplayString
+        FROM SNMPv2-TC
+    MODULE-COMPLIANCE, OBJECT-GROUP
+        FROM SNMPv2-CONF
+    netSnmpPlaypen
+        FROM NET-SNMP-MIB;
+
+sjbOS MODULE-IDENTITY
+    LAST-UPDATED "202611250000Z"
+    ORGANIZATION "SJB Consulting"
+    CONTACT-INFO "https://github.com/stevejboyle/sjb-os"
+    DESCRIPTION
+        "SJB-OS, an experimental firewall appliance for isolated lab
+        use: services, configuration, sessions, security rules, NAT,
+        the IPS, TLS decryption and log forwarding."
+    REVISION "202611250000Z"
+    DESCRIPTION "First version (SJB-OS 0.9.13)."
+    ::= { netSnmpPlaypen 7 }
+
+-- netSnmpPlaypen is 1.3.6.1.4.1.8072.9999.9999; sjbOS is
+-- 1.3.6.1.4.1.8072.9999.9999.7.
+
+sjbSystem      OBJECT IDENTIFIER ::= { sjbOS 1 }
+sjbConfig      OBJECT IDENTIFIER ::= { sjbOS 2 }
+sjbSessions    OBJECT IDENTIFIER ::= { sjbOS 3 }
+sjbIps         OBJECT IDENTIFIER ::= { sjbOS 4 }
+sjbDecryption  OBJECT IDENTIFIER ::= { sjbOS 5 }
+sjbAppId       OBJECT IDENTIFIER ::= { sjbOS 6 }
+sjbConformance OBJECT IDENTIFIER ::= { sjbOS 99 }
+
+-- System
+
+sjbVersion OBJECT-TYPE
+    SYNTAX DisplayString MAX-ACCESS read-only STATUS current
+    DESCRIPTION "The SJB-OS version." ::= { sjbSystem 1 }
+sjbHostname OBJECT-TYPE
+    SYNTAX DisplayString MAX-ACCESS read-only STATUS current
+    DESCRIPTION "The appliance's host name." ::= { sjbSystem 2 }
+sjbSnapshotAge OBJECT-TYPE
+    SYNTAX Integer32 UNITS "seconds" MAX-ACCESS read-only STATUS current
+    DESCRIPTION "How old the values are: ngfwd saves them every 15
+        seconds; -1 when there are none." ::= { sjbSystem 3 }
+sjbNgfwdUp OBJECT-TYPE
+    SYNTAX Integer32 (0..1) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "1 while ngfwd keeps the values current (younger than 60
+        seconds); 0 otherwise, and then the service table holds only
+        ngfwd, down." ::= { sjbSystem 4 }
+sjbUptime OBJECT-TYPE
+    SYNTAX TimeTicks MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Time since the appliance booted." ::= { sjbSystem 5 }
+
+-- Configuration
+
+sjbRunningRevision OBJECT-TYPE
+    SYNTAX Integer32 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "The running config revision." ::= { sjbConfig 1 }
+sjbUncommitted OBJECT-TYPE
+    SYNTAX Integer32 (0..1) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "1 when the candidate differs from the running config."
+    ::= { sjbConfig 2 }
+sjbLastCommitOK OBJECT-TYPE
+    SYNTAX Integer32 (0..1) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "0 when the last commit failed to apply or an unconfirmed
+        commit was rolled back automatically (a config refused as
+        invalid changes nothing and doesn't count)." ::= { sjbConfig 3 }
+sjbRecovery OBJECT-TYPE
+    SYNTAX Integer32 (0..1) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "1 when enforcement may not match the running revision."
+    ::= { sjbConfig 4 }
+sjbLastCommitNote OBJECT-TYPE
+    SYNTAX DisplayString MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Why the last commit failed (empty otherwise)."
+    ::= { sjbConfig 5 }
+
+-- Sessions
+
+sjbSessionCount OBJECT-TYPE
+    SYNTAX Gauge32 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Tracked connections." ::= { sjbSessions 1 }
+sjbSessionMax OBJECT-TYPE
+    SYNTAX Gauge32 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "The connection tracking limit." ::= { sjbSessions 2 }
+
+-- IPS
+
+sjbIpsState OBJECT-TYPE
+    SYNTAX DisplayString MAX-ACCESS read-only STATUS current
+    DESCRIPTION "off, unavailable, starting, loading or inspecting."
+    ::= { sjbIps 1 }
+sjbIpsUp OBJECT-TYPE
+    SYNTAX Integer32 (0..1) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "1 while Suricata runs." ::= { sjbIps 2 }
+sjbIpsSignaturesLoaded OBJECT-TYPE
+    SYNTAX Gauge32 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Signatures the running engine has active." ::= { sjbIps 3 }
+sjbIpsQueueDropped OBJECT-TYPE
+    SYNTAX Counter64 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Packets passed uninspected or dropped because the IPS
+        queue was full." ::= { sjbIps 4 }
+sjbIpsExceptionsActive OBJECT-TYPE
+    SYNTAX Gauge32 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "IPS exceptions in effect." ::= { sjbIps 5 }
+sjbIpsExceptionsInactive OBJECT-TYPE
+    SYNTAX Gauge32 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "IPS exceptions waiting for a free code." ::= { sjbIps 6 }
+sjbIpsFault OBJECT-TYPE
+    SYNTAX Integer32 (0..1) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "1 when rules need the IPS and Suricata isn't running
+        (the sjbIpsEngineDown trigger)." ::= { sjbIps 7 }
+
+-- TLS decryption
+
+sjbDecryptionState OBJECT-TYPE
+    SYNTAX DisplayString MAX-ACCESS read-only STATUS current
+    DESCRIPTION "off, no-ca, unavailable, busy, observing or decrypting."
+    ::= { sjbDecryption 1 }
+sjbDecryptionUp OBJECT-TYPE
+    SYNTAX Integer32 (0..1) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "1 while tlsd runs." ::= { sjbDecryption 2 }
+sjbDecryptionActive OBJECT-TYPE
+    SYNTAX Gauge32 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Connections tlsd handles now." ::= { sjbDecryption 3 }
+
+-- App Identification
+
+sjbAppIdEnabled OBJECT-TYPE
+    SYNTAX Integer32 (0..1) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "1 when App Identification is on." ::= { sjbAppId 1 }
+sjbAppIdUp OBJECT-TYPE
+    SYNTAX Integer32 (0..1) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "1 while appidd reports." ::= { sjbAppId 2 }
+
+-- Services
+
+sjbServiceTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF SjbServiceEntry MAX-ACCESS not-accessible STATUS current
+    DESCRIPTION "The appliance's services." ::= { sjbOS 10 }
+sjbServiceEntry OBJECT-TYPE
+    SYNTAX SjbServiceEntry MAX-ACCESS not-accessible STATUS current
+    DESCRIPTION "One service." INDEX { sjbServiceIndex } ::= { sjbServiceTable 1 }
+SjbServiceEntry ::= SEQUENCE { sjbServiceIndex Integer32, sjbServiceName DisplayString,
+    sjbServiceUp Integer32, sjbServiceUsed Integer32, sjbServiceFault Integer32 }
+sjbServiceIndex OBJECT-TYPE
+    SYNTAX Integer32 (1..2147483647) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Row number." ::= { sjbServiceEntry 1 }
+sjbServiceName OBJECT-TYPE
+    SYNTAX DisplayString MAX-ACCESS read-only STATUS current
+    DESCRIPTION "ngfwd, suricata, tlsd, appidd, frr, kea or snmpd."
+    ::= { sjbServiceEntry 2 }
+sjbServiceUp OBJECT-TYPE
+    SYNTAX Integer32 (0..1) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "1 while it runs." ::= { sjbServiceEntry 3 }
+sjbServiceUsed OBJECT-TYPE
+    SYNTAX Integer32 (0..1) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "1 when the config needs it." ::= { sjbServiceEntry 4 }
+sjbServiceFault OBJECT-TYPE
+    SYNTAX Integer32 (0..1) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "1 when it's needed and not running (the sjbServiceDown
+        trigger)." ::= { sjbServiceEntry 5 }
+
+-- Security rules
+
+sjbRuleTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF SjbRuleEntry MAX-ACCESS not-accessible STATUS current
+    DESCRIPTION "Security rules in order, then the default deny."
+    ::= { sjbOS 11 }
+sjbRuleEntry OBJECT-TYPE
+    SYNTAX SjbRuleEntry MAX-ACCESS not-accessible STATUS current
+    DESCRIPTION "One rule." INDEX { sjbRuleIndex } ::= { sjbRuleTable 1 }
+SjbRuleEntry ::= SEQUENCE { sjbRuleIndex Integer32, sjbRuleName DisplayString,
+    sjbRuleAction DisplayString, sjbRulePackets Counter64, sjbRuleBytes Counter64 }
+sjbRuleIndex OBJECT-TYPE
+    SYNTAX Integer32 (1..2147483647) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Position (the last row is the default deny)."
+    ::= { sjbRuleEntry 1 }
+sjbRuleName OBJECT-TYPE
+    SYNTAX DisplayString MAX-ACCESS read-only STATUS current
+    DESCRIPTION "The rule's name." ::= { sjbRuleEntry 2 }
+sjbRuleAction OBJECT-TYPE
+    SYNTAX DisplayString MAX-ACCESS read-only STATUS current
+    DESCRIPTION "allow, deny or reset." ::= { sjbRuleEntry 3 }
+sjbRulePackets OBJECT-TYPE
+    SYNTAX Counter64 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Packets the rule matched: new connections, and packets
+        re-evaluated by application rules. Reset by a ruleset reload."
+    ::= { sjbRuleEntry 4 }
+sjbRuleBytes OBJECT-TYPE
+    SYNTAX Counter64 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Bytes in those packets." ::= { sjbRuleEntry 5 }
+
+-- NAT
+
+sjbNatTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF SjbNatEntry MAX-ACCESS not-accessible STATUS current
+    DESCRIPTION "NAT entries in order." ::= { sjbOS 12 }
+sjbNatEntry OBJECT-TYPE
+    SYNTAX SjbNatEntry MAX-ACCESS not-accessible STATUS current
+    DESCRIPTION "One entry." INDEX { sjbNatIndex } ::= { sjbNatTable 1 }
+SjbNatEntry ::= SEQUENCE { sjbNatIndex Integer32, sjbNatName DisplayString, sjbNatType DisplayString,
+    sjbNatHits Counter64, sjbNatOutHits Counter64, sjbNatHairpin Counter64 }
+sjbNatIndex OBJECT-TYPE
+    SYNTAX Integer32 (1..2147483647) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Position." ::= { sjbNatEntry 1 }
+sjbNatName OBJECT-TYPE
+    SYNTAX DisplayString MAX-ACCESS read-only STATUS current
+    DESCRIPTION "The entry's name." ::= { sjbNatEntry 2 }
+sjbNatType OBJECT-TYPE
+    SYNTAX DisplayString MAX-ACCESS read-only STATUS current
+    DESCRIPTION "masquerade, port-forward or static." ::= { sjbNatEntry 3 }
+sjbNatHits OBJECT-TYPE
+    SYNTAX Counter64 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "New connections translated (inbound for published
+        servers, outbound for masquerade)." ::= { sjbNatEntry 4 }
+sjbNatOutHits OBJECT-TYPE
+    SYNTAX Counter64 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Static NAT: outbound connections from the server."
+    ::= { sjbNatEntry 5 }
+sjbNatHairpin OBJECT-TYPE
+    SYNTAX Counter64 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Hairpinned connections." ::= { sjbNatEntry 6 }
+
+-- Log forwarding
+
+sjbLogServerTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF SjbLogServerEntry MAX-ACCESS not-accessible STATUS current
+    DESCRIPTION "Log servers." ::= { sjbOS 13 }
+sjbLogServerEntry OBJECT-TYPE
+    SYNTAX SjbLogServerEntry MAX-ACCESS not-accessible STATUS current
+    DESCRIPTION "One server." INDEX { sjbLogServerIndex } ::= { sjbLogServerTable 1 }
+SjbLogServerEntry ::= SEQUENCE { sjbLogServerIndex Integer32, sjbLogServerName DisplayString,
+    sjbLogServerConnected Integer32, sjbLogServerSent Counter64, sjbLogServerDropped Counter64,
+    sjbLogServerQueued Gauge32 }
+sjbLogServerIndex OBJECT-TYPE
+    SYNTAX Integer32 (1..2147483647) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Position." ::= { sjbLogServerEntry 1 }
+sjbLogServerName OBJECT-TYPE
+    SYNTAX DisplayString MAX-ACCESS read-only STATUS current
+    DESCRIPTION "The server's name." ::= { sjbLogServerEntry 2 }
+sjbLogServerConnected OBJECT-TYPE
+    SYNTAX Integer32 (0..1) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "1 when connected." ::= { sjbLogServerEntry 3 }
+sjbLogServerSent OBJECT-TYPE
+    SYNTAX Counter64 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Messages sent since ngfwd started." ::= { sjbLogServerEntry 4 }
+sjbLogServerDropped OBJECT-TYPE
+    SYNTAX Counter64 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Messages dropped (queue full)." ::= { sjbLogServerEntry 5 }
+sjbLogServerQueued OBJECT-TYPE
+    SYNTAX Gauge32 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Messages waiting." ::= { sjbLogServerEntry 6 }
+
+-- IPS matches by severity
+
+sjbThreatTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF SjbThreatEntry MAX-ACCESS not-accessible STATUS current
+    DESCRIPTION "IPS matches since ngfwd started, by severity."
+    ::= { sjbOS 14 }
+sjbThreatEntry OBJECT-TYPE
+    SYNTAX SjbThreatEntry MAX-ACCESS not-accessible STATUS current
+    DESCRIPTION "One severity." INDEX { sjbThreatIndex } ::= { sjbThreatTable 1 }
+SjbThreatEntry ::= SEQUENCE { sjbThreatIndex Integer32, sjbThreatSeverity DisplayString,
+    sjbThreatBlocked Counter64, sjbThreatAlerted Counter64 }
+sjbThreatIndex OBJECT-TYPE
+    SYNTAX Integer32 (1..4) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "1 critical, 2 major, 3 minor, 4 informational."
+    ::= { sjbThreatEntry 1 }
+sjbThreatSeverity OBJECT-TYPE
+    SYNTAX DisplayString MAX-ACCESS read-only STATUS current
+    DESCRIPTION "The severity." ::= { sjbThreatEntry 2 }
+sjbThreatBlocked OBJECT-TYPE
+    SYNTAX Counter64 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Matches blocked." ::= { sjbThreatEntry 3 }
+sjbThreatAlerted OBJECT-TYPE
+    SYNTAX Counter64 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Matches logged and let through." ::= { sjbThreatEntry 4 }
+
+-- Traps: SJB-OS sends DISMAN-EVENT-MIB mteTriggerFired notifications
+-- named sjbServiceDown (with sjbServiceName), sjbIpsEngineDown and
+-- sjbCommitFailed (with sjbLastCommitNote), plus IF-MIB linkUp/linkDown.
+
+sjbCompliance MODULE-COMPLIANCE
+    STATUS current
+    DESCRIPTION "SJB-OS agents implement every object."
+    MODULE MANDATORY-GROUPS { sjbGroup }
+    ::= { sjbConformance 1 }
+
+sjbGroup OBJECT-GROUP
+    OBJECTS { sjbVersion, sjbHostname, sjbSnapshotAge, sjbNgfwdUp, sjbUptime,
+        sjbRunningRevision, sjbUncommitted, sjbLastCommitOK, sjbRecovery, sjbLastCommitNote,
+        sjbSessionCount, sjbSessionMax,
+        sjbIpsState, sjbIpsUp, sjbIpsSignaturesLoaded, sjbIpsQueueDropped,
+        sjbIpsExceptionsActive, sjbIpsExceptionsInactive, sjbIpsFault,
+        sjbDecryptionState, sjbDecryptionUp, sjbDecryptionActive,
+        sjbAppIdEnabled, sjbAppIdUp,
+        sjbServiceIndex, sjbServiceName, sjbServiceUp, sjbServiceUsed, sjbServiceFault,
+        sjbRuleIndex, sjbRuleName, sjbRuleAction, sjbRulePackets, sjbRuleBytes,
+        sjbNatIndex, sjbNatName, sjbNatType, sjbNatHits, sjbNatOutHits, sjbNatHairpin,
+        sjbLogServerIndex, sjbLogServerName, sjbLogServerConnected, sjbLogServerSent,
+        sjbLogServerDropped, sjbLogServerQueued,
+        sjbThreatIndex, sjbThreatSeverity, sjbThreatBlocked, sjbThreatAlerted }
+    STATUS current
+    DESCRIPTION "Everything."
+    ::= { sjbConformance 2 }
+
+END

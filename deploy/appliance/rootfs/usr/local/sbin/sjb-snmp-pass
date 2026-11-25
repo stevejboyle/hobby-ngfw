@@ -1,0 +1,4 @@
+#!/bin/sh
+# snmpd's pass_persist helper for SJB-OS-MIB: reads the monitoring snapshot
+# ngfwd saves in /run/sjb-os (see internal/snmp).
+exec /usr/local/sbin/fwctl snmp-pass

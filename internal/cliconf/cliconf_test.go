@@ -336,6 +336,34 @@ func TestLogServerInConfigureMode(t *testing.T) {
 	}
 }
 
+func TestSNMPInConfigureMode(t *testing.T) {
+	m := lab(t)
+	run(t, m,
+		"set snmp enabled on",
+		"set snmp location rack-1",
+		"set snmp v3-users nms",
+		"set snmp v2c-communities lab-ro",
+		"set snmp managers 192.168.1.0/24",
+		"set snmp-trap-receiver graylog address 192.168.1.62 credential nms inform on",
+		"set snmp-trap-receiver old port 1162 address 192.168.1.63 credential lab-ro",
+	)
+	valid(t, m)
+	c, _ := m.Config()
+	if !c.SNMP.On() || c.SNMP.Location != "rack-1" || len(c.SNMP.V3Users) != 1 || len(c.SNMP.Managers) != 1 {
+		t.Fatalf("snmp: %+v", c.SNMP)
+	}
+	if len(c.SNMPTrapReceivers) != 2 || c.SNMPTrapReceivers[0].Inform != "on" || c.SNMPTrapReceivers[1].Port != 1162 {
+		t.Fatalf("receivers: %+v", c.SNMPTrapReceivers)
+	}
+	run(t, m, "delete snmp managers 192.168.1.0/24")
+	if c, _ := m.Config(); c.Validate() == nil {
+		t.Fatal("v2c without managers validated")
+	}
+	if err := m.Set(strings.Fields("set snmp enabled maybe")[1:]); err == nil {
+		t.Fatal("enabled maybe accepted")
+	}
+}
+
 func TestIPSExceptionInConfigureMode(t *testing.T) {
 	m := lab(t)
 	run(t, m,

@@ -36,6 +36,8 @@ var configFieldArea = map[string]Area{
 	"DecryptionProfiles":   Decryption,
 	"DecryptionExclusions": Decryption,
 	"LogServers":           Logging,
+	"SNMP":                 Logging,
+	"SNMPTrapReceivers":    Logging,
 }
 
 var systemFieldArea = map[string]Area{

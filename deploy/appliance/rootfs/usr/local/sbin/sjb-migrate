@@ -19,6 +19,8 @@ RBAC_VERSION=0.9.9-r09
 # First version with port forwarding and static NAT (public addresses that
 # ngfwd puts on interfaces, labelled <dev>:nat).
 NAT_VERSION=0.9.10-r01
+# First version with the SNMP agent (snmpd, in the management VRF).
+SNMP_VERSION=0.9.13-r01
 FAILLOCK="deny=5 unlock_time=900"
 log() { echo "sjb-migrate: $*"; }
 
@@ -203,6 +205,15 @@ undo() {
 		while read -r dev addr; do
 			ip -4 addr del "$addr" dev "$dev" 2>/dev/null && log "NAT public address $addr removed from $dev for $target"
 		done < <(ip -4 -o addr show 2>/dev/null | awk '{d = $2; sub(/@.*/, "", d); for (i = 5; i <= NF; i++) { t = $i; sub(/\\$/, "", t); if (t == d ":nat" || t == d ":n") print d, $4 } }')
+	fi
+	# Before the SNMP agent, nothing manages snmpd: stop it and remove the
+	# config ngfwd wrote (it holds credentials), so it can't start at boot
+	# outside the management VRF once our unit drop-in is gone.
+	if version_lt "$target" "$SNMP_VERSION" && { [[ -e /etc/snmp/snmpd.conf ]] || systemctl -q is-active snmpd 2>/dev/null; }; then
+		systemctl stop snmpd 2>/dev/null || true
+		rm -f /etc/snmp/snmpd.conf /run/sjb-os/metrics.json
+		sed -i '/^usmUser /d' /var/lib/snmp/snmpd.conf 2>/dev/null || true
+		log "SNMP agent stopped and its config removed for $target"
 	fi
 	# Before 0.9.9 sshd read root's key from $SHARE/root-keys: put it back.
 	if version_lt "$target" 0.9.9 && [[ -s $ROOT_KEYS && ! -e $SHARE/root-keys/authorized_keys ]]; then

@@ -113,6 +113,8 @@ type Daemon struct {
 	apiKeysFile string
 	apiKeys     atomic.Pointer[[]APIKey] // what the tag API accepts
 	version     string                   // SJB-OS version
+	metrics     metricsState             // monitoring (metrics.go)
+	snmp        snmpState                // the SNMP agent (snmp.go)
 }
 
 type pending struct {
@@ -448,6 +450,7 @@ func (d *Daemon) ReconcileRoutes() {
 	d.syncDHCPLocked(false)
 	d.syncIPSLocked()
 	d.syncDecryptLocked(false)
+	d.syncSNMPLocked()
 	if after := installedCount(d.routeStates); after != before {
 		d.log.Info("static routes", "installed", after, "configured", len(d.wantRoutes), "problems", warn)
 	}
@@ -525,7 +528,7 @@ func (d *Daemon) Start() error {
 	// Log forwarding after the flush: a connection to a log server made
 	// before it would lose its conntrack entry, and the input chain drops
 	// the server's packets of a connection it doesn't know.
-	for _, w := range append(warns, d.syncLogFwdLocked()...) {
+	for _, w := range append(append(warns, d.syncLogFwdLocked()...), d.syncSNMPLocked()...) {
 		d.log.Warn(w)
 	}
 	d.log.Info("ruleset applied at start", "revision", n, "warnings", len(res.Warnings))
@@ -691,7 +694,20 @@ func (d *Daemon) Commit(author, message string, confirm time.Duration) (*CommitR
 	if len(strings.TrimSpace(string(cand))) == 0 {
 		return nil, fmt.Errorf("%w: candidate config is empty", ErrInvalid)
 	}
-	return d.commitLocked(cand, author, message, confirm)
+	res, err := d.commitLocked(cand, author, message, confirm)
+	d.noteCommit(err)
+	return res, err
+}
+
+// noteCommit records a commit's outcome for monitoring. A config refused
+// as invalid changed nothing, so it isn't a failed commit.
+func (d *Daemon) noteCommit(err error) {
+	switch {
+	case err == nil:
+		d.recordCommit(true, "")
+	case !errors.Is(err, ErrInvalid):
+		d.recordCommit(false, err.Error())
+	}
 }
 
 func (d *Daemon) commitLocked(data []byte, author, message string, confirm time.Duration) (*CommitResult, error) {
@@ -710,6 +726,9 @@ func (d *Daemon) commitLocked(data []byte, author, message string, confirm time.
 		}
 	}
 	if err := d.checkDHCP(cfg); err != nil {
+		return nil, err
+	}
+	if err := d.checkSNMP(cfg); err != nil {
 		return nil, err
 	}
 	if err := d.nft.Check(res.Ruleset); err != nil {
@@ -803,6 +822,7 @@ func (d *Daemon) commitLocked(data []byte, author, message string, confirm time.
 	routeWarnings = append(routeWarnings, d.syncIPSLocked()...)
 	routeWarnings = append(routeWarnings, d.syncDecryptLocked(true)...)
 	routeWarnings = append(routeWarnings, d.syncLogFwdLocked()...)
+	routeWarnings = append(routeWarnings, d.syncSNMPLocked()...)
 
 	out := &CommitResult{Revision: rev, Warnings: append(append(res.Warnings, warnings...), routeWarnings...)}
 	if confirm > 0 {
@@ -815,6 +835,7 @@ func (d *Daemon) commitLocked(data []byte, author, message string, confirm time.
 // setRunningLocked makes cfg the running config.
 func (d *Daemon) setRunningLocked(cfg *config.Config) {
 	d.running = cfg
+	d.metrics.running.Store(cfg)
 	var names []string
 	for _, i := range cfg.Interfaces {
 		if i.Zone != "" {
@@ -922,6 +943,12 @@ func (d *Daemon) rollbackUnconfirmedLocked(p *pending, msg string) {
 			_, err = d.commitLocked(data, "system", fmt.Sprintf("%s; restored %d", msg, p.prev), 0)
 		}
 	}
+	// An unconfirmed commit rolled back is a failed change either way.
+	if err != nil {
+		d.recordCommit(false, fmt.Sprintf("%s; the rollback failed: %v", msg, err))
+	} else {
+		d.recordCommit(false, msg)
+	}
 	if err != nil {
 		d.recovery = fmt.Sprintf("%s, but the rollback failed (%v): revision %d is still in force; retrying every minute", msg, err, p.rev)
 		d.log.Error("auto-rollback failed", "revision", p.rev, "err", err)
@@ -976,6 +1003,7 @@ func (d *Daemon) rollbackToNothingLocked() error {
 	d.syncIPSLocked()
 	d.syncDecryptLocked(true)
 	d.syncLogFwdLocked()
+	d.syncSNMPLocked()
 	return nil
 }
 
@@ -987,7 +1015,9 @@ func (d *Daemon) Rollback(n int, author string) (*CommitResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
-	return d.commitLocked(data, author, fmt.Sprintf("rollback to %d", n), 0)
+	res, err := d.commitLocked(data, author, fmt.Sprintf("rollback to %d", n), 0)
+	d.noteCommit(err)
+	return res, err
 }
 
 // RegisterTags adds ip to each tag, and to the matching nft sets at once.

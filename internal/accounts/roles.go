@@ -63,7 +63,7 @@ var Areas = []AreaInfo{
 	{Decryption, "Decryption", "decryption rules, profiles and exclusions; the learned list", false},
 	{DecryptionCA, "Decryption CA", "the decryption CA: generate or import", false},
 	{Certificates, "Management certificate", "the web UI and tag API certificate: import, or back to self-signed", false},
-	{Logging, "Log forwarding", "syslog servers (a SIEM) the logs are forwarded to", false},
+	{Logging, "Log forwarding and SNMP", "syslog servers (a SIEM) the logs are forwarded to; the SNMP agent and its trap receivers", false},
 	{Tags, "Tags", "tag registrations (tag API key values: superusers only)", false},
 	{Monitoring, "Monitoring", "logs, statistics, applications, ARP, routing status, ping", true},
 	{Revisions, "Revisions", "commit history; change: confirm a commit, roll back", false},

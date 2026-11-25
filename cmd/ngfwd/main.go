@@ -32,6 +32,7 @@ import (
 	"github.com/stevejboyle/sjb-os/internal/ips"
 	"github.com/stevejboyle/sjb-os/internal/logfwd"
 	"github.com/stevejboyle/sjb-os/internal/logs"
+	"github.com/stevejboyle/sjb-os/internal/metrics"
 	"github.com/stevejboyle/sjb-os/internal/mgmtcert"
 	"github.com/stevejboyle/sjb-os/internal/natips"
 	"github.com/stevejboyle/sjb-os/internal/netdev"
@@ -40,6 +41,7 @@ import (
 	"github.com/stevejboyle/sjb-os/internal/routes"
 	"github.com/stevejboyle/sjb-os/internal/stats"
 	"github.com/stevejboyle/sjb-os/internal/store"
+	"github.com/stevejboyle/sjb-os/internal/snmp"
 	"github.com/stevejboyle/sjb-os/internal/sysname"
 	"github.com/stevejboyle/sjb-os/internal/tags"
 	"github.com/stevejboyle/sjb-os/internal/upgrade"
@@ -66,6 +68,8 @@ func main() {
 	flag.StringVar(&tlsdPath, "tlsd", "/usr/local/sbin/tlsd", "tlsd, the TLS decryption daemon (empty: no decryption, for development)")
 	flag.StringVar(&ipsDir, "ips-dir", "/var/lib/sjb-os/ips", "IPS signature directory (empty: no IPS, for development)")
 	flag.StringVar(&keaPath, "kea", "/usr/sbin/kea-dhcp4", "path to kea-dhcp4, the DHCP server (empty: don't manage DHCP, for development)")
+	flag.StringVar(&snmpdPath, "snmpd", "/usr/sbin/snmpd", "path to snmpd, the SNMP agent (empty: don't manage SNMP, for development)")
+	flag.StringVar(&snmpCreds, "snmp-credentials", snmp.CredentialsPath, "SNMP credentials file (v3 users, v2c communities)")
 	flag.StringVar(&ipPath, "ip", "ip", "path to the ip binary for static routes (empty: don't manage routes, for development)")
 	flag.StringVar(&hostnameDir, "hostname-dir", "", "apply system.hostname to the system: the hostname and hosts files in this directory, and the live hostname (the appliance passes /etc; empty: leave the hostname alone)")
 	bootstrap := flag.String("bootstrap", "", "config file to commit as revision 1 if nothing has been committed yet")
@@ -128,6 +132,18 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 	}
 	if keaPath != "" {
 		d.SetDHCP(dhcp.Exec{Binary: keaPath})
+	}
+	if snmpdPath != "" {
+		d.SetSNMP(snmp.Exec{Binary: snmpdPath}, snmpCreds)
+		// The SNMP agent's SJB-OS-MIB reads a snapshot saved every 15 s
+		// while SNMP is on.
+		go func() {
+			for range time.Tick(15 * time.Second) {
+				if err := d.SaveMetricsSnapshot(metrics.SnapshotPath); err != nil {
+					log.Warn("monitoring snapshot", "err", err)
+				}
+			}
+		}()
 	}
 	// Dashboard statistics: a sample a minute, kept a week.
 	if st, err := stats.Open(filepath.Join(stateDir, "stats", "samples.jsonl"), nil); err != nil {
@@ -366,6 +382,9 @@ var frrDir, vtyshPath string
 
 // keaPath is the DHCP server binary ("" = DHCP not managed).
 var keaPath string
+
+// snmpdPath is snmpd (set by -snmpd); snmpCreds its credentials file.
+var snmpdPath, snmpCreds string
 
 // ipsDir holds the IPS signatures; empty: no IPS (development).
 var ipsDir string

@@ -43,6 +43,10 @@ type Config struct {
 
 	// LogServers are syslog servers (a SIEM) the logs are forwarded to.
 	LogServers []LogServer `yaml:"log_servers,omitempty" json:"log_servers"`
+
+	// SNMP agent (read-only) and where it sends traps.
+	SNMP              SNMP               `yaml:"snmp,omitempty" json:"snmp"`
+	SNMPTrapReceivers []SNMPTrapReceiver `yaml:"snmp_trap_receivers,omitempty" json:"snmp_trap_receivers"`
 }
 
 // Routing turns on BGP and/or OSPF in one VRF. Name is the VRF.

@@ -434,6 +434,7 @@ func (c *Config) Validate() error {
 	v.ipsExceptions(c, addrs)
 	v.decryption(c, zones, addrs)
 	v.logServers(c)
+	v.snmp(c)
 
 	return errors.Join(v.errs...)
 }

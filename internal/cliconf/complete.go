@@ -77,7 +77,9 @@ var showWhat = []Candidate{
 	{"decryption", "TLS decryption: state, CA (show decryption ca), learned servers"},
 	{"statistics", "traffic, applications, hosts and threats over 1h, 24h or 7d"},
 	{"management-certificate", "the web UI and tag API certificate"},
-	{"api-keys", "tag API keys"},
+	{"api-keys", "API keys for the tag API and Prometheus (superusers)"},
+	{"metrics", "the Prometheus metrics (what a scrape of /metrics gets)"},
+	{"snmp", "the SNMP agent: state, polling, trap receivers"},
 	{"log", "traffic (data plane), threat (IPS) or system (management) log"},
 	{"whoami", "your user name, role and what it allows"},
 	{"ssh-keys", "your SSH keys"},
@@ -158,7 +160,27 @@ func OperationalCandidates(words []string) []Candidate {
 	case words[0] == "show" && len(words) == 2 && words[1] == "statistics":
 		return []Candidate{{"1h", "the last hour (default)"}, {"24h", "the last day"}, {"7d", "the last week"}}
 	case words[0] == "request" && len(words) == 1:
-		return []Candidate{{"ips", "the IPS"}, {"decryption", "TLS decryption"}, {"management-certificate", "the web UI and tag API certificate"}, {"user", "add, change or delete users (superusers)"}, {"role", "add, change or delete custom roles (superusers)"}}
+		return []Candidate{{"ips", "the IPS"}, {"decryption", "TLS decryption"}, {"management-certificate", "the web UI and tag API certificate"}, {"user", "add, change or delete users (superusers)"}, {"role", "add, change or delete custom roles (superusers)"}, {"snmp", "SNMP credentials (superusers)"}, {"api-key", "add or delete API keys (superusers)"}}
+	case words[0] == "request" && len(words) == 2 && words[1] == "snmp":
+		return []Candidate{{"credential", "v3 users and v2c communities"}}
+	case words[0] == "request" && len(words) == 3 && words[1] == "snmp" && words[2] == "credential":
+		return []Candidate{{"add", "add NAME v3|v2c ... (asks for the secrets)"}, {"change", "change NAME v3|v2c ...: new secrets"}, {"delete", "delete NAME"}}
+	case words[0] == "request" && len(words) == 4 && words[1] == "snmp":
+		return []Candidate{{"<name>", "credential name"}}
+	case words[0] == "request" && len(words) == 5 && words[1] == "snmp" && (words[3] == "add" || words[3] == "change"):
+		return []Candidate{{"v3", "an SNMPv3 user: authenticated and encrypted"}, {"v2c", "a v2c community (clear text; managers only)"}}
+	case words[0] == "request" && len(words) >= 6 && words[1] == "snmp" && words[5] == "v3" && len(words)%2 == 0:
+		return []Candidate{{"auth", "sha256 (default) or sha512"}, {"priv", "aes (default) or aes256"}}
+	case words[0] == "request" && len(words) >= 7 && words[1] == "snmp" && words[len(words)-1] == "auth":
+		return []Candidate{{"sha256", ""}, {"sha512", ""}}
+	case words[0] == "request" && len(words) >= 7 && words[1] == "snmp" && words[len(words)-1] == "priv":
+		return []Candidate{{"aes", ""}, {"aes256", ""}}
+	case words[0] == "request" && len(words) == 2 && words[1] == "api-key":
+		return []Candidate{{"add", "add NAME scopes metrics:read|tags:read|tags:write"}, {"delete", "delete NAME"}}
+	case words[0] == "request" && len(words) == 4 && words[1] == "api-key" && words[2] == "add":
+		return []Candidate{{"scopes", "what the key may do"}}
+	case words[0] == "request" && len(words) == 5 && words[1] == "api-key" && words[4] == "scopes":
+		return []Candidate{{"metrics:read", "Prometheus: GET /metrics"}, {"tags:read", "read tag registrations"}, {"tags:write", "register and unregister tags"}}
 	case words[0] == "request" && len(words) == 2 && words[1] == "user":
 		return []Candidate{{"add", "add NAME role ROLE (asks for the password)"}, {"set", "set NAME role ROLE | disabled yes|no"}, {"password", "password NAME: set someone's password"},
 			{"unlock", "unlock NAME after failed logins"}, {"delete", "delete NAME"}, {"ssh-key", "ssh-key add|delete NAME ..."}}

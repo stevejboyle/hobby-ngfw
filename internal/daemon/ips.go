@@ -545,6 +545,7 @@ func (d *Daemon) IPSAlert(a ips.Alert) {
 		emit = func(s string) { fmt.Println(s) }
 	}
 	emit(t.Line())
+	d.countIPSMatch(t.Severity, t.Action)
 	if d.stats != nil {
 		d.stats.AddThreat(t.Severity, t.Action, t.SID, t.Signature, t.Src)
 	}

@@ -10,17 +10,23 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/stevejboyle/sjb-os/internal/metrics"
 	"github.com/stevejboyle/sjb-os/internal/tags"
 )
 
 // Scopes an API key can hold.
 const (
-	ScopeTagsRead  = "tags:read"
-	ScopeTagsWrite = "tags:write"
+	ScopeTagsRead    = "tags:read"
+	ScopeTagsWrite   = "tags:write"
+	ScopeMetricsRead = "metrics:read" // GET /metrics (Prometheus)
 )
+
+// Scopes are every scope a key may hold.
+var Scopes = []string{ScopeTagsRead, ScopeTagsWrite, ScopeMetricsRead}
 
 // APIKey is one credential for the network-facing API.
 type APIKey struct {
@@ -60,7 +66,7 @@ func ParseKeys(r io.Reader, name string) ([]APIKey, error) {
 		}
 		k := APIKey{Name: fields[0], Key: fields[2], Scopes: map[string]bool{}}
 		for _, s := range strings.Split(fields[1], ",") {
-			if s != ScopeTagsRead && s != ScopeTagsWrite {
+			if !slices.Contains(Scopes, s) {
 				return nil, fmt.Errorf("%s:%d: unknown scope %q", name, line, s)
 			}
 			k.Scopes[s] = true
@@ -115,12 +121,19 @@ func (d *Daemon) APIHandler(keys []APIKey) http.Handler {
 				http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 				return
 			}
-			d.log.Info("api call", "key", k.Name, "method", r.Method, "path", r.URL.Path)
+			// Scrapes come every few seconds: don't log each.
+			if scope != ScopeMetricsRead {
+				d.log.Info("api call", "key", k.Name, "method", r.Method, "path", r.URL.Path)
+			}
 			h(w, r)
 		}
 	}
 	d.tagRoutes(mux, "/api/v1/tags", wrap)
-	mux.HandleFunc("/api/", d.xmlUserID(keys))
+	mux.HandleFunc("GET /metrics", wrap(ScopeMetricsRead, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		metrics.WritePrometheus(w, d.Metrics())
+	}))
+	mux.HandleFunc("/api/", d.xmlUserID())
 	return brandHeader(mux)
 }
 
@@ -148,7 +161,7 @@ type uidMember struct {
 	Name    string `xml:",chardata"`
 }
 
-func (d *Daemon) xmlUserID(keys []APIKey) http.HandlerFunc {
+func (d *Daemon) xmlUserID() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")
 		if err := r.ParseForm(); err != nil {
@@ -159,7 +172,7 @@ func (d *Daemon) xmlUserID(keys []APIKey) http.HandlerFunc {
 		if presented == "" {
 			presented = r.Form.Get("key")
 		}
-		k := findKey(keys, presented)
+		k := findKey(d.currentAPIKeys(), presented)
 		if k == nil {
 			xmlError(w, http.StatusForbidden, "Invalid credentials.")
 			return

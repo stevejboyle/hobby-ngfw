@@ -71,7 +71,13 @@ const shellHelp = `SJB-OS commands:
   show management-certificate [pem]
                               the web UI and tag API certificate: subject,
                               names, expiry, fingerprint (pem: and the PEM)
-  show api-keys               tag API keys (name, scopes, key)
+  show api-keys               API keys for the tag API and Prometheus (name,
+                              scopes, key)
+  show metrics [TEXT]         the Prometheus metrics (what a scraper of
+                              https://<mgmt>:8443/metrics gets); with TEXT,
+                              only the lines containing it
+  show snmp                   the SNMP agent: state, who may poll, trap
+                              receivers, credentials (names only)
   show log traffic [N] [TEXT] data-plane log: connections matching rules with
                               logging on (newest first; default 50)
                               add columns LIST to choose what to show, e.g.
@@ -124,6 +130,19 @@ const shellHelp = `SJB-OS commands:
                               back to a new self-signed certificate
   request log-forwarding test NAME
                               send a test message to a log server
+  request snmp credential add NAME v3 [auth sha256|sha512] [priv aes|aes256]
+                              an SNMPv3 user (asks for its passphrases;
+                              superusers); default SHA-256 and AES
+  request snmp credential add NAME v2c
+                              a v2c community (asks for it; superusers)
+  request snmp credential change NAME ...
+                              new secrets for a credential, used at once
+  request snmp credential delete NAME
+  request api-key add NAME scopes SCOPE[,SCOPE]
+                              a key for the tag API or Prometheus
+                              (metrics:read, tags:read, tags:write;
+                              superusers); shows the key
+  request api-key delete NAME
   request backup export [accounts]
                               print a backup of the running config to copy
                               into a file; with accounts, also users, roles
@@ -486,6 +505,12 @@ func runShellLine(line string, in io.Reader) error {
 		if len(rest) > 0 && rest[0] == "management-certificate" {
 			return requestMgmtCert(rest[1:], in)
 		}
+		if len(rest) > 0 && rest[0] == "snmp" {
+			return requestSNMP(rest[1:], in)
+		}
+		if len(rest) > 0 && rest[0] == "api-key" {
+			return requestAPIKey(rest[1:])
+		}
 		if len(rest) == 3 && rest[0] == "log-forwarding" && rest[1] == "test" {
 			return requestLogForwardingTest(rest[2])
 		}
@@ -499,7 +524,7 @@ func runShellLine(line string, in io.Reader) error {
 		case "decryption learned clear":
 			return requestDecryptionLearnedClear()
 		}
-		return fmt.Errorf("request ips update | decryption ca generate | decryption ca import | decryption learned clear | management-certificate import|self-signed | log-forwarding test NAME | backup ... | user ... | role ...")
+		return fmt.Errorf("request ips update | decryption ca generate | decryption ca import | decryption learned clear | management-certificate import|self-signed | log-forwarding test NAME | snmp credential ... | api-key add|delete ... | backup ... | user ... | role ...")
 	case "ping":
 		return pingCmd(rest)
 	case "passwd":
@@ -541,6 +566,10 @@ func showCmd(args []string) error {
 		return showLog(rest)
 	case what == "log-forwarding" && len(rest) == 0:
 		return showLogForwarding()
+	case what == "snmp" && len(rest) == 0:
+		return showSNMP()
+	case what == "metrics" && len(rest) <= 1:
+		return showMetrics(strings.Join(rest, ""))
 	case what == "whoami" && len(rest) == 0:
 		return showWhoami()
 	case what == "ssh-keys" && len(rest) == 0:

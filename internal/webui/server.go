@@ -28,6 +28,7 @@ import (
 	"github.com/stevejboyle/sjb-os/internal/daemon"
 	"github.com/stevejboyle/sjb-os/internal/logs"
 	"github.com/stevejboyle/sjb-os/internal/netdev"
+	"github.com/stevejboyle/sjb-os/internal/snmp"
 	"github.com/stevejboyle/sjb-os/internal/nicaddr"
 	"github.com/stevejboyle/sjb-os/internal/upgrade"
 )
@@ -186,6 +187,72 @@ func New(d *daemon.Daemon, o Options) http.Handler {
 			return
 		}
 		reply(w, map[string]bool{"sent": true}, nil)
+	}))
+	mux.HandleFunc("GET /ui/api/snmp", s.auth(accounts.NeedView(accounts.Logging), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+		reply(w, s.d.SNMP(), nil)
+	}))
+	mux.HandleFunc("POST /ui/api/snmp/credentials", s.auth(accounts.SuperuserOnly, func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+		var req struct {
+			snmp.Credential
+			Replace bool `json:"replace"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		if err := s.d.AddSNMPCredential(ss.caller(), req.Credential, req.Replace); err != nil {
+			daemonFail(w, err)
+			return
+		}
+		reply(w, map[string]bool{"saved": true}, nil)
+	}))
+	mux.HandleFunc("POST /ui/api/snmp/credentials/delete", s.auth(accounts.SuperuserOnly, func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		if err := s.d.DeleteSNMPCredential(ss.caller(), req.Name); err != nil {
+			daemonFail(w, err)
+			return
+		}
+		reply(w, map[string]bool{"deleted": true}, nil)
+	}))
+	mux.HandleFunc("GET /ui/api/api-keys", s.auth(accounts.SuperuserOnly, func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+		v, err := s.d.ListAPIKeys(ss.caller())
+		if err != nil {
+			daemonFail(w, err)
+			return
+		}
+		reply(w, v, nil)
+	}))
+	mux.HandleFunc("POST /ui/api/api-keys", s.auth(accounts.SuperuserOnly, func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+		var req struct {
+			Name   string   `json:"name"`
+			Scopes []string `json:"scopes"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		k, err := s.d.AddAPIKey(ss.caller(), req.Name, req.Scopes)
+		if err != nil {
+			daemonFail(w, err)
+			return
+		}
+		reply(w, map[string]any{"name": k.Name, "key": k.Key}, nil)
+	}))
+	mux.HandleFunc("POST /ui/api/api-keys/delete", s.auth(accounts.SuperuserOnly, func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		if err := s.d.DeleteAPIKey(ss.caller(), req.Name); err != nil {
+			daemonFail(w, err)
+			return
+		}
+		reply(w, map[string]bool{"deleted": true}, nil)
 	}))
 	mux.HandleFunc("GET /ui/api/decryption", s.auth(accounts.NeedView(accounts.Decryption), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
 		reply(w, s.d.Decryption(), nil)

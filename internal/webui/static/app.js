@@ -18,13 +18,13 @@ const areaOfKey = {
   zones: "policy", addresses: "policy", address_groups: "policy", services: "policy", rules: "policy", application_groups: "policy", nat: "policy",
   interfaces: "network", routes: "network", vrfs: "network", routing: "network", bgp_neighbors: "network", ospf_interfaces: "network", prefix_lists: "network",
   dhcp_servers: "dhcp", dhcp_reservations: "dhcp", ips_profiles: "ips", ips_exceptions: "ips", decryption_rules: "decryption", decryption_profiles: "decryption", decryption_exclusions: "decryption",
-  log_servers: "logging",
+  log_servers: "logging", snmp: "logging", snmp_trap_receivers: "logging",
 };
 // Pages by what they need to be seen.
 const pageNeeds = {
   policy: () => can("policy"), nat: () => can("policy"), objects: () => can("policy"), network: () => can("network"), routing: () => can("network"),
   dhcp: () => can("dhcp"), apps: () => can("monitoring"), ips: () => can("ips"), decryption: () => can("decryption"), tags: () => can("tags"),
-  revisions: () => can("revisions"), logs: () => can("monitoring"), logforwarding: () => can("logging"), backup: () => !!(state.me && state.me.config_view), certificate: () => can("certificates"), users: isSuper, roles: isSuper,
+  revisions: () => can("revisions"), logs: () => can("monitoring"), logforwarding: () => can("logging"), monitoring: () => can("logging") || isSuper(), backup: () => !!(state.me && state.me.config_view), certificate: () => can("certificates"), users: isSuper, roles: isSuper,
 };
 function applyNav() {
   for (const a of document.querySelectorAll("#nav a, .who a")) {
@@ -192,7 +192,7 @@ async function refresh() {
 function normalise(c) {
   c = c || {};
   c.system = c.system || { hostname: "", mgmt_interface: "" };
-  for (const k of ["zones", "interfaces", "addresses", "address_groups", "services", "rules", "nat", "routes", "vrfs", "routing", "bgp_neighbors", "ospf_interfaces", "prefix_lists", "dhcp_servers", "dhcp_reservations", "application_groups", "ips_profiles", "ips_exceptions", "decryption_rules", "decryption_profiles", "decryption_exclusions", "log_servers"]) c[k] = c[k] || [];
+  for (const k of ["zones", "interfaces", "addresses", "address_groups", "services", "rules", "nat", "routes", "vrfs", "routing", "bgp_neighbors", "ospf_interfaces", "prefix_lists", "dhcp_servers", "dhcp_reservations", "application_groups", "ips_profiles", "ips_exceptions", "decryption_rules", "decryption_profiles", "decryption_exclusions", "log_servers", "snmp_trap_receivers"]) c[k] = c[k] || [];
   c.system.ips_disabled_signatures = c.system.ips_disabled_signatures || [];
   return c;
 }
@@ -1935,6 +1935,130 @@ async function pageLogForwarding() {
     h("p", { class: "muted small" }, "Each server has a queue of 10,000 messages; when it is full (the server is down for long), the oldest are dropped and counted. Forwarding starts from the moment a server is first committed; ngfwd resumes where it left off after a restart."));
 }
 
+// ---- monitoring: Prometheus and SNMP ------------------------------------------
+const snmpReceiverSpec = (creds) => ({
+  key: "snmp_trap_receivers", title: "SNMP trap receivers", singular: "trap receiver",
+  note: "Managers that get traps: link up/down, a service down, the IPS engine down, a commit failed. Over the management network.",
+  blank: () => ({ name: "", address: "", port: 0, credential: "", inform: "" }),
+  columns: [
+    ["Name", (r) => h("strong", {}, r.name)],
+    ["Receiver", (r) => h("span", { class: "mono" }, `${r.address}:${r.port || 162}`)],
+    ["Credential", (r) => r.credential],
+    ["Sends", (r) => (r.inform === "on" ? "v3 informs" : "traps")],
+  ],
+  form: (r) => {
+    const names = creds.map((c) => ({ value: c.name, label: `${c.name} (${c.kind})` }));
+    const f = {
+      name: textField("Name", r.name, { required: true, placeholder: "graylog" }),
+      address: textField("Address", r.address, { required: true, placeholder: "192.168.1.62", hint: "IPv4, on the management network" }),
+      port: textField("Port", r.port ? String(r.port) : "", { placeholder: "162" }),
+      credential: selectField("Credential", r.credential, names.length ? names : [{ value: r.credential || "", label: "no credentials yet (a superuser adds them below)" }]),
+      inform: selectField("Send", r.inform || "", [{ value: "", label: "Traps" }, { value: "on", label: "Informs: acknowledged and retried (v3 only)" }]),
+    };
+    return form(Object.values(f), () => ({ name: f.name.get(), address: f.address.get(), port: parseInt(f.port.get(), 10) || 0, credential: f.credential.get(), inform: f.inform.get() }));
+  },
+});
+
+async function pageMonitoring() {
+  const st = await api("GET", "snmp").catch(() => null);
+  const keys = isSuper() ? await api("GET", "api-keys").catch(() => []) : null;
+  const creds = (st && st.credentials) || [];
+  const ro = !can("logging", "change");
+  const sn = state.cand.snmp || {};
+
+  // Prometheus.
+  const host = location.hostname;
+  const scrape = `scrape_configs:\n  - job_name: sjb-os\n    scheme: https\n    tls_config: {insecure_skip_verify: true}   # or ca_file: your CA\n    authorization: {type: Bearer, credentials: <a metrics:read key>}\n    static_configs:\n      - targets: ["${host}:8443"]`;
+  const copy = h("button", { onclick: async () => {
+    try { await navigator.clipboard.writeText(scrape); toast("Scrape config copied."); } catch { toast("Copy failed: select the text instead."); }
+  } }, "Copy");
+  const addKey = () => {
+    const name = textField("Name", "", { required: true, placeholder: "prometheus" });
+    const scopes = multiField("Scopes", ["metrics:read"], ["metrics:read", "tags:read", "tags:write"], { noAny: true, hint: "metrics:read for Prometheus; tags:* for the tag API" });
+    modal("New API key", form([name, scopes], null).node, { onSubmit: async () => {
+      const k = await api("POST", "api-keys", { name: name.get(), scopes: scopes.get() });
+      setTimeout(() => modal(`API key ${k.name}`, h("div", {},
+        h("p", {}, "In use now. Copy it into your scraper or integration; superusers can see it again with show api-keys in the CLI."),
+        h("pre", { class: "block mono" }, k.key)), { submit: null }), 0);
+      route();
+    } });
+  };
+  const delKey = (n) => confirmDialog(`Delete API key ${n}?`, "Requests with it are refused at once.", async () => { await api("POST", "api-keys/delete", { name: n }); route(); }, "Delete");
+  const prom = h("section", { class: "panel" },
+    h("div", { class: "page-head" }, h("h2", {}, "Prometheus"), h("span", { class: "spacer" }), copy),
+    h("p", { class: "muted small" }, "Metrics (sjbos_*) for interfaces, sessions, rules, NAT, the IPS, App Identification, decryption, log forwarding, tags and system health, at https://", host, ":8443/metrics with an API key that has the metrics:read scope. Reachable from the management network only."),
+    h("pre", { class: "block mono" }, scrape),
+    keys ? [
+      h("div", { class: "page-head" }, h("h3", {}, "API keys"), h("span", { class: "spacer" }), h("button", { class: "primary", onclick: addKey }, "Add API key")),
+      keys.length ? h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, h("th", {}, "Name"), h("th", {}, "Scopes"), h("th", {}, h("span", { class: "hidden" }, "Actions")))),
+        h("tbody", {}, keys.map((k) => h("tr", {}, h("td", {}, h("strong", {}, k.name)), h("td", {}, chips(k.scopes)),
+          h("td", { class: "actions" }, h("button", { class: "link danger", onclick: () => delKey(k.name) }, "Delete")))))))
+        : h("p", { class: "empty" }, "No API keys."),
+    ] : h("p", { class: "muted small" }, "API keys are managed by superusers."));
+
+  // SNMP agent settings (in the candidate).
+  const v3 = creds.filter((c) => c.kind === "v3").map((c) => c.name);
+  const v2c = creds.filter((c) => c.kind === "v2c").map((c) => c.name);
+  const f = {
+    enabled: selectField("Agent", sn.enabled === "on" ? "on" : "", [{ value: "", label: "Off" }, { value: "on", label: "On" }]),
+    location: textField("Location (sysLocation)", sn.location),
+    contact: textField("Contact (sysContact)", sn.contact),
+    v3: multiField("v3 users that may poll", sn.v3_users, [...new Set([...v3, ...(sn.v3_users || [])])], { noAny: true, hint: v3.length ? "Authenticated and encrypted" : "No v3 credentials yet" }),
+    v2c: multiField("v2c communities that may poll", sn.v2c_communities, [...new Set([...v2c, ...(sn.v2c_communities || [])])], { noAny: true, hint: "Clear text: from the managers only" }),
+    managers: listField("v2c managers", sn.managers, "192.168.1.0/24, 10.0.0.5"),
+  };
+  const save = h("button", { class: "primary", disabled: ro, onclick: async () => {
+    const cfg = clone(state.cand);
+    cfg.snmp = { enabled: f.enabled.get(), location: f.location.get(), contact: f.contact.get(), v3_users: f.v3.get(), v2c_communities: f.v2c.get(), managers: f.managers.get() };
+    try { await saveCandidate(cfg, "SNMP settings saved to the candidate."); } catch (e) { toast(e.message); }
+  } }, "Save");
+  let live = "off";
+  if (st && st.enabled) live = st.running ? "running" : st.installed ? "not running" : "on, but snmpd isn't installed yet";
+  const agent = h("section", { class: "panel" },
+    h("div", { class: "page-head" }, h("h2", {}, "SNMP agent"), h("span", { class: "spacer" }),
+      h("span", { class: st && st.enabled && st.running ? "action-allow" : st && st.enabled ? "action-deny" : "muted" }, live)),
+    st && st.error ? h("p", { class: "action-deny small" }, st.error) : null,
+    h("p", { class: "muted small" }, "Read-only SNMP (v3, and v2c from listed managers) on the management network: the standard MIBs (interfaces, host resources) and SJB-OS-MIB under ", h("span", { class: "mono" }, (st && st.mib_base) || ""), " (the MIB file is /usr/share/sjb-os/mibs/SJB-OS-MIB.txt). Settings take effect at commit."),
+    h("div", { class: "grid2" }, Object.values(f).map((x) => x.node)), h("div", { class: "row" }, save));
+
+  // Credentials (superusers).
+  const credForm = (c, replace) => {
+    const name = textField("Name", c ? c.name : "", { required: true, placeholder: "nms" });
+    const kind = selectField("Kind", c ? c.kind : "v3", [{ value: "v3", label: "v3 user" }, { value: "v2c", label: "v2c community" }]);
+    const auth = selectField("Authentication", c && c.auth ? c.auth : "SHA-256", ["SHA-256", "SHA-512"]);
+    const priv = selectField("Privacy", c && c.priv ? c.priv : "AES", ["AES", "AES-256"]);
+    const secret = (label) => { const i = h("input", { type: "password", autocomplete: "new-password", minlength: 8 }); return { node: h("label", {}, label, i), get: () => i.value }; };
+    const ap = secret("Authentication passphrase (8+)"), pp = secret("Privacy passphrase (8+, different)"), cm = secret("Community (8+)");
+    const v3Only = [auth, priv, ap, pp], v2Only = [cm];
+    const sync = () => { const is3 = kind.get() === "v3"; v3Only.forEach((x) => x.node.classList.toggle("hidden", !is3)); v2Only.forEach((x) => x.node.classList.toggle("hidden", is3)); };
+    kind.node.querySelector("select").addEventListener("change", sync);
+    if (replace) { name.node.querySelector("input").readOnly = true; }
+    sync();
+    modal(replace ? `New secrets for ${c.name}` : "New SNMP credential", form([name, kind, auth, priv, ap, pp, cm], null).node, { onSubmit: async () => {
+      const is3 = kind.get() === "v3";
+      await api("POST", "snmp/credentials", is3 ? { name: name.get(), kind: "v3", auth: auth.get(), priv: priv.get(), auth_pass: ap.get(), priv_pass: pp.get(), replace }
+        : { name: name.get(), kind: "v2c", community: cm.get(), replace });
+      toast(replace ? "Credential changed; in use now." : "Credential added. Name it in the SNMP settings or a trap receiver, then commit.");
+      route();
+    } });
+  };
+  const delCred = (n) => confirmDialog(`Delete SNMP credential ${n}?`, "Only a credential the config doesn't name can be deleted.", async () => { await api("POST", "snmp/credentials/delete", { name: n }); route(); }, "Delete");
+  const credPanel = h("section", { class: "panel" },
+    h("div", { class: "page-head" }, h("h2", {}, "SNMP credentials"), h("span", { class: "muted small" }, "Kept outside the config, readable by root only; backups with accounts carry them, encrypted."),
+      h("span", { class: "spacer" }), isSuper() ? h("button", { class: "primary", onclick: () => credForm(null, false) }, "Add credential") : null),
+    creds.length ? h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ["Name", "Kind", "Authentication", "Privacy", ""].map((t) => h("th", {}, t)))),
+      h("tbody", {}, creds.map((c) => h("tr", {}, h("td", {}, h("strong", {}, c.name)), h("td", {}, c.kind), h("td", {}, c.auth || "—"), h("td", {}, c.priv || "—"),
+        h("td", { class: "actions" }, isSuper() ? [h("button", { class: "link", onclick: () => credForm(c, true) }, "Change secrets"), h("button", { class: "link danger", onclick: () => delCred(c.name) }, "Delete")] : null))))))
+      : h("p", { class: "empty" }, isSuper() ? "No credentials yet: add a v3 user to poll and send traps." : "No credentials yet (superusers add them)."));
+
+  return h("div", {},
+    h("div", { class: "page-head" }, h("h1", {}, "Monitoring"), h("span", { class: "spacer" }), h("button", { onclick: route }, "Refresh")),
+    h("p", { class: "tagline" }, "The border post reports in, on schedule."),
+    prom, agent, listSection(snmpReceiverSpec(creds)), credPanel);
+}
+
 async function pageIPS() {
   const st = await api("GET", "ips");
   const sig = st.signatures || {};
@@ -2409,7 +2533,7 @@ async function pageRoles() {
 // ---- router ----------------------------------------------------------------
 const pages = {
   dashboard: pageDashboard, policy: pagePolicy, nat: pageNat, objects: pageObjects,
-  network: pageNetwork, routing: pageRouting, dhcp: pageDHCP, apps: pageApps, ips: pageIPS, decryption: pageDecryption, tags: pageTags, revisions: pageRevisions, logs: pageLogs, logforwarding: pageLogForwarding, backup: pageBackup, certificate: pageCertificate, system: pageSystem,
+  network: pageNetwork, routing: pageRouting, dhcp: pageDHCP, apps: pageApps, ips: pageIPS, decryption: pageDecryption, tags: pageTags, revisions: pageRevisions, logs: pageLogs, logforwarding: pageLogForwarding, monitoring: pageMonitoring, backup: pageBackup, certificate: pageCertificate, system: pageSystem,
   account: pageAccount, users: pageUsers, roles: pageRoles,
 };
 
@@ -2431,7 +2555,7 @@ async function route() {
   } catch (e) {
     if (e.status !== 401) $("#main").replaceChildren(h("div", { class: "panel" }, errorBox(e)));
   }
-  const titles = { logforwarding: "Log forwarding", backup: "Backup", certificate: "Management certificate", dhcp: "DHCP", apps: "Applications", ips: "IPS", decryption: "Decryption", network: "Interfaces", system: "Administration", account: "My account" };
+  const titles = { logforwarding: "Log forwarding", monitoring: "Monitoring", backup: "Backup", certificate: "Management certificate", dhcp: "DHCP", apps: "Applications", ips: "IPS", decryption: "Decryption", network: "Interfaces", system: "Administration", account: "My account" };
   document.title = `SJB-OS · ${titles[name] || name[0].toUpperCase() + name.slice(1)}`;
 }
 

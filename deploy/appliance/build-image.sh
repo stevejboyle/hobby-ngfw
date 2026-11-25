@@ -61,10 +61,14 @@ in_root apt-get update -qq
 in_root apt-get install -y -qq --no-install-recommends \
 	nftables conntrack libnetfilter-queue1 open-vm-tools cloud-guest-utils sudo openssl curl openssh-server ca-certificates >/dev/null
 # What upgrade bundles ship to older appliances, installed here directly:
-# FRR (BGP/OSPF), Kea (DHCP) and Suricata (IPS). ngfwd starts what the
-# config uses; Debian's own Suricata unit must never run (sjb-ips does).
+# FRR (BGP/OSPF), Kea (DHCP), Suricata (IPS) and snmpd (SNMP). ngfwd starts
+# what the config uses (snmpd only with its config file, which ngfwd
+# writes); Debian's own Suricata unit must never run (sjb-ips does).
 in_root systemctl mask -q suricata.service
-in_root apt-get install -y -qq --no-install-recommends frr frr-pythontools kea-dhcp4-server suricata >/dev/null
+in_root apt-get install -y -qq --no-install-recommends frr frr-pythontools kea-dhcp4-server suricata snmpd >/dev/null
+# snmpd's package config (localhost, community public) is never used: ngfwd
+# writes its own when SNMP is on, and the unit needs the file to start.
+rm -f "$MNT/etc/snmp/snmpd.conf"
 in_root apt-get purge -y -qq cloud-init netplan.io ifupdown >/dev/null 2>&1 || true
 in_root apt-get autoremove -y -qq --purge >/dev/null
 rm -rf "$MNT/etc/cloud" "$MNT/var/lib/cloud" "$MNT"/etc/netplan/* "$MNT"/etc/network/interfaces.d/*

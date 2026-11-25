@@ -16,7 +16,7 @@
 #                      key (otherwise a missing key stops the build)
 #   BASE_RAW=path      image the bundle's Debian packages are worked out against
 #                      (default build/appliance/sjb-os-0.9.9-r03.raw)
-#   PACKAGES="..."     Debian packages bundles carry (default: frr frr-pythontools kea-dhcp4-server libnetfilter-queue1 suricata)
+#   PACKAGES="..."     Debian packages bundles carry (default: frr frr-pythontools kea-dhcp4-server libnetfilter-queue1 suricata ca-certificates snmpd)
 #   ROOT_KEY_FILE=path SSH public key the OVA lets root log in with (your own lab
 #                      builds only; never for a published release: release images
 #                      carry no root key, operators set one at deploy time)
@@ -97,7 +97,7 @@ if [[ -f $SIGNING_KEY ]]; then
 	# Debian packages the base image lacks (FRR, Kea and their dependencies), as
 	# signed bundle files; sjb-packages installs them on the appliance.
 	BASE_RAW=${BASE_RAW:-build/appliance/sjb-os-0.9.9-r03.raw}
-	PACKAGES=${PACKAGES:-frr frr-pythontools kea-dhcp4-server libnetfilter-queue1 suricata ca-certificates}
+	PACKAGES=${PACKAGES:-frr frr-pythontools kea-dhcp4-server libnetfilter-queue1 suricata ca-certificates snmpd}
 	[[ -f $BASE_RAW ]] || { echo "need the base image $BASE_RAW to work out which packages to bundle"; exit 1; }
 	mkdir -p "$STAGE/usr/share/sjb-os/packages"
 	docker run --rm --privileged --platform linux/amd64 -v "$PWD":/src -w /src \

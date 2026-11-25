@@ -153,6 +153,25 @@ expect blocked "after restart: quarantine registration restored" can_ping
 api_json /api/v1/tags/unregister "{\"ip\":\"$USER_IP\",\"tags\":[\"quarantine\"]}" >/dev/null
 expect ok "after restart: running rules restored (web)" can_web
 
+# --- 8. monitoring: Prometheus /metrics with a metrics:read key ------------------
+# A key added over the management socket works at once; the tag key may not
+# read metrics; a deleted key stops working at once.
+out=$(curl -s --unix-socket "$SOCK" -d '{"name":"gate-prom","scopes":["metrics:read"]}' http://ngfwd/v1/api-keys)
+MKEY=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("key",""))' <<<"$out" 2>/dev/null)
+scrape() { in_fw curl -s -o "$WORK/metrics.txt" -w '%{http_code}' ${1:+-H "Authorization: Bearer $1"} "$API/metrics"; }
+ip netns exec ngfw-users curl -s -m 2 -o /dev/null http://203.0.113.10/ # some web traffic to count
+[[ -n $MKEY && $(scrape "$MKEY") == 200 ]] && pass "GET /metrics with a metrics:read key added over the socket" || fail "metrics scrape: $out"
+m=$(cat "$WORK/metrics.txt")
+if [[ $m =~ sjbos_rule_packets_total\{rule=\"allow-web\",action=\"allow\"\}\ [1-9] && $m =~ sjbos_interface_receive_bytes_total\{interface=\"veth-users\",zone=\"users\"\}\ [1-9] && $m == *'sjbos_config_running_revision '* ]]; then
+	pass "metrics: rule hits (allow-web), interface counters, running revision"
+else
+	fail "metrics content: $(grep -E 'allow-web|veth-users|running_revision' <<<"$m" | head -6)"
+fi
+[[ $(scrape "$KEY") == 403 && $(scrape "") == 401 ]] && pass "/metrics: tag key 403, no key 401" || fail "metrics auth"
+curl -s --unix-socket "$SOCK" -X DELETE http://ngfwd/v1/api-keys/gate-prom >/dev/null
+[[ $(scrape "$MKEY") == 401 ]] && pass "a deleted key is refused at once" || fail "deleted metrics key still works"
+grep -q "gate-test tags:read,tags:write $KEY" "$WORK/keys" && pass "the key file kept the tag key" || fail "key file: $(cat "$WORK/keys")"
+
 echo
 if (( FAILS > 0 )); then echo "GATE 1: $FAILS check(s) failed"; exit 1; fi
 echo "GATE 1: all checks passed"

@@ -13,8 +13,10 @@ import (
 	"github.com/stevejboyle/sjb-os/internal/accounts"
 	"github.com/stevejboyle/sjb-os/internal/backup"
 	"github.com/stevejboyle/sjb-os/internal/logs"
+	"github.com/stevejboyle/sjb-os/internal/metrics"
 	"github.com/stevejboyle/sjb-os/internal/netdev"
 	"github.com/stevejboyle/sjb-os/internal/nicaddr"
+	"github.com/stevejboyle/sjb-os/internal/snmp"
 )
 
 const maxBody = 1 << 20
@@ -341,6 +343,40 @@ func (d *Daemon) mgmtRoutes() []mgmtRoute {
 			}
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			w.Write(data)
+		}},
+		{"POST /v1/api-keys", accounts.SuperuserOnly, func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			var req struct {
+				Name   string   `json:"name"`
+				Scopes []string `json:"scopes"`
+			}
+			if !decode(w, r, &req) {
+				return
+			}
+			k, err := d.AddAPIKey(c, req.Name, req.Scopes)
+			reply(w, map[string]any{"name": k.Name, "scopes": keyScopes(k), "key": k.Key}, err)
+		}},
+		{"DELETE /v1/api-keys/{name}", accounts.SuperuserOnly, func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			reply(w, map[string]bool{"deleted": true}, d.DeleteAPIKey(c, r.PathValue("name")))
+		}},
+		{"GET /v1/snmp", view(accounts.Logging), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			reply(w, d.SNMP(), nil)
+		}},
+		{"POST /v1/snmp/credentials", accounts.SuperuserOnly, func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			var req struct {
+				snmp.Credential
+				Replace bool `json:"replace"`
+			}
+			if !decode(w, r, &req) {
+				return
+			}
+			reply(w, map[string]bool{"saved": true}, d.AddSNMPCredential(c, req.Credential, req.Replace))
+		}},
+		{"DELETE /v1/snmp/credentials/{name}", accounts.SuperuserOnly, func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			reply(w, map[string]bool{"deleted": true}, d.DeleteSNMPCredential(c, r.PathValue("name")))
+		}},
+		{"GET /v1/metrics", view(accounts.Monitoring), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+			metrics.WritePrometheus(w, d.Metrics())
 		}},
 		{"GET /v1/tags", view(accounts.Tags), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
 			reply(w, d.ListTags(""), nil)

@@ -1009,13 +1009,13 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 		v2=$(snmpget -v2c -c "$COMM" -t 3 -r 1 -On "$AG" .1.3.6.1.2.1.1.5.0 2>&1)
 		v2bad=$(snmpget -v2c -c wrong-community -t 2 -r 0 -On "$AG" .1.3.6.1.2.1.1.5.0 2>&1)
 		[[ $v2 == *STRING* && $v2bad == *Timeout* ]] && pass "v2c: the community works from the listed manager; a wrong one gets no answer" || fail "v2c: $v2 / $v2bad"
-		for _ in $(seq 20); do grep -q '1.3.6.1.6.3.1.1.5.1' "$WORK/traps.log" 2>/dev/null && break; sleep 1; done
-		grep -q '1.3.6.1.6.3.1.1.5.1' "$WORK/traps.log" && pass "coldStart inform reached the receiver over the management network" || fail "no coldStart: $(tail -c 300 "$WORK/traps.log" 2>/dev/null)"
+		for _ in $(seq 20); do grep -q 'OID: iso.3.6.1.6.3.1.1.5.1' "$WORK/traps.log" 2>/dev/null && break; sleep 1; done
+		grep -q 'OID: iso.3.6.1.6.3.1.1.5.1' "$WORK/traps.log" && pass "coldStart inform reached the receiver over the management network" || fail "no coldStart: $(tail -c 300 "$WORK/traps.log" 2>/dev/null)"
 		# A link going down, and Suricata kept down while rules need it.
 		root_run 'ip link set ip2 down'
-		for _ in $(seq 30); do grep -q '1.3.6.1.6.3.1.1.5.3' "$WORK/traps.log" && break; sleep 1; done
+		for _ in $(seq 30); do grep -q 'OID: iso.3.6.1.6.3.1.1.5.3' "$WORK/traps.log" && break; sleep 1; done
 		root_run 'ip link set ip2 up'
-		grep -q '1.3.6.1.6.3.1.1.5.3' "$WORK/traps.log" && pass "linkDown trap when an interface goes down" || fail "no linkDown trap"
+		grep -q 'OID: iso.3.6.1.6.3.1.1.5.3' "$WORK/traps.log" && pass "linkDown trap when an interface goes down" || fail "no linkDown trap"
 		root_run 'systemctl mask --runtime --quiet sjb-ips; systemctl stop sjb-ips'
 		for _ in $(seq 90); do grep -q sjbServiceDown "$WORK/traps.log" && grep -q sjbIpsEngineDown "$WORK/traps.log" && break; sleep 1; done
 		root_run 'systemctl unmask --runtime --quiet sjb-ips'

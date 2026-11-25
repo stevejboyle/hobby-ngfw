@@ -1012,8 +1012,9 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 		for _ in $(seq 20); do grep -q 'OID: iso.3.6.1.6.3.1.1.5.1' "$WORK/traps.log" 2>/dev/null && break; sleep 1; done
 		grep -q 'OID: iso.3.6.1.6.3.1.1.5.1' "$WORK/traps.log" && pass "coldStart inform reached the receiver over the management network" || fail "no coldStart: $(tail -c 300 "$WORK/traps.log" 2>/dev/null)"
 		# A link going down, and Suricata kept down while rules need it.
+		# net-snmp checks link state once a minute: hold it down long enough.
 		root_run 'ip link set ip2 down'
-		for _ in $(seq 30); do grep -q 'OID: iso.3.6.1.6.3.1.1.5.3' "$WORK/traps.log" && break; sleep 1; done
+		for _ in $(seq 100); do grep -q 'OID: iso.3.6.1.6.3.1.1.5.3' "$WORK/traps.log" && break; sleep 1; done
 		root_run 'ip link set ip2 up'
 		grep -q 'OID: iso.3.6.1.6.3.1.1.5.3' "$WORK/traps.log" && pass "linkDown trap when an interface goes down" || fail "no linkDown trap"
 		root_run 'systemctl mask --runtime --quiet sjb-ips; systemctl stop sjb-ips'

@@ -1585,7 +1585,8 @@ snmpwalk -v3 -u nms -l authPriv -a SHA-256 -A '<auth>' -x AES -X '<priv>' 192.16
 
 **Traps** go to every trap receiver: v2c traps, v3 traps, or v3 informs,
 which are acknowledged and retried. They are sent on:
-- **Link up/down:** IF-MIB `linkUp` and `linkDown`.
+- **Link up/down:** IF-MIB `linkUp` and `linkDown`, within a minute (net-snmp
+  checks link state every 60 seconds).
 - **`sjbServiceDown`:** a service the config needs isn't running. It names
   the service, for example `suricata`, or `ngfwd` when its values are older
   than 60 seconds.

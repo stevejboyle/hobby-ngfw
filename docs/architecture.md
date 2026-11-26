@@ -483,10 +483,16 @@ it from what ngfwd already reads:
 - the last commit's outcome, recorded by Commit, Rollback and
   auto-rollback.
 
-The parts behind d.mu (IPS, NAT, decryption, Status) are read in a
-goroutine that the snapshot waits on for at most 3 s, reusing the last
-values when a commit holds the lock. The SNMP agent would otherwise see a
-stale snapshot and report ngfwd down.
+Collection is shared and bounded (0.9.13-r03): one collection at a time,
+reused for 5 s by every Prometheus scrape and the SNMP snapshot saver,
+with callers waiting at most 4 s and otherwise getting the newest snapshot.
+The parts behind d.mu (IPS, NAT, decryption, Status) are read by one
+goroutine the collection waits on for at most 3 s. Each section records
+its state (current, stale, never, failed) and read time, exported as
+`sjbos_collection_*` and `sjbCollectionTable`: stale parts keep their last
+values, parts never read are left out, and faults are raised only from
+fresh readings. Counter reads separate absent chains from failures, and
+every subprocess has a time limit.
 
 - **Prometheus:** `GET /metrics` on the tag API listener (TLS, the
   management certificate), keys with scope `metrics:read`. The text format
@@ -502,6 +508,13 @@ stale snapshot and report ngfwd down.
   `/run/sjb-os/metrics.json` (saved every 15 s while SNMP is on, group
   Debian-snmp). It needs no access to ngfwd's socket. A snapshot older
   than 60 s turns the service table into "ngfwd down".
+- **Reconciliation:** the agent's desired config, the file written, the
+  restart requested and the service seen running are tracked apart; a
+  stopped or failed snmpd is restarted with backoff, at most 6 times per
+  config, and a monitoring failure never rolls back policy.
+- **Credentials:** changes hold d.mu across check and write (lock order
+  d.mu, then the credentials lock), so commits can't race them; the store
+  is validated whole and never overwritten when invalid.
 - **Traps:** IF-MIB link up/down, plus `monitor` triggers on SJB-OS-MIB
   (a service needed and down, the IPS engine down, the last commit
   failed). They are sent by snmpd's internal queries (user `sjb-internal`,

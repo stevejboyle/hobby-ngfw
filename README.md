@@ -79,6 +79,9 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
   local curl failure, such as an untrusted certificate, as a block. They
   now count only a refused, dropped or reset connection, and
   `make harness-test` checks the harnesses' verdicts offline.
+  `deploy/appliance/soak-test.sh` runs the appliance under continuous
+  traffic, monitoring, commits and failures for a set time (20 minutes by
+  default, 24 hours for the long run), recording resource use.
 - **Releases:** 47 through 2026-11-25 (0.9.13-r02); the 38 in the first
   nine days (through 0.9.9-r08) were each gated by the boot test. Since r08,
   version bumps and the r10 fix get the boot test, and other revisions

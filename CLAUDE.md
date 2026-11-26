@@ -323,13 +323,28 @@ rsyslog); it configures the forwarder after its start-up conntrack flush
 reply). Queues are in memory (10,000 per server). Backups (0.9.11-r01):
 a config restore only ever sets the candidate (`SetCandidateAs`); accounts
 restores merge, are superuser-only, need an encrypted backup and apply at
-once. Monitoring (0.9.13-r01): `Daemon.Metrics()` never waits on d.mu for
-more than 3 s (the parts behind it are read in the background and the last
-values reused), since a commit can hold it for minutes and a stale
-snapshot makes SNMP report ngfwd down. GET /metrics on the tag API needs
+once. Monitoring (0.9.13-r01, hardened in r03): one shared collector
+(daemon/metrics.go) serves Prometheus and SNMP: callers within
+MetricsMaxAge (5 s, and the same commit epoch) share the latest snapshot,
+others start or join the single collection under way and wait at most
+MetricsWait (4 s). The parts behind d.mu are read by one goroutine waited
+on for at most slowWait (3 s), since a commit can hold d.mu for minutes.
+Every section has a state (current, stale, never, failed) and read time:
+stale keeps last values and says so, never/failed leave values out (no
+made-up zeros), services read from a stale part are Unknown (no fault, no
+"up"). nft counter reads tell absent chains from failures
+(nft.ErrCounters) and time out; systemctl checks go through internal/sysd
+(5 s limit). Keep every new monitoring source bounded and freshness-aware. GET /metrics on the tag API needs
 scope `metrics:read`; API keys are added and deleted by superusers
 (rewrites /etc/ngfw/api-keys, hot swap; the XML endpoint uses the live keys
-too). SNMP is net-snmp's snmpd (shipped like FRR), run by a unit drop-in
+too). SNMP credentials: lock order d.mu then snmp.credsMu; every change
+(add, change, delete, restore) holds d.mu from its reference check to its
+write; the store is validated whole (snmp.Validate) on every load, parse
+and save and never written over when invalid. snmpd's state is explicit
+(desired, written, requested, verified; phases starting/running/failed/
+gave-up): a --no-block restart is not proof it runs; recovery backs off
+(10 s doubling to 5 min, 6 tries per config; a commit retries). SNMP is
+net-snmp's snmpd (shipped like FRR), run by a unit drop-in
 in vrf-mgmt (`ip vrf exec`) with the trigger modules on; ngfwd writes
 /etc/snmp/snmpd.conf (0640 root:Debian-snmp) only while `snmp.enabled` is
 on and removes it otherwise (the unit needs it, so it can't start at

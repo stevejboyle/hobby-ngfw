@@ -1518,7 +1518,32 @@ Counters start again from zero when what they count restarts:
 - **IPS matches and log forwarding counts** reset when ngfwd restarts.
 - **Application totals** reset when appidd restarts.
 
-Prometheus's `rate()` handles these resets.
+Prometheus's `rate()` handles these resets. A counter that couldn't be
+read is never reported as zero: its last values are kept and marked stale
+(below), or left out if it was never read. A chain that doesn't exist
+because nothing of that kind is configured is not a failure. A counter
+that reads zero is a real zero.
+
+**How fresh the numbers are.** Prometheus and SNMP share one collection,
+taken at most every 5 seconds however many clients ask; a client waits at
+most 4 seconds for it, then gets the newest numbers there are. Each part
+(`config`, `ips`, `decryption`, `nat`, `rules`, `appid`, `system`) has its
+own state, in `sjbos_collection_state{section,state}` and
+`sjbos_collection_timestamp_seconds{section}` (SNMP: `sjbCollectionTable`):
+
+- **current:** read by the latest collection.
+- **stale:** the last known values, with their read time. The latest read
+  failed or didn't finish in time; a long commit (rebuilding the IPS
+  signatures can take minutes) holds the parts ngfwd reads under its lock.
+- **never:** not read since ngfwd started; those values are left out, not
+  reported as zero.
+- **failed:** every read failed; no values.
+
+A service whose state comes from a stale read is reported neither up nor
+down (`sjbos_service_up` is absent for it), and SNMP raises no fault from
+stale or missing readings. Every command monitoring runs (`nft`,
+`systemctl`) has a time limit, and a hung one holds up only the one
+collection under way.
 
 ### SNMP
 
@@ -1603,6 +1628,33 @@ in use at once. That's how to rotate them; the old ones stop working. A
 credential the running or candidate config names can't be deleted. With
 `enabled: off` (the default) snmpd is stopped and its config file removed.
 
+
+**Credential guarantees.** Adding, changing, deleting and restoring
+credentials are serialised with commits and candidate edits. A credential
+the running or candidate config names can't be deleted or change kind, and
+the running config can never name a missing credential. A backup's
+credentials are merged, never removing any, and checked against the config
+before anything is written. The credentials file is checked as a whole
+whenever it is read or written: unique names, the reserved internal name,
+valid secrets and the internal passphrase. A damaged file is reported
+(`show snmp`) and never written over. Errors never quote a secret.
+
+**When snmpd doesn't start.** A restart request isn't taken as proof:
+`show snmp` reports the agent as starting until snmpd is seen running, and
+then as running. If it isn't running 20 seconds after a request, or it
+stops later, ngfwd starts it again, waiting 10 seconds and then twice as
+long each time, up to 5 minutes. After 6 starts it stops trying. It tries
+again after the next commit, or when the SNMP config or a credential
+changes. The security policy is never rolled back because of snmpd; the
+problem shows in `show snmp`, the Monitoring page and a commit's warnings.
+
+**Isolation.** snmpd listens on UDP 161 in the management VRF. The
+firewall's input chain drops it on every zoned interface, VLANs and other
+VRFs included, whatever the `managers` list says. v2c is answered only from
+`managers`, and v3 only at authPriv. While snmpd's package installs during
+an upgrade, it briefly runs with Debian's own config, which listens on
+loopback only, until ngfwd stops it (within 10 seconds) or applies its own.
+The boot test checks all of this, across a reboot.
 ## Backing up and restoring the configuration
 
 A backup is one text file holding the running config, and optionally the
@@ -1789,6 +1841,8 @@ unchanged. The full history lives in `/var/lib/ngfw/revisions/`.
   on, with a per-server queue of 10,000 messages (dropped oldest first,
   and counted); no store-and-forward to disk, no RELP. Servers are IPv4
   addresses, not names.
+- Monitoring numbers can be up to 5 seconds old, by design (one shared
+  collection); during a long commit, parts are stale and marked so.
 - SNMP is read-only (no sets) and has no SNMPv1. Traps are the four kinds
   above, with no custom thresholds. An inform to an unreachable receiver
   holds up the agent's answers for a few seconds, so prefer traps for a

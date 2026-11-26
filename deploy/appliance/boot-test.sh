@@ -1309,8 +1309,6 @@ CSRF=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("csrf",""))' 
 n2=$(ui "$UI/ui/api/stats?window=1h" | grep -o '"samples":[0-9]*' | grep -o '[0-9]*$')
 [[ ${n2:-0} -ge ${n1:-1} ]] && pass "statistics survive an ngfwd restart ($n2 samples)" || fail "after restart: $n1 -> $n2 samples"
 
-REV_BEFORE=$(root_run fwctl status | grep -o '"running_revision": [0-9]*' | grep -o '[0-9]*$')
-
 # --- SNMP across a reboot, then off (M-04) -----------------------------------------
 # SNMP is still on from the IPS section (with the rotated passphrase). After
 # a reboot the ruleset must be in place before snmpd listens, and snmpd must
@@ -1336,6 +1334,9 @@ if [[ -n ${SNMP_A2:-} ]] && command -v snmpget >/dev/null; then
 	[[ $(root_run systemctl is-active snmpd) != active && $(root_run 'ls /etc/snmp/snmpd.conf /run/sjb-os/metrics.json 2>&1') == *"No such file"*"No such file"* && $off != *STRING* ]] &&
 		pass "SNMP off: snmpd stopped, its config and the snapshot removed, polls unanswered" || fail "snmp off: $(root_run 'systemctl is-active snmpd; ls /etc/snmp /run/sjb-os' 2>&1) / $off"
 fi
+
+# The running revision before the upgrades (after the SNMP-off commit above).
+REV_BEFORE=$(root_run fwctl status | grep -o '"running_revision": [0-9]*' | grep -o '[0-9]*$')
 
 # --- upgrades ---------------------------------------------------------------------
 # Test bundles are built from this build's binaries and overlay with newer

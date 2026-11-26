@@ -39,8 +39,8 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 
 ## The evidence
 
-- **Time:** 18 days of calendar time (2026-11-08 to 2026-11-25, 46
-  releases through 0.9.13-r01) and about 33.4 hours of Steve's active
+- **Time:** 18 days of calendar time (2026-11-08 to 2026-11-25, 47
+  releases through 0.9.13-r02) and about 33.7 hours of Steve's active
   time. The first milestone took nine days (to 0.9.9-r08, 38 releases)
   and 27.3 hours, of which 22.9 took it to its first full release
   (0.9.9-r03) and 0.6 went on TLS decryption (0.9.9-r04 to r06). The
@@ -49,9 +49,10 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
   certificate, hairpin NAT, IPS exceptions, and monitoring (Prometheus
   and SNMP). The hours are estimates of active time derived from the session
   transcripts, not stopwatch measurements: a gap between Steve's messages
-  counts in full up to 30 minutes and as 5 minutes beyond that, and four
+  counts in full up to 30 minutes and as 5 minutes beyond that, and five
   figures (three of 0.5 hours: his ChatGPT reviews and the 2026-11-21
-  follow-ups; 1.3 hours for 0.9.13-r01) are his own estimates. Row by row:
+  follow-ups; 1.3 hours for 0.9.13-r01; 0.3 for 0.9.13-r02) are his own
+  estimates. Row by row:
   [docs/effort-log.md](docs/effort-log.md).
 - **AI cost:** a $20/month Claude Pro plan. The 2.4 billion tokens it
   used through 2026-11-25 (nearly all cached context, counted from the
@@ -78,7 +79,7 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
   local curl failure, such as an untrusted certificate, as a block. They
   now count only a refused, dropped or reset connection, and
   `make harness-test` checks the harnesses' verdicts offline.
-- **Releases:** 46 through 2026-11-25 (0.9.13-r01); the 38 in the first
+- **Releases:** 47 through 2026-11-25 (0.9.13-r02); the 38 in the first
   nine days (through 0.9.9-r08) were each gated by the boot test. Since r08,
   version bumps and the r10 fix get the boot test, and other revisions
   run the tests that cover their change. The public history starts at
@@ -89,9 +90,9 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 
 | | Built the usual way (estimate) | Built with AI (from the record) |
 | --- | --- | --- |
-| Time to build | About 16 months | 18 days, Nov 8 to 25, 2026 (to 0.9.13-r01) |
+| Time to build | About 16 months | 18 days, Nov 8 to 25, 2026 (to 0.9.13-r02) |
 | People | One specialist, or about eight engineers | One person directing AI |
-| Human hours | 3,100 to 19,100 engineering hours | About 33.4 hours over those 18 days (27.3 in the first nine), estimated from the session transcripts |
+| Human hours | 3,100 to 19,100 engineering hours | About 33.7 hours over those 18 days (27.3 in the first nine), estimated from the session transcripts |
 | Cost | $460,000 to $1.8 million in salary and benefits | A $20/month Claude Pro plan ($760 of tokens at API list prices) |
 
 The left column is a model-based estimate; the right comes from the

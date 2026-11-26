@@ -193,9 +193,14 @@ print(round(n * 8 / (time.time() - t) / 1e6, 1))\"" 2>/dev/null; }
 	mbps=$(xfer)
 	loaded=""
 	if ((round % 2 == 0)); then
-		for _ in $(seq 20); do curl -sk -o /dev/null -H "Authorization: Bearer $KEY" "https://127.0.0.1:$API_PORT/metrics" & done
+		# Wait for these scrapes only: a bare wait would also wait for qemu.
+		scrapes=()
+		for _ in $(seq 20); do
+			curl -sk -o /dev/null -H "Authorization: Bearer $KEY" "https://127.0.0.1:$API_PORT/metrics" &
+			scrapes+=($!)
+		done
 		loaded=$(xfer)
-		wait
+		wait "${scrapes[@]}"
 	fi
 	ping=$(root_run "ip netns exec skc ping -c 5 -i 0.2 -q 10.94.0.2" | awk -F/ '/rtt/ {print $5}')
 	# Periodic commits.

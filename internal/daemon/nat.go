@@ -33,8 +33,16 @@ type counterReader interface {
 }
 
 // NAT reports the running config's NAT entries, in order, with their
-// counters and whether their public addresses are in place.
+// counters and whether their public addresses are in place. Counters that
+// couldn't be read are nil (unknown), never zero.
 func (d *Daemon) NAT() []NATEntry {
+	out, _ := d.natStatus()
+	return out
+}
+
+// natStatus is NAT plus the counter read's error (nil when the counters
+// were read, or there are none to read).
+func (d *Daemon) natStatus() ([]NATEntry, error) {
 	d.mu.Lock()
 	cfg := d.running
 	states := d.natIPStates
@@ -42,11 +50,15 @@ func (d *Daemon) NAT() []NATEntry {
 	d.mu.Unlock()
 	out := []NATEntry{}
 	if cfg == nil {
-		return out
+		return out, nil
 	}
 	var counters map[string]map[string]nft.Counter
-	if reader != nil {
-		counters, _ = reader.Counters(compiler.Table, "prerouting_nat", "postrouting")
+	var cerr error
+	if reader != nil && len(cfg.NAT) > 0 {
+		counters, cerr = reader.Counters(compiler.Table, "prerouting_nat", "postrouting")
+		if cerr != nil {
+			counters = nil // unknown: report no numbers rather than wrong ones
+		}
 	}
 	hits := func(chain, name string) *uint64 {
 		if counters == nil {
@@ -83,5 +95,5 @@ func (d *Daemon) NAT() []NATEntry {
 		}
 		out = append(out, e)
 	}
-	return out
+	return out, cerr
 }

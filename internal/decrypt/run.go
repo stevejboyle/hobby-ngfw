@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/stevejboyle/sjb-os/internal/sysd"
 	"io"
 	"net"
 	"net/http"
@@ -95,7 +96,7 @@ func systemctl(args ...string) error {
 func (Exec) Start() error { return systemctl("enable", "--now", "--no-block", Unit) }
 func (Exec) Stop() error  { return systemctl("disable", "--now", "--no-block", Unit) }
 func (Exec) Running() bool {
-	return exec.Command("systemctl", "is-active", "--quiet", Unit).Run() == nil
+	return sysd.Active(Unit)
 }
 
 func (e Exec) client() *http.Client {

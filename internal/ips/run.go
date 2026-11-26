@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/stevejboyle/sjb-os/internal/compiler"
+	"github.com/stevejboyle/sjb-os/internal/sysd"
 	"net"
 	"os"
 	"os/exec"
@@ -121,7 +122,7 @@ func (Exec) Stop() error {
 }
 
 func (Exec) Running() bool {
-	return exec.Command("systemctl", "is-active", "--quiet", Unit).Run() == nil
+	return sysd.Active(Unit)
 }
 
 // ReloadRules asks Suricata over its command socket to reload the rules

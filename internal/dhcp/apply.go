@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/stevejboyle/sjb-os/internal/sysd"
 	"io"
 	"net"
 	"os"
@@ -235,7 +236,7 @@ func (e Exec) Apply(r *Result) error {
 }
 
 // Running reports whether systemd has Kea running.
-func (e Exec) Running() bool { return e.systemctl("is-active", "--quiet", unit) == nil }
+func (e Exec) Running() bool { return sysd.Active(unit) }
 
 // Leases asks Kea for every lease over its control socket.
 func (e Exec) Leases() ([]RawLease, error) {

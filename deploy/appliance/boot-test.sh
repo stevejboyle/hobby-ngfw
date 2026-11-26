@@ -1009,6 +1009,53 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 		v2=$(snmpget -v2c -c "$COMM" -t 3 -r 1 -On "$AG" .1.3.6.1.2.1.1.5.0 2>&1)
 		v2bad=$(snmpget -v2c -c wrong-community -t 2 -r 0 -On "$AG" .1.3.6.1.2.1.1.5.0 2>&1)
 		[[ $v2 == *STRING* && $v2bad == *Timeout* ]] && pass "v2c: the community works from the listed manager; a wrong one gets no answer" || fail "v2c: $v2 / $v2bad"
+		# Management-plane isolation (M-04). The dataplane sources become
+		# v2c managers, so only the firewall's input chain can keep them out:
+		# a routed zone (the IPS client), and a VLAN in a non-management VRF
+		# (the VRF client from earlier), to the firewall's addresses there
+		# and to its management address.
+		root_run 'cat > /root/snmp-probe.py' <deploy/appliance/boot-snmp-probe.py
+		snmp_set() { # snmp_set "set snmp ..." ... : a configure-mode commit
+			local sc=$'configure\n' l
+			for l in "$@"; do sc+="$l"$'\n'; done
+			sc+=$'commit -m "boot test: snmp access"\nexit\nexit\n'
+			retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$sc" 2>&1
+		}
+		MGMTIP=$(root_run "ip -4 -o addr show mgmt | awk '{print \$4}' | cut -d/ -f1")
+		snmp_set "set snmp managers 10.83.0.0/16" "set snmp managers 172.16.40.0/24" >/dev/null
+		sleep 3
+		p1=$(root_run "ip netns exec ipc python3 /root/snmp-probe.py 10.83.0.1 $COMM")
+		p2=$(root_run "ip netns exec ipc python3 /root/snmp-probe.py $MGMTIP $COMM")
+		p3=$(root_run "ip netns exec client python3 /root/snmp-probe.py 172.16.40.1 $COMM" 2>&1)
+		[[ $p1 == timeout && $p2 == timeout && $p3 == timeout ]] &&
+			pass "UDP 161 unreachable from a routed dataplane zone (to its own and the mgmt address) and from a VLAN in another VRF, even with those sources listed as managers" ||
+			fail "snmp from the dataplane: zone=$p1 zone-to-mgmt=$p2 vrf-vlan=$p3"
+		# A zone and VRF change committed: still unreachable.
+		snmp_set "set zone bt-extra" "set interface vlab.41 zone bt-extra vrf probe address 172.16.41.1/24" >/dev/null
+		sleep 3
+		p4=$(root_run "ip netns exec client python3 /root/snmp-probe.py 172.16.40.1 $COMM" 2>&1)
+		[[ $p4 == timeout ]] && pass "still unreachable from the VRF VLAN after a zone and interface change" || fail "after a zone change: $p4"
+		snmp_set "delete interface vlab.41" "delete zone bt-extra" "delete snmp managers 10.83.0.0/16" "delete snmp managers 172.16.40.0/24" >/dev/null
+		# v2c from the management network but not a listed manager.
+		snmp_set "set snmp managers 10.0.2.99" "delete snmp managers 10.0.2.2" >/dev/null
+		sleep 3
+		v2un=$(snmpget -v2c -c "$COMM" -t 2 -r 0 -On "$AG" .1.3.6.1.2.1.1.5.0 2>&1)
+		snmp_set "set snmp managers 10.0.2.2" "delete snmp managers 10.0.2.99" >/dev/null
+		sleep 3
+		v2back=$(snmpget -v2c -c "$COMM" -t 3 -r 1 -On "$AG" .1.3.6.1.2.1.1.5.0 2>&1)
+		[[ $v2un == *Timeout* && $v2back == *STRING* ]] && pass "v2c with the right community from an unlisted mgmt address gets no answer; listed again, it does" || fail "v2c managers: $v2un / $v2back"
+		# v3: the right user at a lower security level, or a wrong privacy
+		# passphrase, gets nothing.
+		v3lvl=$(snmpget -v3 -u bt-nms -l authNoPriv -a SHA-256 -A "$A1" -t 2 -r 0 -On "$AG" .1.3.6.1.2.1.1.5.0 2>&1)
+		v3none=$(snmpget -v3 -u bt-nms -l noAuthNoPriv -t 2 -r 0 -On "$AG" .1.3.6.1.2.1.1.5.0 2>&1)
+		v3priv=$(snmpget -v3 -u bt-nms -l authPriv -a SHA-256 -A "$A1" -x AES -X wrong-priv-pass -t 2 -r 0 -On "$AG" .1.3.6.1.2.1.1.5.0 2>&1)
+		[[ $v3lvl != *STRING* && $v3none != *STRING* && $v3priv != *STRING* ]] &&
+			pass "SNMPv3 refused at authNoPriv and noAuthNoPriv, and with a wrong privacy passphrase" || fail "v3 levels: $v3lvl / $v3none / $v3priv"
+		# Collection health is exported (H-02).
+		cs=$(snmpwalk "${V3[@]}" "$AG" .1.3.6.1.4.1.8072.9999.9999.7.15.1.3 2>&1)
+		scrape "$pk" >/dev/null
+		[[ $cs == *"INTEGER: 1"* && $(grep -c '^sjbos_collection_state{section="config",state="current"} 1' "$WORK/metrics.txt") == 1 ]] &&
+			pass "collection health: sjbCollectionTable and sjbos_collection_state report current sections" || fail "collection health: ${cs:0:200}"
 		for _ in $(seq 20); do grep -q 'OID: iso.3.6.1.6.3.1.1.5.1' "$WORK/traps.log" 2>/dev/null && break; sleep 1; done
 		grep -q 'OID: iso.3.6.1.6.3.1.1.5.1' "$WORK/traps.log" && pass "coldStart inform reached the receiver over the management network" || fail "no coldStart: $(tail -c 300 "$WORK/traps.log" 2>/dev/null)"
 		# A link going down, and Suricata kept down while rules need it.
@@ -1047,11 +1094,7 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 		CSRF=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("csrf",""))' <<<"$login" 2>/dev/null)
 		[[ $und == *inactive*"No such file"* && $(root_run systemctl is-active snmpd) == active ]] &&
 			pass "sjb-migrate undo (rollback below 0.9.13) stops snmpd and removes its config; ngfwd brings it back" || fail "snmp undo: $und / $(root_run systemctl is-active snmpd)"
-		script=$'configure\nset snmp enabled off\ncommit -m "boot test: snmp off"\nexit\nexit\n'
-		retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
-		for _ in $(seq 20); do [[ $(root_run 'ls /etc/snmp/snmpd.conf /run/sjb-os/metrics.json 2>&1') == *"No such file"*"No such file"* ]] && break; sleep 1; done
-		[[ $(root_run systemctl is-active snmpd) != active && $(root_run 'ls /etc/snmp/snmpd.conf /run/sjb-os/metrics.json 2>&1') == *"No such file"*"No such file"* ]] &&
-			pass "SNMP off: snmpd stopped, its config and the snapshot removed" || fail "snmp off: $(root_run 'systemctl is-active snmpd; ls /etc/snmp /run/sjb-os' 2>&1)"
+		SNMP_A2=$A2 SNMP_P1=$P1
 		docker rm -f "$TRAPD" >/dev/null 2>&1
 	else
 		fail "SNMP checks need net-snmp's client tools (nix shell nixpkgs#net-snmp) and Docker on this host"
@@ -1267,6 +1310,32 @@ n2=$(ui "$UI/ui/api/stats?window=1h" | grep -o '"samples":[0-9]*' | grep -o '[0-
 [[ ${n2:-0} -ge ${n1:-1} ]] && pass "statistics survive an ngfwd restart ($n2 samples)" || fail "after restart: $n1 -> $n2 samples"
 
 REV_BEFORE=$(root_run fwctl status | grep -o '"running_revision": [0-9]*' | grep -o '[0-9]*$')
+
+# --- SNMP across a reboot, then off (M-04) -----------------------------------------
+# SNMP is still on from the IPS section (with the rotated passphrase). After
+# a reboot the ruleset must be in place before snmpd listens, and snmpd must
+# be back in the management VRF.
+if [[ -n ${SNMP_A2:-} ]] && command -v snmpget >/dev/null; then
+	root_run 'systemctl reboot' >/dev/null 2>&1
+	sleep 20
+	for _ in $(seq 60); do root_run true 2>/dev/null && break; sleep 5; done
+	for _ in $(seq 30); do [[ $(root_run systemctl is-active snmpd) == active ]] && break; sleep 2; done
+	ngfwd_up=$(root_run systemctl show -p ActiveEnterTimestampMonotonic --value ngfwd)
+	snmpd_up=$(root_run systemctl show -p ExecMainStartTimestampMonotonic --value snmpd)
+	vrf=$(root_run 'ip vrf identify $(systemctl show -p MainPID --value snmpd)')
+	rb=$(snmpget -v3 -u bt-nms -l authPriv -a SHA-256 -A "$SNMP_A2" -x AES -X "$SNMP_P1" -t 3 -r 2 -On "127.0.0.1:$SNMP_PORT" .1.3.6.1.2.1.1.5.0 2>&1)
+	[[ $(root_run systemctl is-active snmpd) == active && $vrf == vrf-mgmt && ${ngfwd_up:-0} -gt 0 && ${snmpd_up:-0} -gt ${ngfwd_up:-0} && $rb == *STRING* ]] &&
+		pass "after a reboot: ngfwd (ruleset) up before snmpd, snmpd in the management VRF, v3 polls answered" ||
+		fail "snmp after reboot: active=$(root_run systemctl is-active snmpd) vrf=$vrf ngfwd=$ngfwd_up snmpd=$snmpd_up poll=$rb"
+	login=$(curl -sk -c "$JAR" -H 'Content-Type: application/json' -d "{\"user\":\"$ADMIN\",\"password\":\"$PW\"}" "$UI/ui/api/login")
+	CSRF=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("csrf",""))' <<<"$login" 2>/dev/null)
+	script=$'configure\nset snmp enabled off\ncommit -m "boot test: snmp off"\nexit\nexit\n'
+	retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
+	for _ in $(seq 20); do [[ $(root_run 'ls /etc/snmp/snmpd.conf /run/sjb-os/metrics.json 2>&1') == *"No such file"*"No such file"* && $(root_run systemctl is-active snmpd) != active ]] && break; sleep 1; done
+	off=$(snmpget -v3 -u bt-nms -l authPriv -a SHA-256 -A "$SNMP_A2" -x AES -X "$SNMP_P1" -t 2 -r 0 -On "127.0.0.1:$SNMP_PORT" .1.3.6.1.2.1.1.5.0 2>&1)
+	[[ $(root_run systemctl is-active snmpd) != active && $(root_run 'ls /etc/snmp/snmpd.conf /run/sjb-os/metrics.json 2>&1') == *"No such file"*"No such file"* && $off != *STRING* ]] &&
+		pass "SNMP off: snmpd stopped, its config and the snapshot removed, polls unanswered" || fail "snmp off: $(root_run 'systemctl is-active snmpd; ls /etc/snmp /run/sjb-os' 2>&1) / $off"
+fi
 
 # --- upgrades ---------------------------------------------------------------------
 # Test bundles are built from this build's binaries and overlay with newer

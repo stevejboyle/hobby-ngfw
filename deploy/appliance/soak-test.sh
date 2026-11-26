@@ -80,8 +80,11 @@ for _ in $(seq 600); do
 	kill -0 $QEMU 2>/dev/null || { echo "qemu exited"; exit 1; }
 	sleep 1
 done
-sleep 5
+# The serial getty can print the password well after the ready line on a
+# slow emulated boot: wait for it, as boot-test.sh does.
+for _ in $(seq 60); do grep -aq 'initial password: ' "$LOG" && break; sleep 1; done
 PW=$(grep -ao 'initial password: [A-Za-z0-9]*' "$LOG" | tail -1 | awk '{print $3}')
+[[ -n $PW ]] || { echo "no admin password on the console"; exit 1; }
 SSHOPTS=(-q -p "$SSH_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30)
 retry255() {
 	local rc

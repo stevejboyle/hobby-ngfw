@@ -1263,7 +1263,9 @@ async function pageNetwork() {
   const mgmt = textField("Management interface", sys.mgmt_interface, { hint: "Never filtered by policy" });
   const save = h("button", { class: "primary", onclick: async () => {
     const cfg = clone(state.cand);
-    cfg.system = { hostname: host.get(), mgmt_interface: mgmt.get() };
+    // Only these two: the rest of system (App Identification, IPS,
+    // decryption settings) belongs to other pages and must survive.
+    cfg.system = { ...cfg.system, hostname: host.get(), mgmt_interface: mgmt.get() };
     try { await saveCandidate(cfg, "System settings saved to the candidate."); } catch (e) { toast(e.message); }
   } }, "Save");
   return h("div", {},

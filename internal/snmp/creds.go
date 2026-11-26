@@ -6,6 +6,7 @@
 package snmp
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -156,32 +157,82 @@ func NormalizePriv(s string) string {
 	return s
 }
 
-// Load reads the credentials file; a missing file is empty.
+// internalRE is what an internal passphrase looks like (EnsureInternal
+// makes 32 base64url characters).
+var internalRE = regexp.MustCompile(`^[A-Za-z0-9_-]{24,128}$`)
+
+// Validate checks the whole store: every credential, unique names, and the
+// internal passphrase (when there is one: older stores and backups may
+// have none, and EnsureInternal adds it). Errors never quote a secret.
+func (cs *Credentials) Validate() error {
+	var errs []error
+	seen := map[string]bool{}
+	for i, c := range cs.List {
+		if err := c.Check(); err != nil {
+			errs = append(errs, fmt.Errorf("credential %d (%q): %w", i+1, safeName(c.Name), err))
+		}
+		if seen[c.Name] {
+			errs = append(errs, fmt.Errorf("credential %q is listed twice", safeName(c.Name)))
+		}
+		seen[c.Name] = true
+	}
+	if cs.InternalPass != "" && !internalRE.MatchString(cs.InternalPass) {
+		errs = append(errs, fmt.Errorf("the internal passphrase is malformed"))
+	}
+	return errors.Join(errs...)
+}
+
+// safeName is a name fit for an error message: names are not secrets, but
+// one that fails the name check may hold anything.
+func safeName(n string) string {
+	if nameRE.MatchString(n) {
+		return n
+	}
+	return "(invalid name)"
+}
+
+// ErrStore marks a credentials file or backup that is unreadable or
+// invalid. Nothing is ever written over it automatically.
+var ErrStore = errors.New("SNMP credentials store invalid")
+
+// Load reads and validates the credentials file; a missing file is empty.
 func Load(path string) (*Credentials, error) {
-	cs := &Credentials{}
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return cs, nil
+		return &Credentials{}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if err := json.Unmarshal(b, cs); err != nil {
+	cs, err := Parse(b)
+	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return cs, nil
 }
 
-// Parse reads credentials from JSON (a backup).
+// Parse reads and validates credentials from JSON (the file, a backup).
+// Unknown fields are refused: a store that doesn't look like ours isn't
+// guessed at.
 func Parse(b []byte) (*Credentials, error) {
 	cs := &Credentials{}
-	if err := json.Unmarshal(b, cs); err != nil {
-		return nil, err
-	}
-	for _, c := range cs.List {
-		if err := c.Check(); err != nil {
-			return nil, fmt.Errorf("credential %q: %w", c.Name, err)
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(cs); err != nil {
+		// A syntax error quotes the character it met, which may be part
+		// of a secret: give only where it is.
+		var se *json.SyntaxError
+		if errors.As(err, &se) {
+			return nil, fmt.Errorf("%w: not valid JSON (at byte %d)", ErrStore, se.Offset)
 		}
+		var te *json.UnmarshalTypeError
+		if errors.As(err, &te) {
+			return nil, fmt.Errorf("%w: field %q has the wrong type", ErrStore, te.Field)
+		}
+		return nil, fmt.Errorf("%w: %v", ErrStore, err)
+	}
+	if err := cs.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrStore, err)
 	}
 	return cs, nil
 }
@@ -199,8 +250,12 @@ func (cs *Credentials) EnsureInternal() error {
 	return nil
 }
 
-// Save writes the credentials atomically, readable by root only.
+// Save validates and writes the credentials atomically, readable by root
+// only. On any error the file on disk is unchanged.
 func Save(path string, cs *Credentials) error {
+	if err := cs.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrStore, err)
+	}
 	b, err := json.MarshalIndent(cs, "", "  ")
 	if err != nil {
 		return err

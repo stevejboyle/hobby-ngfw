@@ -12,22 +12,39 @@ import (
 	"github.com/stevejboyle/sjb-os/internal/snmp"
 )
 
-// fakeSNMPD records what ngfwd asks of snmpd.
+// fakeSNMPD records what ngfwd asks of snmpd. failStart makes a requested
+// start not take (systemd accepted it; snmpd didn't come up).
 type fakeSNMPD struct {
-	mu      sync.Mutex
-	applied []string
-	running bool
+	mu           sync.Mutex
+	applied      []string
+	running      bool
+	failStart    bool
+	notInstalled bool
+	restarts     int
 }
 
-func (f *fakeSNMPD) Available() bool { return true }
+func (f *fakeSNMPD) Available() bool { f.mu.Lock(); defer f.mu.Unlock(); return !f.notInstalled }
 func (f *fakeSNMPD) Running() bool   { f.mu.Lock(); defer f.mu.Unlock(); return f.running }
 func (f *fakeSNMPD) Apply(conf string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.applied = append(f.applied, conf)
-	f.running = conf != ""
+	f.running = conf != "" && !f.failStart
 	return nil
 }
+func (f *fakeSNMPD) Restart() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.restarts++
+	f.running = !f.failStart
+	return nil
+}
+func (f *fakeSNMPD) ConfPresent() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.applied) > 0 && f.applied[len(f.applied)-1] != ""
+}
+func (f *fakeSNMPD) set(fn func(f *fakeSNMPD)) { f.mu.Lock(); defer f.mu.Unlock(); fn(f) }
 func (f *fakeSNMPD) last() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -62,10 +79,10 @@ func TestSNMPLifecycle(t *testing.T) {
 		t.Fatalf("commit without the credential: %v", err)
 	}
 	nms := snmp.Credential{Name: "nms", Kind: "v3", Auth: "sha256", AuthPass: "auth-pass-1", Priv: "aes", PrivPass: "priv-pass-1"}
-	if err := d.AddSNMPCredential(ops, nms, false); err == nil {
+	if _, err := d.AddSNMPCredential(ops, nms, false); err == nil {
 		t.Error("an admin added an SNMP credential")
 	}
-	if err := d.AddSNMPCredential(root, nms, false); err != nil {
+	if _, err := d.AddSNMPCredential(root, nms, false); err != nil {
 		t.Fatal(err)
 	}
 	if fi, err := os.Stat(creds); err != nil || fi.Mode().Perm() != 0o600 {
@@ -100,14 +117,14 @@ func TestSNMPLifecycle(t *testing.T) {
 	if err := d.DeleteSNMPCredential(root, "nms"); err == nil || !strings.Contains(err.Error(), "uses SNMP credential") {
 		t.Errorf("deleted a credential in use: %v", err)
 	}
-	if err := d.AddSNMPCredential(root, snmp.Credential{Name: "nms", Kind: "v2c", Community: "community-x"}, true); err == nil {
+	if _, err := d.AddSNMPCredential(root, snmp.Credential{Name: "nms", Kind: "v2c", Community: "community-x"}, true); err == nil {
 		t.Error("changed a used v3 credential into v2c")
 	}
 	nms.AuthPass = "auth-pass-2"
-	if err := d.AddSNMPCredential(root, nms, false); err == nil {
+	if _, err := d.AddSNMPCredential(root, nms, false); err == nil {
 		t.Error("added a duplicate")
 	}
-	if err := d.AddSNMPCredential(root, nms, true); err != nil {
+	if _, err := d.AddSNMPCredential(root, nms, true); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(fake.last(), `"auth-pass-2"`) {
@@ -154,7 +171,7 @@ func TestSNMPCredentialsInBackups(t *testing.T) {
 	d.SetSNMP(&fakeSNMPD{}, creds, "")
 	d.SetCandidate(lab(t))
 	d.Commit("steve", "lab", 0)
-	if err := d.AddSNMPCredential(accounts.Root, snmp.Credential{Name: "ro", Kind: "v2c", Community: "lab-community"}, false); err != nil {
+	if _, err := d.AddSNMPCredential(accounts.Root, snmp.Credential{Name: "ro", Kind: "v2c", Community: "lab-community"}, false); err != nil {
 		t.Fatal(err)
 	}
 	b, err := d.ExportBackup(accounts.Root, true, "a-good-passphrase")

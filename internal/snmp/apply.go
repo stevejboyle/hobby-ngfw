@@ -2,14 +2,17 @@ package snmp
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"github.com/stevejboyle/sjb-os/internal/sysd"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ConfPath is snmpd's configuration on the appliance.
@@ -21,16 +24,24 @@ const Group = "Debian-snmp"
 
 const unit = "snmpd.service"
 
-// Runner applies snmpd.conf and runs or stops the agent.
+// Runner applies snmpd.conf and runs or stops the agent. Apply and Restart
+// only ask systemd to act (they don't wait for snmpd to start): the
+// daemon checks Running afterwards before it calls the agent up.
 type Runner interface {
 	// Available reports whether snmpd is installed.
 	Available() bool
-	// Apply writes conf and (re)starts snmpd when it changed or isn't
-	// running; conf "" stops snmpd and removes its file, so it can't
-	// start at boot (the unit needs the file).
+	// Apply writes conf and asks for a restart; conf "" asks for a stop
+	// and removes the file, so snmpd can't start at boot (the unit needs
+	// it).
 	Apply(conf string) error
+	// Restart asks for snmpd to be started again with the file as it is,
+	// clearing systemd's failed state first.
+	Restart() error
 	// Running reports whether snmpd is active.
 	Running() bool
+	// ConfPresent reports whether snmpd's config file exists (the package
+	// installs one; ngfwd removes it while SNMP is off).
+	ConfPresent() bool
 }
 
 // Noop manages nothing (development machines, tests).
@@ -43,7 +54,15 @@ func (Noop) Apply(conf string) error {
 	}
 	return errors.New("snmpd isn't managed on this system")
 }
-func (Noop) Running() bool { return false }
+func (Noop) Running() bool     { return false }
+func (Noop) Restart() error    { return errors.New("snmpd isn't managed on this system") }
+func (Noop) ConfPresent() bool { return false }
+
+// ConfPresent reports whether snmpd.conf exists.
+func (e Exec) ConfPresent() bool {
+	_, err := os.Stat(e.conf())
+	return err == nil
+}
 
 // Exec is the appliance's snmpd, driven through systemd.
 type Exec struct {
@@ -66,7 +85,9 @@ func (e Exec) conf() string {
 }
 
 func systemctl(args ...string) error {
-	out, err := exec.Command("systemctl", args...).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "systemctl", args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("systemctl %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
@@ -81,14 +102,16 @@ func (e Exec) Available() bool {
 }
 
 // Running reports whether snmpd is active.
-func (e Exec) Running() bool { return systemctl("is-active", "--quiet", unit) == nil }
+func (e Exec) Running() bool { return sysd.Active(unit) }
 
 // Apply writes conf and starts or restarts snmpd, or stops it.
 func (e Exec) Apply(conf string) error {
 	path := e.conf()
 	if conf == "" {
+		// --no-block: a final inform to an unreachable receiver can hold
+		// up a stop (the unit allows 10 s); no commit waits for that.
 		if e.Running() {
-			if err := systemctl("stop", unit); err != nil {
+			if err := systemctl("--no-block", "stop", unit); err != nil {
 				return err
 			}
 		}
@@ -108,13 +131,17 @@ func (e Exec) Apply(conf string) error {
 		}
 	}
 	if changed || !e.Running() {
-		// --no-block: ngfwd may be starting before the network; snmpd
-		// starts when systemd gets to it.
-		if err := systemctl("--no-block", "restart", unit); err != nil {
-			return err
-		}
+		return e.Restart()
 	}
 	return nil
+}
+
+// Restart clears a failed state (systemd stops retrying a unit that failed
+// too often) and asks for a restart without waiting: ngfwd may be starting
+// before the network, and snmpd starts when systemd gets to it.
+func (e Exec) Restart() error {
+	systemctl("reset-failed", unit) // nothing to reset is not an error worth reporting
+	return systemctl("--no-block", "restart", unit)
 }
 
 // writeConf writes snmpd.conf: root, group Debian-snmp, 0640 (it holds the

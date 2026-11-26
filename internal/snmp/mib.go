@@ -32,7 +32,11 @@ const (
 	oidNATTable     = ".12" // entry .1: index .1, name .2, type .3, hits .4, outHits .5, hairpin .6
 	oidLogTable     = ".13" // entry .1: index .1, name .2, connected .3, sent .4, dropped .5, queued .6
 	oidThreatTable  = ".14" // entry .1: index .1, severity .2, blocked .3, alerted .4
+	oidCollectTable = ".15" // entry .1: index .1, section .2, state .3, age .4
 )
+
+// Collection states in sjbCollectionTable.
+var collectState = map[string]string{metrics.Current: "1", metrics.Stale: "2", metrics.Never: "3", metrics.Failed: "4"}
 
 // Trigger objects (absolute), for snmpd's monitors.
 const (
@@ -157,7 +161,9 @@ func Objects(s metrics.Snapshot, ok bool, age time.Duration) []varbind {
 	c64(oidIPS+".4.0", s.IPS.QueueDropped)
 	gauge(oidIPS+".5.0", uint64(s.IPS.ExceptionsActive))
 	gauge(oidIPS+".6.0", uint64(s.IPS.ExceptionsIdle))
-	add(oidIPS+".7.0", "integer", b2i(ok && !stale && ipsUsed && !s.IPS.Up))
+	// A fault only on a fresh reading: stale or missing values never raise
+	// (or clear) an alarm.
+	add(oidIPS+".7.0", "integer", b2i(ok && !stale && s.Fresh("ips") && ipsUsed && !s.IPS.Up))
 
 	str(oidDecryption+".1.0", s.Decryption.State)
 	add(oidDecryption+".2.0", "integer", b2i(s.Decryption.Up))
@@ -189,7 +195,9 @@ func Objects(s metrics.Snapshot, ok bool, age time.Duration) []varbind {
 		func(i int) (string, string) { return "string", cleanString(services[i].Name) },
 		func(i int) (string, string) { return "integer", b2i(services[i].Up) },
 		func(i int) (string, string) { return "integer", b2i(services[i].Used) },
-		func(i int) (string, string) { return "integer", b2i(services[i].Used && !services[i].Up) },
+		func(i int) (string, string) {
+			return "integer", b2i(services[i].Used && !services[i].Up && !services[i].Unknown)
+		},
 	})
 	table(oidRuleTable, len(s.Rules), []func(int) (string, string){
 		idx,
@@ -219,6 +227,28 @@ func Objects(s metrics.Snapshot, ok bool, age time.Duration) []varbind {
 		func(i int) (string, string) { return "string", s.Threats[i].Severity },
 		func(i int) (string, string) { return "counter64", strconv.FormatUint(s.Threats[i].Blocked, 10) },
 		func(i int) (string, string) { return "counter64", strconv.FormatUint(s.Threats[i].Alerted, 10) },
+	})
+	var secs []string
+	if ok {
+		secs = metrics.Sections
+	}
+	table(oidCollectTable, len(secs), []func(int) (string, string){
+		idx,
+		func(i int) (string, string) { return "string", secs[i] },
+		func(i int) (string, string) {
+			st := s.Sections[secs[i]].State
+			if collectState[st] == "" {
+				st = metrics.Never
+			}
+			return "integer", collectState[st]
+		},
+		func(i int) (string, string) {
+			at := s.Sections[secs[i]].CollectedAt
+			if at == nil {
+				return "integer", "-1"
+			}
+			return "integer", strconv.FormatInt(int64(s.Time.Sub(*at)/time.Second)+int64(age/time.Second), 10)
+		},
 	})
 	sort.Slice(out, func(i, j int) bool { return less(out[i].oid, out[j].oid) })
 	return out

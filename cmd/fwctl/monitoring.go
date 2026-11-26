@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/stevejboyle/sjb-os/internal/config"
 	"github.com/stevejboyle/sjb-os/internal/snmp"
@@ -20,34 +21,63 @@ func showSNMP() error {
 		return err
 	}
 	var st struct {
-		Enabled     bool                      `json:"enabled"`
-		Installed   bool                      `json:"installed"`
-		Running     bool                      `json:"running"`
-		Error       string                    `json:"error"`
-		Location    string                    `json:"location"`
-		Contact     string                    `json:"contact"`
-		V3Users     []string                  `json:"v3_users"`
-		Communities []string                  `json:"v2c_communities"`
-		Managers    []string                  `json:"managers"`
-		Receivers   []config.SNMPTrapReceiver `json:"trap_receivers"`
-		Credentials []snmp.Info               `json:"credentials"`
-		MIBBase     string                    `json:"mib_base"`
+		Enabled       bool                      `json:"enabled"`
+		Installed     bool                      `json:"installed"`
+		Running       bool                      `json:"running"`
+		State         string                    `json:"state"`
+		ConfigCurrent bool                      `json:"config_current"`
+		VerifiedAt    *time.Time                `json:"verified_at"`
+		Attempts      int                       `json:"attempts"`
+		NextRetry     *time.Time                `json:"next_retry"`
+		CredsError    string                    `json:"credentials_error"`
+		Error         string                    `json:"error"`
+		Location      string                    `json:"location"`
+		Contact       string                    `json:"contact"`
+		V3Users       []string                  `json:"v3_users"`
+		Communities   []string                  `json:"v2c_communities"`
+		Managers      []string                  `json:"managers"`
+		Receivers     []config.SNMPTrapReceiver `json:"trap_receivers"`
+		Credentials   []snmp.Info               `json:"credentials"`
+		MIBBase       string                    `json:"mib_base"`
 	}
 	if err := json.Unmarshal(out, &st); err != nil {
 		return err
 	}
 	state := "off"
-	switch {
-	case st.Enabled && st.Running:
-		state = "on, running"
-	case st.Enabled && !st.Installed:
-		state = "on, but snmpd isn't installed yet (an upgrade installs it in the background)"
-	case st.Enabled:
-		state = "on, NOT RUNNING"
+	if st.Enabled {
+		switch st.State {
+		case "running":
+			state = "on, running"
+			if st.VerifiedAt != nil {
+				state += " (verified " + ago(*st.VerifiedAt) + ")"
+			}
+		case "starting":
+			state = "on, STARTING (snmpd was asked to start; not seen running yet)"
+		case "waiting-install":
+			state = "on, but snmpd isn't installed yet (an upgrade installs it in the background)"
+		case "failed":
+			state = fmt.Sprintf("on, NOT RUNNING (%d start(s) so far", st.Attempts)
+			if st.NextRetry != nil {
+				state += ", next try " + st.NextRetry.Local().Format("15:04:05")
+			}
+			state += ")"
+		case "gave-up":
+			state = "on, NOT RUNNING: gave up retrying (commit, or change the config or a credential, to try again)"
+		case "error":
+			state = "on, NOT APPLIED: the config or credentials can't be turned into snmpd's config"
+		default:
+			state = "on, " + st.State
+		}
+		if !st.ConfigCurrent && st.State != "error" && st.State != "waiting-install" {
+			state += "; snmpd's config file is not up to date"
+		}
 	}
 	fmt.Println("SNMP agent:", state)
 	if st.Error != "" {
 		fmt.Println("Last error:", st.Error)
+	}
+	if st.CredsError != "" {
+		fmt.Println("Credentials:", st.CredsError)
 	}
 	if !st.Enabled && len(st.Credentials) == 0 {
 		fmt.Println("Turn it on in configure mode: set snmp enabled on, set snmp v3-users NAME (after request snmp credential add NAME v3 ...).")
@@ -167,8 +197,16 @@ func requestSNMP(args []string, in io.Reader) error {
 		snmp.Credential
 		Replace bool `json:"replace"`
 	}{c, op == "change"})
-	if _, err := call("POST", "/v1/snmp/credentials", body); err != nil {
+	out, err := call("POST", "/v1/snmp/credentials", body)
+	if err != nil {
 		return err
+	}
+	var res struct {
+		Warnings []string `json:"warnings"`
+	}
+	json.Unmarshal(out, &res)
+	for _, w := range res.Warnings {
+		fmt.Println("warning:", w)
 	}
 	if op == "change" {
 		fmt.Printf("SNMP credential %s changed; snmpd uses it now if the config names it.\n", name)

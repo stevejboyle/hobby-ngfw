@@ -37,7 +37,48 @@ type Snapshot struct {
 	LogServers []LogServer  `json:"log_servers"`
 	Tags       []TagCount   `json:"tags"`
 	Threats    []ThreatStat `json:"threats"` // IPS matches by severity (same data as IPS.Matches, as rows)
+
+	// Sections says how fresh each independently collected part is (see
+	// SectionStatus); a part that was never collected holds no values.
+	Sections map[string]SectionStatus `json:"sections"`
+	// CollectSeconds is how long the collection behind this snapshot took.
+	CollectSeconds float64 `json:"collect_seconds"`
 }
+
+// Collection states of a section.
+const (
+	// Current: read by the collection behind this snapshot.
+	Current = "current"
+	// Stale: the last known values; the latest attempt didn't finish in
+	// time (a long commit holds the daemon) or failed (Error says why).
+	Stale = "stale"
+	// Never: not read yet since ngfwd started; its values are absent.
+	Never = "never"
+	// Failed: every attempt so far failed; its values are absent.
+	Failed = "failed"
+)
+
+// States are the collection states, in order.
+var States = []string{Current, Stale, Never, Failed}
+
+// Sections are the independently collected parts of a snapshot.
+var Sections = []string{"config", "ips", "decryption", "nat", "rules", "appid", "system"}
+
+// SectionStatus is how fresh one part of the snapshot is.
+type SectionStatus struct {
+	State       string     `json:"state"`
+	CollectedAt *time.Time `json:"collected_at,omitempty"` // when its values were read
+	Error       string     `json:"error,omitempty"`        // the latest attempt's failure
+}
+
+// Valid reports whether the section has values (current or stale).
+func (s Snapshot) Valid(section string) bool {
+	st := s.Sections[section].State
+	return st == Current || st == Stale
+}
+
+// Fresh reports whether the section was read by this collection.
+func (s Snapshot) Fresh(section string) bool { return s.Sections[section].State == Current }
 
 // System is host health read from /proc and statfs.
 type System struct {
@@ -77,6 +118,9 @@ type Service struct {
 	// Used: the config needs it (e.g. Kea only with DHCP servers). An
 	// unused service that's down is normal, not a fault.
 	Used bool `json:"used"`
+	// Unknown: its state couldn't be read freshly (Up means nothing);
+	// never a fault, never healthy.
+	Unknown bool `json:"unknown,omitempty"`
 }
 
 // Interface is one interface's counters (from /sys/class/net).

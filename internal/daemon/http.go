@@ -369,7 +369,8 @@ func (d *Daemon) mgmtRoutes() []mgmtRoute {
 			if !decode(w, r, &req) {
 				return
 			}
-			reply(w, map[string]bool{"saved": true}, d.AddSNMPCredential(c, req.Credential, req.Replace))
+			warnings, err := d.AddSNMPCredential(c, req.Credential, req.Replace)
+			reply(w, map[string]any{"saved": true, "warnings": warnings}, err)
 		}},
 		{"DELETE /v1/snmp/credentials/{name}", accounts.SuperuserOnly, func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
 			reply(w, map[string]bool{"deleted": true}, d.DeleteSNMPCredential(c, r.PathValue("name")))

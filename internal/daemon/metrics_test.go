@@ -161,6 +161,7 @@ func TestPrometheusEndpointAndKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	d.nft = &counterNFT{Fake: d.nft.(*nft.Fake), counters: map[string]map[string]nft.Counter{"forward": {"rule:allow-web": {Packets: 4}}}}
 	srv := httptest.NewServer(d.APIHandler(keys))
 	defer srv.Close()
 	get := func(key string) (int, string) {

@@ -172,6 +172,28 @@ func (d *Daemon) RestoreBackup(c accounts.Caller, req RestoreRequest) (*RestoreR
 			return nil, fmt.Errorf("%w: the backup's config doesn't load here: %v", ErrInvalid, err)
 		}
 	}
+	// SNMP credentials first: merged under d.mu (as every credential change
+	// is) and checked against the running config, the candidate and the
+	// backup's config, so a refusal leaves everything as it was.
+	if snmpCreds != nil {
+		var also []*config.Config
+		if req.Config {
+			if bc, err := parse([]byte(pl.Config)); err == nil {
+				also = append(also, bc)
+			}
+		}
+		d.mu.Lock()
+		n, err := d.restoreSNMPCredsLocked(snmpCreds, also...)
+		if err == nil {
+			res.SNMPCredentials = &n
+			d.log.Info("snmp credentials restored from a backup", "credentials", n, "by", c.Author())
+			res.Warnings = append(res.Warnings, d.syncSNMPLocked(false)...)
+		}
+		d.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+	}
 	if req.Config {
 		if err := d.SetCandidateAs(c, []byte(pl.Config)); err != nil {
 			return nil, err
@@ -202,22 +224,6 @@ func (d *Daemon) RestoreBackup(c accounts.Caller, req RestoreRequest) (*RestoreR
 			n := len(keys)
 			res.APIKeys = &n
 			d.log.Info("tag API keys restored from a backup", "keys", n, "by", c.Author())
-		}
-		if snmpCreds != nil {
-			d.snmp.credsMu.Lock()
-			err := snmp.Save(d.snmp.credsPath, snmpCreds)
-			d.snmp.credsMu.Unlock()
-			if err != nil {
-				return nil, err
-			}
-			n := len(snmpCreds.List)
-			res.SNMPCredentials = &n
-			d.log.Info("snmp credentials restored from a backup", "credentials", n, "by", c.Author())
-			d.mu.Lock()
-			if w := d.syncSNMPLocked(); len(w) > 0 {
-				res.Warnings = append(res.Warnings, w...)
-			}
-			d.mu.Unlock()
 		}
 	}
 	return res, nil

@@ -199,11 +199,12 @@ func New(d *daemon.Daemon, o Options) http.Handler {
 		if !decode(w, r, &req) {
 			return
 		}
-		if err := s.d.AddSNMPCredential(ss.caller(), req.Credential, req.Replace); err != nil {
+		warnings, err := s.d.AddSNMPCredential(ss.caller(), req.Credential, req.Replace)
+		if err != nil {
 			daemonFail(w, err)
 			return
 		}
-		reply(w, map[string]bool{"saved": true}, nil)
+		reply(w, map[string]any{"saved": true, "warnings": warnings}, nil)
 	}))
 	mux.HandleFunc("POST /ui/api/snmp/credentials/delete", s.auth(accounts.SuperuserOnly, func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
 		var req struct {

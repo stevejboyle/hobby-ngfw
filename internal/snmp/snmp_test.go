@@ -2,7 +2,9 @@ package snmp
 
 import (
 	"bytes"
+	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,6 +172,10 @@ func snapshot(at time.Time) metrics.Snapshot {
 		IPS:      metrics.IPS{State: "unavailable", Matches: map[string]map[string]uint64{"major": {"block": 2}}},
 	}
 	s.FillThreats()
+	s.Sections = map[string]metrics.SectionStatus{}
+	for _, sec := range metrics.Sections {
+		s.Sections[sec] = metrics.SectionStatus{State: metrics.Current, CollectedAt: &at}
+	}
 	return s
 }
 
@@ -250,4 +256,103 @@ func TestPass(t *testing.T) {
 	if v[".1.4.0"] != "integer 1" || v[".1.3.0"] != "integer -1" || v[".4.7.0"] != "integer 0" || v[".2.3.0"] != "integer 1" || v[".10.1.5.1"] != "" {
 		t.Errorf("missing: %v", v)
 	}
+}
+
+// M-03: the store is validated as a whole, wherever it comes from, and
+// errors never quote a secret.
+func TestStoreValidation(t *testing.T) {
+	good := `{"credentials":[{"name":"nms","kind":"v3","auth":"SHA-256","auth_pass":"secret-auth-1","priv":"AES","priv_pass":"secret-priv-1"}],"internal_pass":"AbCdEfGhIjKlMnOpQrStUvWx"}`
+	if _, err := Parse([]byte(good)); err != nil {
+		t.Fatalf("good store: %v", err)
+	}
+	// An older backup has no internal passphrase: fine.
+	if cs, err := Parse([]byte(`{"credentials":[{"name":"ro","kind":"v2c","community":"community-1"}]}`)); err != nil || cs.InternalPass != "" {
+		t.Errorf("legacy backup: %v", err)
+	}
+	for name, tc := range map[string]struct{ data, want string }{
+		"duplicate":    {`{"credentials":[{"name":"ro","kind":"v2c","community":"secret-comm-1"},{"name":"ro","kind":"v2c","community":"secret-comm-2"}]}`, "listed twice"},
+		"reserved":     {`{"credentials":[{"name":"sjb-internal","kind":"v2c","community":"secret-comm-1"}]}`, "reserved"},
+		"bad name":     {`{"credentials":[{"name":"a b","kind":"v2c","community":"secret-comm-1"}]}`, "(invalid name)"},
+		"bad internal": {`{"credentials":[],"internal_pass":"short\"quote"}`, "internal passphrase is malformed"},
+		"injection":    {`{"credentials":[{"name":"ro","kind":"v2c","community":"secret comm\nrwcommunity x"}]}`, "community"},
+		"unknown":      {`{"credentials":[],"extra":1}`, "unknown field"},
+		"wrong type":   {`{"credentials":"secret-comm-1"}`, "wrong type"},
+		"not json":     {`{"credentials":[{"name":"ro","community":secret-comm-1}]}`, "not valid JSON"},
+	} {
+		_, err := Parse([]byte(tc.data))
+		if err == nil || !errors.Is(err, ErrStore) || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v (want %q)", name, err, tc.want)
+			continue
+		}
+		if strings.Contains(err.Error(), "secret") {
+			t.Errorf("%s: the error quotes a secret: %v", name, err)
+		}
+	}
+	// A bad file is refused on load, and Save refuses to write a bad store.
+	path := filepath.Join(t.TempDir(), "snmp-credentials")
+	os.WriteFile(path, []byte(`{"credentials":[{"name":"ro","kind":"v2c","community":"x"}]}`), 0o600)
+	if _, err := Load(path); !errors.Is(err, ErrStore) {
+		t.Errorf("load of a bad file: %v", err)
+	}
+	bad := &Credentials{List: []Credential{{Name: "ro", Kind: KindV2c, Community: "community-1"}, {Name: "ro", Kind: KindV2c, Community: "community-2"}}}
+	if err := Save(path, bad); !errors.Is(err, ErrStore) {
+		t.Errorf("save of a bad store: %v", err)
+	}
+	if b, _ := os.ReadFile(path); !strings.Contains(string(b), `"x"`) {
+		t.Error("a refused save changed the file")
+	}
+}
+
+// H-02: stale or missing readings never raise an alarm in the MIB, and
+// the collection table says how fresh each part is.
+func TestMIBFreshness(t *testing.T) {
+	now := time.Unix(1795400000, 0)
+	path := filepath.Join(t.TempDir(), "metrics.json")
+	s := snapshot(now.Add(-5 * time.Second))
+	old := now.Add(-2 * time.Minute)
+	s.Sections = map[string]metrics.SectionStatus{}
+	for _, sec := range metrics.Sections {
+		s.Sections[sec] = metrics.SectionStatus{State: metrics.Current, CollectedAt: &s.Time}
+	}
+	// The IPS read is stale: suricata's state is unknown, no fault.
+	s.Sections["ips"] = metrics.SectionStatus{State: metrics.Stale, CollectedAt: &old}
+	s.Services[1].Unknown = true
+	s.Sections["config"] = metrics.SectionStatus{State: metrics.Never}
+	metrics.Save(path, s, 0o644, -1)
+	got := map[string]string{}
+	oid := Base
+	for i := 0; i < 500; i++ {
+		r := talk(t, path, "getnext\n"+oid+"\n", now)
+		if r[0] == "NONE" {
+			break
+		}
+		oid = r[0]
+		got[strings.TrimPrefix(r[0], Base)] = r[1] + " " + r[2]
+	}
+	if got[".4.7.0"] != "integer 0" || got[".10.1.5.2"] != "integer 0" {
+		t.Errorf("a stale reading raised a fault: ips %q, suricata %q", got[".4.7.0"], got[".10.1.5.2"])
+	}
+	// Collection table: index, section, state (1 current ... 4 failed), age.
+	for i, sec := range metrics.Sections {
+		if got[fmt.Sprintf(".15.1.2.%d", i+1)] != "string "+sec {
+			t.Errorf("collection row %d: %q", i+1, got[fmt.Sprintf(".15.1.2.%d", i+1)])
+		}
+	}
+	ipsRow := fmt.Sprintf(".15.1.%%d.%d", indexOf(metrics.Sections, "ips")+1)
+	cfgRow := fmt.Sprintf(".15.1.%%d.%d", indexOf(metrics.Sections, "config")+1)
+	if got[fmt.Sprintf(ipsRow, 3)] != "integer 2" || got[fmt.Sprintf(ipsRow, 4)] != "integer 120" {
+		t.Errorf("ips row: state %q age %q", got[fmt.Sprintf(ipsRow, 3)], got[fmt.Sprintf(ipsRow, 4)])
+	}
+	if got[fmt.Sprintf(cfgRow, 3)] != "integer 3" || got[fmt.Sprintf(cfgRow, 4)] != "integer -1" {
+		t.Errorf("config row: state %q age %q", got[fmt.Sprintf(cfgRow, 3)], got[fmt.Sprintf(cfgRow, 4)])
+	}
+}
+
+func indexOf(list []string, v string) int {
+	for i, x := range list {
+		if x == v {
+			return i
+		}
+	}
+	return -1
 }

@@ -1,23 +1,52 @@
 package daemon
 
 import (
+	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/stevejboyle/sjb-os/internal/appid"
 	"github.com/stevejboyle/sjb-os/internal/compiler"
 	"github.com/stevejboyle/sjb-os/internal/config"
 	"github.com/stevejboyle/sjb-os/internal/metrics"
 	"github.com/stevejboyle/sjb-os/internal/nft"
+	"github.com/stevejboyle/sjb-os/internal/sysd"
 )
 
-// metricsState is what the monitoring snapshot needs beyond the daemon's
-// other state. None of it waits for d.mu: a commit can hold that for
-// minutes (rebuilding the IPS signatures), and monitoring must keep
-// answering meanwhile.
+// Monitoring collection (Prometheus and SNMP share it):
+//
+//   - One collection at a time. Callers within MetricsMaxAge of the last
+//     one get it as it is; others start one (or join the one under way)
+//     and wait at most MetricsWait, then take the newest snapshot there is.
+//     However many scrapes arrive, there is one collector goroutine, plus
+//     at most one reading the parts behind d.mu.
+//   - The parts behind d.mu (config, IPS, decryption, NAT) are read by a
+//     goroutine the collection waits on for at most slowWait: a commit can
+//     hold d.mu for minutes, and monitoring must keep answering. When it
+//     doesn't finish in time, the last values are used and marked stale.
+//   - Each section carries its own state (current, stale, never, failed)
+//     and read time, so old values are never presented as fresh, and
+//     values never read are absent rather than zero.
+//   - Every subprocess on the way (nft, systemctl) has a time limit.
+
+// MetricsMaxAge is how old a snapshot may be and still be served without a
+// new collection: Prometheus typically scrapes every 15-60 s and SNMP's
+// snapshot is saved every 15 s, so 5 s keeps them current while bounding
+// the work however many clients poll.
+var MetricsMaxAge = 5 * time.Second
+
+// MetricsWait is how long a caller waits for a collection before taking
+// the newest snapshot there is.
+var MetricsWait = 4 * time.Second
+
+// slowWait is how long a collection waits for the parts behind d.mu.
+var slowWait = 3 * time.Second
+
+// metricsState is what monitoring needs beyond the daemon's other state.
+// None of it waits for d.mu.
 type metricsState struct {
 	running atomic.Pointer[config.Config] // the running config
 	commit  atomic.Pointer[commitRecord]  // the last commit's outcome
@@ -26,12 +55,23 @@ type metricsState struct {
 	matchMu  sync.Mutex
 	matches  map[string]map[string]uint64 // severity -> action -> IPS matches
 
-	// slow holds the parts read through methods that take d.mu (IPS, NAT,
-	// decryption, Status); slowBusy is set while a read is under way.
+	// The parts behind d.mu: the latest read (with its read time), and
+	// whether a read is under way.
 	slow     atomic.Pointer[slowMetrics]
 	slowBusy atomic.Bool
 
-	// ServiceActive reports whether a systemd unit is active (tests
+	// The collector: the latest snapshot, and the collection under way.
+	collectMu sync.Mutex
+	latest    *metrics.Snapshot
+	inflight  chan struct{} // closed when the collection under way ends
+	last      map[string]sectionMemo
+	collects  atomic.Int64 // collections run (tests)
+	// epoch changes with every commit; a snapshot from an older epoch is
+	// never served as recent. latestEpoch is the one latest was taken in.
+	epoch       atomic.Int64
+	latestEpoch int64
+
+	// serviceActive reports whether a systemd unit is active (tests
 	// replace it).
 	serviceActive func(unit string) bool
 	// snmpRunning reports whether the SNMP agent runs (nil: not managed).
@@ -39,6 +79,12 @@ type metricsState struct {
 	// kick asks the snapshot saver for a snapshot now (SNMP just turned
 	// on: the agent shouldn't wait 15 s for its first values).
 	kick chan struct{}
+}
+
+// sectionMemo is a section's last good values and when they were read.
+type sectionMemo struct {
+	at  time.Time
+	err string
 }
 
 // SnapshotKick is signalled when a snapshot should be saved at once.
@@ -55,20 +101,22 @@ type commitRecord struct {
 	note string
 }
 
+// slowMetrics are the parts read through methods that take d.mu.
 type slowMetrics struct {
+	at     time.Time // when this read finished
 	ips    IPSStatus
 	nat    []NATEntry
+	natErr error
 	dec    DecryptionStatus
 	status Status
+	stErr  error
 }
 
-// slowWait is how long a snapshot waits for the parts behind d.mu before
-// using the last ones.
-const slowWait = 3 * time.Second
-
-// recordCommit notes a commit's outcome for monitoring.
+// recordCommit notes a commit's outcome for monitoring, and makes the next
+// snapshot a new collection.
 func (d *Daemon) recordCommit(ok bool, note string) {
 	d.metrics.commit.Store(&commitRecord{ok: ok, at: d.Now(), note: note})
+	d.metrics.epoch.Add(1)
 }
 
 // countIPSMatch counts a logged IPS match.
@@ -100,13 +148,10 @@ func (d *Daemon) ipsMatches() map[string]map[string]uint64 {
 // SetSNMPRunning tells the snapshot how to see whether the SNMP agent runs.
 func (d *Daemon) SetSNMPRunning(f func() bool) { d.metrics.snmpRunning = f }
 
-func systemdActive(unit string) bool {
-	return exec.Command("systemctl", "is-active", "--quiet", unit).Run() == nil
-}
-
-// slowParts reads the parts behind d.mu, waiting at most slowWait; when
-// d.mu is busy it returns the last ones read (zero before the first).
-func (d *Daemon) slowParts() slowMetrics {
+// slowParts starts a read of the parts behind d.mu unless one is under way,
+// waits for it at most slowWait, and returns the newest read there is (nil
+// before the first finishes).
+func (d *Daemon) slowParts() *slowMetrics {
 	if d.metrics.slowBusy.CompareAndSwap(false, true) {
 		done := make(chan struct{})
 		go func() {
@@ -114,9 +159,10 @@ func (d *Daemon) slowParts() slowMetrics {
 			defer d.metrics.slowBusy.Store(false)
 			var s slowMetrics
 			s.ips = d.IPS()
-			s.nat = d.NAT()
+			s.nat, s.natErr = d.natStatus()
 			s.dec = d.Decryption()
-			s.status, _ = d.Status()
+			s.status, s.stErr = d.Status()
+			s.at = d.Now()
 			d.metrics.slow.Store(&s)
 		}()
 		select {
@@ -124,28 +170,127 @@ func (d *Daemon) slowParts() slowMetrics {
 		case <-time.After(slowWait):
 		}
 	}
-	if p := d.metrics.slow.Load(); p != nil {
-		return *p
-	}
-	return slowMetrics{}
+	return d.metrics.slow.Load()
 }
 
-// Metrics takes the monitoring snapshot.
+// Metrics returns the monitoring snapshot: the shared one when it's
+// recent, otherwise a new collection's (joined if one is under way), or,
+// when that takes longer than MetricsWait, the newest there is with its
+// sections marked as they are.
 func (d *Daemon) Metrics() metrics.Snapshot {
-	now := d.Now()
+	m := &d.metrics
+	m.collectMu.Lock()
+	if m.latest != nil && m.latestEpoch == m.epoch.Load() && d.Now().Sub(m.latest.Time) < MetricsMaxAge {
+		s := *m.latest
+		m.collectMu.Unlock()
+		return s
+	}
+	wait := m.inflight
+	if wait == nil {
+		wait = make(chan struct{})
+		m.inflight = wait
+		go func() {
+			epoch := m.epoch.Load()
+			s := d.collect()
+			m.collectMu.Lock()
+			m.latest, m.latestEpoch = &s, epoch
+			m.inflight = nil
+			m.collectMu.Unlock()
+			close(wait)
+		}()
+	}
+	m.collectMu.Unlock()
+	select {
+	case <-wait:
+	case <-time.After(MetricsWait):
+	}
+	m.collectMu.Lock()
+	defer m.collectMu.Unlock()
+	if m.latest != nil {
+		return *m.latest
+	}
+	// The first collection hasn't finished: say so, with nothing in it.
+	s := metrics.Snapshot{Time: d.Now().UTC(), Version: d.version, Sections: map[string]metrics.SectionStatus{}}
+	for _, sec := range metrics.Sections {
+		s.Sections[sec] = metrics.SectionStatus{State: metrics.Never}
+	}
+	return s
+}
+
+// section records one section's outcome and returns its status: current
+// when read now, stale when read before (err says why not now), never or
+// failed when it has no values.
+func (d *Daemon) section(s *metrics.Snapshot, name string, readAt time.Time, start time.Time, err error) {
+	if d.metrics.last == nil {
+		d.metrics.last = map[string]sectionMemo{}
+	}
+	memo := d.metrics.last[name]
+	st := metrics.SectionStatus{}
+	switch {
+	case err == nil && !readAt.IsZero() && !readAt.Before(start):
+		memo = sectionMemo{at: readAt}
+		st.State = metrics.Current
+	case err == nil && !readAt.IsZero():
+		// Read by an earlier attempt that finished late: last known.
+		memo = sectionMemo{at: readAt}
+		st.State, st.Error = metrics.Stale, "not read in time (the daemon is busy, e.g. a long commit)"
+	case err != nil && !memo.at.IsZero():
+		st.State, st.Error = metrics.Stale, err.Error()
+	case err != nil:
+		st.State, st.Error = metrics.Failed, err.Error()
+	default:
+		st.State = metrics.Never
+	}
+	if !memo.at.IsZero() {
+		at := memo.at.UTC()
+		st.CollectedAt = &at
+	}
+	d.metrics.last[name] = memo
+	s.Sections[name] = st
+}
+
+// collect takes a snapshot. Only one runs at a time (Metrics).
+func (d *Daemon) collect() metrics.Snapshot {
+	d.metrics.collects.Add(1)
+	start := d.Now()
 	root := d.statsRoot
 	if root == "" {
 		root = "/"
 	}
-	s := metrics.Snapshot{Time: now.UTC(), Version: d.version}
+	d.metrics.collectMu.Lock()
+	prev := d.metrics.latest
+	d.metrics.collectMu.Unlock()
+	s := metrics.Snapshot{Time: start.UTC(), Version: d.version, Sections: map[string]metrics.SectionStatus{}}
 	s.Hostname, _ = os.Hostname()
 	s.System = metrics.ReadSystem(root, []string{"/", "/var"})
 	s.Sessions = metrics.ReadSessions(root)
+	d.section(&s, "system", d.Now(), start, nil)
 	cfg := d.metrics.running.Load()
-	slow := d.slowParts()
 
-	// Config.
-	s.Config = metrics.Config{RunningRevision: slow.status.Running, Uncommitted: slow.status.Pending, Recovery: slow.status.Recovery != "", LastCommitOK: true}
+	// The parts behind d.mu.
+	slow := d.slowParts()
+	slowAt := time.Time{}
+	if slow != nil {
+		slowAt = slow.at
+	} else {
+		slow = &slowMetrics{}
+	}
+	var stErr error
+	if slow.stErr != nil {
+		stErr = slow.stErr
+	}
+	d.section(&s, "config", slowAt, start, stErr)
+	d.section(&s, "ips", slowAt, start, nil)
+	d.section(&s, "decryption", slowAt, start, nil)
+	natErr := slow.natErr
+	d.section(&s, "nat", slowAt, start, natErr)
+
+	// Config: the commit record is always current; the revision and state
+	// only when the config section has values.
+	s.Config = metrics.Config{LastCommitOK: true}
+	if s.Valid("config") {
+		s.Config.RunningRevision, s.Config.Uncommitted, s.Config.Recovery = slow.status.Running, slow.status.Pending, slow.status.Recovery != ""
+	}
 	if c := d.metrics.commit.Load(); c != nil {
 		at := c.at.UTC()
 		s.Config.LastCommitOK, s.Config.LastCommitTime, s.Config.LastCommitNote = c.ok, &at, c.note
@@ -166,67 +311,90 @@ func (d *Daemon) Metrics() metrics.Snapshot {
 		}
 	}
 
-	// Rules: counters summed per rule across its ruleset lines.
-	s.Rules = d.ruleCounters(cfg)
-
-	// NAT.
-	for _, n := range slow.nat {
-		e := metrics.NAT{Name: n.Name, Type: n.Type}
-		if n.Hits != nil {
-			e.Hits = *n.Hits
-		}
-		if n.OutHits != nil {
-			e.OutHits = *n.OutHits
-		}
-		if n.HairpinHits != nil {
-			e.Hairpin = *n.HairpinHits
-		}
-		s.NAT = append(s.NAT, e)
+	// Rules: on a failed read, the last known counters (stale), never
+	// zeros.
+	rules, rerr := d.ruleCounters(cfg)
+	d.section(&s, "rules", d.Now(), start, rerr)
+	switch {
+	case rerr == nil:
+		s.Rules = rules
+	case s.Valid("rules") && prev != nil:
+		s.Rules = prev.Rules
 	}
 
-	// IPS.
-	s.IPS = metrics.IPS{State: slow.ips.State, Up: slow.ips.Running, Loaded: slow.ips.Loaded, QueueDropped: slow.ips.QueueDropped, Matches: d.ipsMatches()}
-	if s.IPS.State == "" {
-		s.IPS.State = "off"
-	}
-	if t := slow.ips.Engine.Updated; !t.IsZero() {
-		u := t.UTC()
-		s.IPS.Updated = &u
-	}
-	for _, e := range slow.ips.Exceptions {
-		if e.Inactive {
-			s.IPS.ExceptionsIdle++
+	// NAT: when the counters failed, the last known entries (stale).
+	if s.Valid("nat") {
+		if natErr != nil && prev != nil {
+			s.NAT = prev.NAT
 		} else {
-			s.IPS.ExceptionsActive++
+			for _, n := range slow.nat {
+				e := metrics.NAT{Name: n.Name, Type: n.Type}
+				if n.Hits != nil {
+					e.Hits = *n.Hits
+				}
+				if n.OutHits != nil {
+					e.OutHits = *n.OutHits
+				}
+				if n.HairpinHits != nil {
+					e.Hairpin = *n.HairpinHits
+				}
+				s.NAT = append(s.NAT, e)
+			}
+		}
+	}
+
+	// IPS: the matches are counted as they happen (always current); the
+	// engine's state only when the section has values.
+	s.IPS = metrics.IPS{Matches: d.ipsMatches()}
+	if s.Valid("ips") {
+		s.IPS.State, s.IPS.Up, s.IPS.Loaded, s.IPS.QueueDropped = slow.ips.State, slow.ips.Running, slow.ips.Loaded, slow.ips.QueueDropped
+		if s.IPS.State == "" {
+			s.IPS.State = "off"
+		}
+		if t := slow.ips.Engine.Updated; !t.IsZero() {
+			u := t.UTC()
+			s.IPS.Updated = &u
+		}
+		for _, e := range slow.ips.Exceptions {
+			if e.Inactive {
+				s.IPS.ExceptionsIdle++
+			} else {
+				s.IPS.ExceptionsActive++
+			}
 		}
 	}
 	s.FillThreats()
 
-	// App Identification.
+	// App Identification: appidd's stats file.
 	enabled := cfg != nil && cfg.System.AppIDOn()
 	seen := d.appid.Seen(enabled)
-	s.AppID = metrics.AppID{Enabled: enabled, Up: seen.Running}
-	var apps []metrics.App
-	for _, a := range seen.Apps {
-		apps = append(apps, metrics.App{Name: a.Name, Bytes: a.Bytes, Connections: a.Flows})
+	var aerr error
+	if strings.HasPrefix(seen.Note, "appidd's statistics are unreadable") {
+		aerr = fmt.Errorf("%s", seen.Note)
 	}
-	s.AppID.Apps = metrics.TopApps(apps)
+	d.section(&s, "appid", d.Now(), start, aerr)
+	s.AppID = metrics.AppID{Enabled: enabled, Up: seen.Running}
+	if aerr == nil {
+		s.AppID.Apps = topApps(seen)
+	} else if prev != nil {
+		s.AppID.Apps = prev.AppID.Apps
+	}
 
 	// Decryption.
-	s.Decryption = metrics.Decryption{State: slow.dec.State, Up: slow.dec.Running, Active: slow.dec.Active, Counts: slow.dec.Counts}
-	if s.Decryption.State == "" {
-		s.Decryption.State = "off"
+	if s.Valid("decryption") {
+		s.Decryption = metrics.Decryption{State: slow.dec.State, Up: slow.dec.Running, Active: slow.dec.Active, Counts: slow.dec.Counts}
+		if s.Decryption.State == "" {
+			s.Decryption.State = "off"
+		}
 	}
 
-	// Log forwarding.
+	// Log forwarding and tags: ngfwd's own memory, always current.
 	for _, l := range d.LogForwarding().Servers {
 		s.LogServers = append(s.LogServers, metrics.LogServer{Name: l.Name, Connected: l.State == "connected", Sent: l.Sent, Dropped: l.Dropped, Queued: l.Queued})
 	}
-
-	// Tags.
 	counts := map[string]int{}
 	var order []string
-	for _, e := range d.tags.List("", now) {
+	for _, e := range d.tags.List("", start) {
 		if counts[e.Tag] == 0 {
 			order = append(order, e.Tag)
 		}
@@ -236,16 +404,17 @@ func (d *Daemon) Metrics() metrics.Snapshot {
 		s.Tags = append(s.Tags, metrics.TagCount{Tag: t, Addresses: counts[t]})
 	}
 
-	// Services.
+	// Services. Suricata and tlsd come from the IPS and decryption reads:
+	// unknown (never a fault, never healthy) unless those are current.
 	active := d.metrics.serviceActive
 	if active == nil {
-		active = systemdActive
+		active = sysd.Active
 	}
 	used := func(f func(*config.Config) bool) bool { return cfg != nil && f(cfg) }
 	s.Services = []metrics.Service{
 		{Name: "ngfwd", Up: true, Used: true},
-		{Name: "suricata", Up: slow.ips.Running, Used: used(func(c *config.Config) bool { return c.IPSActive() })},
-		{Name: "tlsd", Up: slow.dec.Running, Used: used(func(c *config.Config) bool { return c.System.DecryptionOn() && c.DecryptionActive() })},
+		{Name: "suricata", Up: slow.ips.Running, Used: used(func(c *config.Config) bool { return c.IPSActive() }), Unknown: !s.Fresh("ips")},
+		{Name: "tlsd", Up: slow.dec.Running, Used: used(func(c *config.Config) bool { return c.System.DecryptionOn() && c.DecryptionActive() }), Unknown: !s.Fresh("decryption")},
 		{Name: "appidd", Up: seen.Running, Used: enabled},
 		{Name: "frr", Up: d.frr.Available() && active("frr"), Used: used(func(c *config.Config) bool { return len(c.Routing) > 0 })},
 		{Name: "kea", Up: d.dhcp.Running(), Used: used(func(c *config.Config) bool { return len(c.DHCPServers) > 0 })},
@@ -253,7 +422,21 @@ func (d *Daemon) Metrics() metrics.Snapshot {
 	if d.metrics.snmpRunning != nil {
 		s.Services = append(s.Services, metrics.Service{Name: "snmpd", Up: d.metrics.snmpRunning(), Used: used(func(c *config.Config) bool { return c.SNMP.On() })})
 	}
+	for i := range s.Services {
+		if s.Services[i].Unknown {
+			s.Services[i].Up = false
+		}
+	}
+	s.CollectSeconds = d.Now().Sub(start).Seconds()
 	return s
+}
+
+func topApps(seen appid.Status) []metrics.App {
+	var apps []metrics.App
+	for _, a := range seen.Apps {
+		apps = append(apps, metrics.App{Name: a.Name, Bytes: a.Bytes, Connections: a.Flows})
+	}
+	return metrics.TopApps(apps)
 }
 
 func hasIface(list []metrics.Interface, name string) bool {
@@ -269,15 +452,20 @@ func hasIface(list []metrics.Interface, name string) bool {
 var ruleChains = []string{"forward", "allowed", "appid"}
 
 // ruleCounters reads every rule's counters (its lines summed; a rule's
-// "application pending" lines count too) and the default deny.
-func (d *Daemon) ruleCounters(cfg *config.Config) []metrics.Rule {
+// "application pending" lines count too) and the default deny. A failed
+// read is an error, never zeros; a chain that doesn't exist (nothing of
+// that kind configured) contributes nothing.
+func (d *Daemon) ruleCounters(cfg *config.Config) ([]metrics.Rule, error) {
 	if cfg == nil {
-		return nil
+		return nil, nil
 	}
 	reader, _ := d.nft.(counterReader)
-	var all map[string]map[string]nft.Counter
-	if reader != nil {
-		all, _ = reader.Counters(compiler.Table, ruleChains...)
+	if reader == nil {
+		return nil, fmt.Errorf("rule counters can't be read on this system")
+	}
+	all, err := reader.Counters(compiler.Table, ruleChains...)
+	if err != nil {
+		return nil, err
 	}
 	sum := map[string]nft.Counter{}
 	for _, chain := range all {
@@ -303,5 +491,5 @@ func (d *Daemon) ruleCounters(cfg *config.Config) []metrics.Rule {
 		out = append(out, metrics.Rule{Name: r.Name, Action: r.Action, Packets: c.Packets, Bytes: c.Bytes})
 	}
 	c := sum["default-deny"]
-	return append(out, metrics.Rule{Name: "default-deny", Action: "deny", Packets: c.Packets, Bytes: c.Bytes})
+	return append(out, metrics.Rule{Name: "default-deny", Action: "deny", Packets: c.Packets, Bytes: c.Bytes}), nil
 }

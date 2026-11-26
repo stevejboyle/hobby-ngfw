@@ -16,13 +16,15 @@ IMPORTS
         FROM NET-SNMP-MIB;
 
 sjbOS MODULE-IDENTITY
-    LAST-UPDATED "202611250000Z"
+    LAST-UPDATED "202611260000Z"
     ORGANIZATION "SJB Consulting"
     CONTACT-INFO "https://github.com/stevejboyle/sjb-os"
     DESCRIPTION
         "SJB-OS, an experimental firewall appliance for isolated lab
         use: services, configuration, sessions, security rules, NAT,
         the IPS, TLS decryption and log forwarding."
+    REVISION "202611260000Z"
+    DESCRIPTION "sjbCollectionTable; faults are raised on fresh readings only (0.9.13-r03)."
     REVISION "202611250000Z"
     DESCRIPTION "First version (SJB-OS 0.9.13)."
     ::= { netSnmpPlaypen 7 }
@@ -115,8 +117,9 @@ sjbIpsExceptionsInactive OBJECT-TYPE
     DESCRIPTION "IPS exceptions waiting for a free code." ::= { sjbIps 6 }
 sjbIpsFault OBJECT-TYPE
     SYNTAX Integer32 (0..1) MAX-ACCESS read-only STATUS current
-    DESCRIPTION "1 when rules need the IPS and Suricata isn't running
-        (the sjbIpsEngineDown trigger)." ::= { sjbIps 7 }
+    DESCRIPTION "1 when rules need the IPS and a fresh reading shows
+        Suricata isn't running (the sjbIpsEngineDown trigger). A stale or
+        missing reading gives 0: no alarm on old data." ::= { sjbIps 7 }
 
 -- TLS decryption
 
@@ -165,8 +168,9 @@ sjbServiceUsed OBJECT-TYPE
     DESCRIPTION "1 when the config needs it." ::= { sjbServiceEntry 4 }
 sjbServiceFault OBJECT-TYPE
     SYNTAX Integer32 (0..1) MAX-ACCESS read-only STATUS current
-    DESCRIPTION "1 when it's needed and not running (the sjbServiceDown
-        trigger)." ::= { sjbServiceEntry 5 }
+    DESCRIPTION "1 when it's needed and a fresh reading shows it isn't
+        running (the sjbServiceDown trigger); 0 when its state couldn't be
+        read freshly." ::= { sjbServiceEntry 5 }
 
 -- Security rules
 
@@ -284,6 +288,36 @@ sjbThreatAlerted OBJECT-TYPE
     SYNTAX Counter64 MAX-ACCESS read-only STATUS current
     DESCRIPTION "Matches logged and let through." ::= { sjbThreatEntry 4 }
 
+-- Collection health
+
+sjbCollectionTable OBJECT-TYPE
+    SYNTAX SEQUENCE OF SjbCollectionEntry MAX-ACCESS not-accessible STATUS current
+    DESCRIPTION "How fresh each independently collected part of these
+        values is." ::= { sjbOS 15 }
+sjbCollectionEntry OBJECT-TYPE
+    SYNTAX SjbCollectionEntry MAX-ACCESS not-accessible STATUS current
+    DESCRIPTION "One part." INDEX { sjbCollectionIndex } ::= { sjbCollectionTable 1 }
+SjbCollectionEntry ::= SEQUENCE { sjbCollectionIndex Integer32, sjbCollectionSection DisplayString,
+    sjbCollectionState INTEGER, sjbCollectionAge Integer32 }
+sjbCollectionIndex OBJECT-TYPE
+    SYNTAX Integer32 (1..2147483647) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Row number." ::= { sjbCollectionEntry 1 }
+sjbCollectionSection OBJECT-TYPE
+    SYNTAX DisplayString MAX-ACCESS read-only STATUS current
+    DESCRIPTION "config, ips, decryption, nat, rules, appid or system."
+    ::= { sjbCollectionEntry 2 }
+sjbCollectionState OBJECT-TYPE
+    SYNTAX INTEGER { current(1), stale(2), never(3), failed(4) }
+    MAX-ACCESS read-only STATUS current
+    DESCRIPTION "current: read by the latest collection; stale: the last
+        known values (the latest read failed or didn't finish in time);
+        never: not read since ngfwd started; failed: every read failed."
+    ::= { sjbCollectionEntry 3 }
+sjbCollectionAge OBJECT-TYPE
+    SYNTAX Integer32 UNITS "seconds" MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Seconds since the part's values were read; -1 when never."
+    ::= { sjbCollectionEntry 4 }
+
 -- Traps: SJB-OS sends DISMAN-EVENT-MIB mteTriggerFired notifications
 -- named sjbServiceDown (with sjbServiceName), sjbIpsEngineDown and
 -- sjbCommitFailed (with sjbLastCommitNote), plus IF-MIB linkUp/linkDown.
@@ -307,7 +341,8 @@ sjbGroup OBJECT-GROUP
         sjbNatIndex, sjbNatName, sjbNatType, sjbNatHits, sjbNatOutHits, sjbNatHairpin,
         sjbLogServerIndex, sjbLogServerName, sjbLogServerConnected, sjbLogServerSent,
         sjbLogServerDropped, sjbLogServerQueued,
-        sjbThreatIndex, sjbThreatSeverity, sjbThreatBlocked, sjbThreatAlerted }
+        sjbThreatIndex, sjbThreatSeverity, sjbThreatBlocked, sjbThreatAlerted,
+        sjbCollectionIndex, sjbCollectionSection, sjbCollectionState, sjbCollectionAge }
     STATUS current
     DESCRIPTION "Everything."
     ::= { sjbConformance 2 }

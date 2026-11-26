@@ -2015,12 +2015,15 @@ async function pageMonitoring() {
     cfg.snmp = { enabled: f.enabled.get(), location: f.location.get(), contact: f.contact.get(), v3_users: f.v3.get(), v2c_communities: f.v2c.get(), managers: f.managers.get() };
     try { await saveCandidate(cfg, "SNMP settings saved to the candidate."); } catch (e) { toast(e.message); }
   } }, "Save");
+  const phases = { running: "running", starting: "starting (not seen running yet)", "waiting-install": "on, but snmpd isn't installed yet",
+    failed: "not running: retrying", "gave-up": "not running: gave up (commit to retry)", error: "not applied: config error" };
   let live = "off";
-  if (st && st.enabled) live = st.running ? "running" : st.installed ? "not running" : "on, but snmpd isn't installed yet";
+  if (st && st.enabled) live = (phases[st.state] || st.state) + (st.state === "failed" && st.attempts ? ` (${st.attempts} start${st.attempts > 1 ? "s" : ""} so far)` : "");
   const agent = h("section", { class: "panel" },
     h("div", { class: "page-head" }, h("h2", {}, "SNMP agent"), h("span", { class: "spacer" }),
-      h("span", { class: st && st.enabled && st.running ? "action-allow" : st && st.enabled ? "action-deny" : "muted" }, live)),
+      h("span", { class: st && st.enabled && st.state === "running" ? "action-allow" : st && st.enabled ? "action-deny" : "muted" }, live)),
     st && st.error ? h("p", { class: "action-deny small" }, st.error) : null,
+    st && st.credentials_error ? h("p", { class: "action-deny small" }, "Credentials: " + st.credentials_error) : null,
     h("p", { class: "muted small" }, "Read-only SNMP (v3, and v2c from listed managers) on the management network: the standard MIBs (interfaces, host resources) and SJB-OS-MIB under ", h("span", { class: "mono" }, (st && st.mib_base) || ""), " (the MIB file is /usr/share/sjb-os/mibs/SJB-OS-MIB.txt). Settings take effect at commit."),
     h("div", { class: "grid2" }, Object.values(f).map((x) => x.node)), h("div", { class: "row" }, save));
 
@@ -2039,9 +2042,11 @@ async function pageMonitoring() {
     sync();
     modal(replace ? `New secrets for ${c.name}` : "New SNMP credential", form([name, kind, auth, priv, ap, pp, cm], null).node, { onSubmit: async () => {
       const is3 = kind.get() === "v3";
-      await api("POST", "snmp/credentials", is3 ? { name: name.get(), kind: "v3", auth: auth.get(), priv: priv.get(), auth_pass: ap.get(), priv_pass: pp.get(), replace }
+      const res = await api("POST", "snmp/credentials", is3 ? { name: name.get(), kind: "v3", auth: auth.get(), priv: priv.get(), auth_pass: ap.get(), priv_pass: pp.get(), replace }
         : { name: name.get(), kind: "v2c", community: cm.get(), replace });
-      toast(replace ? "Credential changed; in use now." : "Credential added. Name it in the SNMP settings or a trap receiver, then commit.");
+      const warn = (res && res.warnings) || [];
+      toast(warn.length ? "Saved, with a warning: " + warn.join("; ")
+        : replace ? "Credential changed; snmpd restarts with it (the status shows when it's running)." : "Credential added. Name it in the SNMP settings or a trap receiver, then commit.");
       route();
     } });
   };

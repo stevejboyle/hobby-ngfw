@@ -450,7 +450,7 @@ func (d *Daemon) ReconcileRoutes() {
 	d.syncDHCPLocked(false)
 	d.syncIPSLocked()
 	d.syncDecryptLocked(false)
-	d.syncSNMPLocked()
+	d.syncSNMPLocked(false)
 	if after := installedCount(d.routeStates); after != before {
 		d.log.Info("static routes", "installed", after, "configured", len(d.wantRoutes), "problems", warn)
 	}
@@ -528,7 +528,7 @@ func (d *Daemon) Start() error {
 	// Log forwarding after the flush: a connection to a log server made
 	// before it would lose its conntrack entry, and the input chain drops
 	// the server's packets of a connection it doesn't know.
-	for _, w := range append(append(warns, d.syncLogFwdLocked()...), d.syncSNMPLocked()...) {
+	for _, w := range append(append(warns, d.syncLogFwdLocked()...), d.syncSNMPLocked(false)...) {
 		d.log.Warn(w)
 	}
 	d.log.Info("ruleset applied at start", "revision", n, "warnings", len(res.Warnings))
@@ -822,7 +822,7 @@ func (d *Daemon) commitLocked(data []byte, author, message string, confirm time.
 	routeWarnings = append(routeWarnings, d.syncIPSLocked()...)
 	routeWarnings = append(routeWarnings, d.syncDecryptLocked(true)...)
 	routeWarnings = append(routeWarnings, d.syncLogFwdLocked()...)
-	routeWarnings = append(routeWarnings, d.syncSNMPLocked()...)
+	routeWarnings = append(routeWarnings, d.syncSNMPLocked(true)...)
 
 	out := &CommitResult{Revision: rev, Warnings: append(append(res.Warnings, warnings...), routeWarnings...)}
 	if confirm > 0 {
@@ -1003,7 +1003,7 @@ func (d *Daemon) rollbackToNothingLocked() error {
 	d.syncIPSLocked()
 	d.syncDecryptLocked(true)
 	d.syncLogFwdLocked()
-	d.syncSNMPLocked()
+	d.syncSNMPLocked(true)
 	return nil
 }
 

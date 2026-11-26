@@ -3,6 +3,7 @@ package metrics
 import (
 	"bufio"
 	"io"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,7 +39,13 @@ func (p *promWriter) sample(name string, v float64, labels ...string) {
 		p.w.WriteByte('}')
 	}
 	p.w.WriteByte(' ')
-	p.w.WriteString(strconv.FormatFloat(v, 'g', -1, 64))
+	// Whole numbers (counters, timestamps) as integers: 'g' would write
+	// a timestamp as 1.79539994e+09.
+	if v == math.Trunc(v) && math.Abs(v) < 1e15 {
+		p.w.WriteString(strconv.FormatInt(int64(v), 10))
+	} else {
+		p.w.WriteString(strconv.FormatFloat(v, 'g', -1, 64))
+	}
 	p.w.WriteByte('\n')
 }
 
@@ -91,17 +98,38 @@ func WritePrometheus(out io.Writer, s Snapshot) error {
 		}
 	}
 
-	p.one("sjbos_config_running_revision", "gauge", "The running config revision.", float64(s.Config.RunningRevision))
-	p.one("sjbos_config_uncommitted_changes", "gauge", "1 when the candidate differs from the running config.", b2f(s.Config.Uncommitted))
+	// Collection health: each section's state and read time.
+	p.family("sjbos_collection_state", "gauge", "How fresh each part of the metrics is (1 for its state): current (read by this collection), stale (last known values), never (not read yet, values left out), failed (no values: every read failed).")
+	for _, sec := range sortedKeys(s.Sections) {
+		for _, st := range States {
+			p.sample("sjbos_collection_state", b2f(s.Sections[sec].State == st), "section", sec, "state", st)
+		}
+	}
+	p.family("sjbos_collection_timestamp_seconds", "gauge", "When each part's values were read (Unix time); absent for parts never read.")
+	for _, sec := range sortedKeys(s.Sections) {
+		if t := s.Sections[sec].CollectedAt; t != nil {
+			p.sample("sjbos_collection_timestamp_seconds", float64(t.Unix()), "section", sec)
+		}
+	}
+	p.one("sjbos_collection_duration_seconds", "gauge", "How long the collection behind these metrics took.", s.CollectSeconds)
+
+	if s.Valid("config") {
+		p.one("sjbos_config_running_revision", "gauge", "The running config revision.", float64(s.Config.RunningRevision))
+		p.one("sjbos_config_uncommitted_changes", "gauge", "1 when the candidate differs from the running config.", b2f(s.Config.Uncommitted))
+	}
 	p.one("sjbos_config_last_commit_success", "gauge", "0 when the last commit failed or was rolled back automatically.", b2f(s.Config.LastCommitOK))
 	if s.Config.LastCommitTime != nil {
 		p.one("sjbos_config_last_commit_timestamp_seconds", "gauge", "When the last commit finished (Unix time).", float64(s.Config.LastCommitTime.Unix()))
 	}
-	p.one("sjbos_config_recovery", "gauge", "1 when enforcement may not match the running revision.", b2f(s.Config.Recovery))
+	if s.Valid("config") {
+		p.one("sjbos_config_recovery", "gauge", "1 when enforcement may not match the running revision.", b2f(s.Config.Recovery))
+	}
 
-	p.family("sjbos_service_up", "gauge", "1 when the service is running.")
+	p.family("sjbos_service_up", "gauge", "1 when the service is running (absent while its state can't be read freshly).")
 	for _, sv := range s.Services {
-		p.sample("sjbos_service_up", b2f(sv.Up), "service", sv.Name)
+		if !sv.Unknown {
+			p.sample("sjbos_service_up", b2f(sv.Up), "service", sv.Name)
+		}
 	}
 	p.family("sjbos_service_used", "gauge", "1 when the config needs the service.")
 	for _, sv := range s.Services {
@@ -161,24 +189,28 @@ func WritePrometheus(out io.Writer, s Snapshot) error {
 		}
 	}
 
-	p.family("sjbos_ips_state", "gauge", "The IPS state (1 for the current one): off, unavailable, starting, loading, inspecting.")
-	for _, st := range []string{"off", "unavailable", "starting", "loading", "inspecting"} {
-		p.sample("sjbos_ips_state", b2f(s.IPS.State == st), "state", st)
+	if s.Valid("ips") {
+		p.family("sjbos_ips_state", "gauge", "The IPS state (1 for the current one): off, unavailable, starting, loading, inspecting.")
+		for _, st := range []string{"off", "unavailable", "starting", "loading", "inspecting"} {
+			p.sample("sjbos_ips_state", b2f(s.IPS.State == st), "state", st)
+		}
+		p.one("sjbos_ips_signatures_loaded", "gauge", "Signatures the running engine has active.", float64(s.IPS.Loaded))
+		if s.IPS.Updated != nil {
+			p.one("sjbos_ips_signatures_updated_timestamp_seconds", "gauge", "Last successful signature download (Unix time).", float64(s.IPS.Updated.Unix()))
+		}
+		p.one("sjbos_ips_queue_dropped_total", "counter", "Packets that passed uninspected or were dropped because the IPS queue was full.", float64(s.IPS.QueueDropped))
 	}
-	p.one("sjbos_ips_signatures_loaded", "gauge", "Signatures the running engine has active.", float64(s.IPS.Loaded))
-	if s.IPS.Updated != nil {
-		p.one("sjbos_ips_signatures_updated_timestamp_seconds", "gauge", "Last successful signature download (Unix time).", float64(s.IPS.Updated.Unix()))
-	}
-	p.one("sjbos_ips_queue_dropped_total", "counter", "Packets that passed uninspected or were dropped because the IPS queue was full.", float64(s.IPS.QueueDropped))
 	p.family("sjbos_ips_matches_total", "counter", "IPS matches logged since ngfwd started, by severity and action.")
 	for _, sev := range Severities {
 		for _, act := range []string{"block", "alert"} {
 			p.sample("sjbos_ips_matches_total", float64(s.IPS.Matches[sev][act]), "severity", sev, "action", act)
 		}
 	}
-	p.family("sjbos_ips_exceptions", "gauge", "IPS exceptions in the running config, by status.")
-	p.sample("sjbos_ips_exceptions", float64(s.IPS.ExceptionsActive), "status", "active")
-	p.sample("sjbos_ips_exceptions", float64(s.IPS.ExceptionsIdle), "status", "inactive")
+	if s.Valid("ips") {
+		p.family("sjbos_ips_exceptions", "gauge", "IPS exceptions in the running config, by status.")
+		p.sample("sjbos_ips_exceptions", float64(s.IPS.ExceptionsActive), "status", "active")
+		p.sample("sjbos_ips_exceptions", float64(s.IPS.ExceptionsIdle), "status", "inactive")
+	}
 
 	p.one("sjbos_appid_enabled", "gauge", "1 when App Identification is on.", b2f(s.AppID.Enabled))
 	if len(s.AppID.Apps) > 0 {
@@ -192,11 +224,13 @@ func WritePrometheus(out io.Writer, s Snapshot) error {
 		}
 	}
 
-	p.family("sjbos_decryption_state", "gauge", "The TLS decryption state (1 for the current one).")
-	for _, st := range []string{"off", "no-ca", "unavailable", "busy", "observing", "decrypting"} {
-		p.sample("sjbos_decryption_state", b2f(s.Decryption.State == st), "state", st)
+	if s.Valid("decryption") {
+		p.family("sjbos_decryption_state", "gauge", "The TLS decryption state (1 for the current one).")
+		for _, st := range []string{"off", "no-ca", "unavailable", "busy", "observing", "decrypting"} {
+			p.sample("sjbos_decryption_state", b2f(s.Decryption.State == st), "state", st)
+		}
+		p.one("sjbos_decryption_active_connections", "gauge", "Connections tlsd handles now.", float64(s.Decryption.Active))
 	}
-	p.one("sjbos_decryption_active_connections", "gauge", "Connections tlsd handles now.", float64(s.Decryption.Active))
 	if len(s.Decryption.Counts) > 0 {
 		p.family("sjbos_decryption_connections_total", "counter", "Connections handled by tlsd since it started, by outcome.")
 		for _, k := range sortedKeys(s.Decryption.Counts) {

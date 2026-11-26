@@ -67,7 +67,7 @@ func sample() Snapshot {
 		Time: now, Version: "0.9.13-r01", Hostname: `sjb "fw"`,
 		System:     System{UptimeSeconds: 10, CPUSeconds: map[string]float64{"user": 1, "idle": 9}, CPUs: 2, Load: [3]float64{1, 2, 3}, MemTotal: 10, MemAvailable: 5, Disks: []Disk{{"/", 100, 50}}},
 		Config:     Config{RunningRevision: 7, LastCommitOK: true, LastCommitTime: &now},
-		Services:   []Service{{"ngfwd", true, true}, {"suricata", false, true}},
+		Services:   []Service{{Name: "ngfwd", Up: true, Used: true}, {Name: "suricata", Used: true}, {Name: "tlsd", Unknown: true, Used: true}},
 		Interfaces: []Interface{{Name: "inside", Zone: "trust", Up: true, RxBytes: 5}, {Name: "mgmt", Up: true}},
 		Sessions:   Sessions{3, 100},
 		Rules:      []Rule{{"web-in", "allow", 10, 1000}, {"default-deny", "deny", 2, 120}},
@@ -79,6 +79,10 @@ func sample() Snapshot {
 		Tags:       []TagCount{{"quarantine", 2}},
 	}
 	s.FillThreats()
+	s.Sections = map[string]SectionStatus{}
+	for _, sec := range Sections {
+		s.Sections[sec] = SectionStatus{State: Current, CollectedAt: &now}
+	}
 	return s
 }
 
@@ -205,5 +209,43 @@ func TestSaveLoadAndTop(t *testing.T) {
 	top := TopApps(apps)
 	if len(top) != MaxApps || top[0].Bytes != MaxApps+4 {
 		t.Errorf("top: %d, first %+v", len(top), top[0])
+	}
+}
+
+func TestPrometheusFreshness(t *testing.T) {
+	s := sample()
+	old := s.Time.Add(-time.Minute)
+	s.Sections["ips"] = SectionStatus{State: Stale, CollectedAt: &old, Error: "not read in time"}
+	s.Sections["config"] = SectionStatus{State: Never}
+	s.Sections["decryption"] = SectionStatus{State: Failed, Error: "boom"}
+	s.Config.RunningRevision = 0
+	var buf bytes.Buffer
+	if err := WritePrometheus(&buf, s); err != nil {
+		t.Fatal(err)
+	}
+	text := buf.String()
+	checkFormat(t, text)
+	for _, want := range []string{
+		`sjbos_collection_state{section="ips",state="stale"} 1`,
+		`sjbos_collection_state{section="config",state="never"} 1`,
+		`sjbos_collection_state{section="decryption",state="failed"} 1`,
+		`sjbos_collection_state{section="rules",state="current"} 1`,
+		`sjbos_collection_timestamp_seconds{section="ips"} 1795399940`,
+		`sjbos_ips_state{state="inspecting"} 1`, // stale: last known, still shown
+		`sjbos_config_last_commit_success 1`,    // the commit record is always current
+	} {
+		if !strings.Contains(text, want+"\n") {
+			t.Errorf("missing %s", want)
+		}
+	}
+	for _, absent := range []string{
+		"sjbos_config_running_revision", // never read: no made-up zero
+		"sjbos_decryption_state",        // failed: no values
+		`sjbos_collection_timestamp_seconds{section="config"}`,
+		`sjbos_service_up{service="tlsd"}`, // unknown: neither up nor down
+	} {
+		if strings.Contains(text, absent) {
+			t.Errorf("%s exported", absent)
+		}
 	}
 }

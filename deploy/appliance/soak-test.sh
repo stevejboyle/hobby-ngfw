@@ -137,7 +137,7 @@ EOF
 A1='soak-auth-pass-1' P1='soak-priv-pass-1'
 setup=$'request snmp credential add soak v3 auth sha256 priv aes\n'"$A1"$'\n'"$A1"$'\n'"$P1"$'\n'"$P1"$'\n'
 setup+=$'configure\nset zone soakc\nset zone soaks\nset interface sk1 zone soakc address 10.93.0.1/24\nset interface sk2 zone soaks address 10.94.0.1/24\n'
-setup+=$'set address soak-srv cidr 10.94.0.2\nset service echo protocol tcp port 9099\nset service web8080 protocol tcp port 8080\n'
+setup+=$'set address soak-srv cidr 10.94.0.2\nset service echo protocol tcp ports 9099\nset service web8080 protocol tcp ports 8080\n'
 setup+=$'set rule soak-web from soakc to soaks destination soak-srv service web8080 action allow ips-profile default\n'
 setup+=$'set rule soak-echo from soakc to soaks destination soak-srv service echo action allow\n'
 setup+=$'set nat soak-fwd type port-forward interface sk2 protocol tcp public-port 18080 server soak-srv server-port 8080\n'

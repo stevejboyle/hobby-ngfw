@@ -1082,7 +1082,8 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 		fail "metrics content: crit=$crit $(grep -E 'ips-test|service_up|interface_up' <<<"$m" | head -8)"
 	want_os=idle
 	[[ -n $NEWBUNDLE ]] && want_os=ok
-	[[ $m =~ sjbos_reboot_required\{kernel=\"$(root_run uname -r)\"\}\ 0 && $m == *"sjbos_os_packages_state{state=\"$want_os\"} 1"* && $m == *"sjbos_os_packages_pending 0"* ]] &&
+	# Literal matches: the kernel name holds regex characters (6.12.118+deb13).
+	[[ $m == *"sjbos_reboot_required{kernel=\"$(root_run uname -r)\"} 0"* && $m == *"sjbos_os_packages_state{state=\"$want_os\"} 1"* && $m == *"sjbos_os_packages_pending 0"* ]] &&
 		pass "the scrape shows the OS packages ($want_os, none pending) and no reboot needed" ||
 		fail "metrics OS state: $(grep -E 'reboot_required|os_packages' <<<"$m")"
 	if command -v snmpget >/dev/null && docker info >/dev/null 2>&1; then

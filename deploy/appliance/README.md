@@ -1775,7 +1775,7 @@ where the bundled version is newer, never as a downgrade:
 admin@sjb-fw> show version
 installed: SJB-OS 0.9.14-r01
 rollback:  `fwctl upgrade rollback` returns to 0.9.13-r03
-OS packages: 25 updated (10 security) at 2026-11-27 14:02
+OS packages: N updated (M security) at 2026-11-27 14:02
 kernel:      6.12.117+deb13-amd64
 REBOOT REQUIRED: kernel 6.12.118
 ```

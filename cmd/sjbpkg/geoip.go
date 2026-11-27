@@ -40,10 +40,19 @@ func geoipConvert(args []string) error {
 		}
 		db.SetMeta(m, "shipped", now)
 	} else {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
+		// A few tries: one network hiccup shouldn't fail a release build.
 		var err error
-		if db, err = geoip.Fetch(ctx, &http.Client{Timeout: 3 * time.Minute}, now, ""); err != nil {
+		for try := 1; try <= 3; try++ {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			db, err = geoip.Fetch(ctx, &http.Client{Timeout: 3 * time.Minute}, now, "")
+			cancel()
+			if err == nil {
+				break
+			}
+			fmt.Fprintf(os.Stderr, "geoip-convert: try %d: %v\n", try, err)
+			time.Sleep(time.Duration(try) * 10 * time.Second)
+		}
+		if err != nil {
 			return err
 		}
 		db.SetMeta(db.Meta().Month, "shipped", now)

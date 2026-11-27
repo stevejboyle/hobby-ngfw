@@ -31,6 +31,17 @@ type geoipStatus struct {
 		Name   string `json:"name"`
 		Ranges int    `json:"ranges"`
 	} `json:"in_use"`
+	ASN struct {
+		Available bool `json:"available"`
+		Meta      struct {
+			Month     string    `json:"month"`
+			Origin    string    `json:"origin"`
+			Rows      int       `json:"rows"`
+			ASNs      int       `json:"asns"`
+			Installed time.Time `json:"installed"`
+		} `json:"meta"`
+		AgeDays int `json:"age_days"`
+	} `json:"asn"`
 	Attribution string `json:"attribution"`
 }
 
@@ -46,11 +57,18 @@ func printGeoIP(out []byte) error {
 		fmt.Printf("country database: DB-IP country lite %s (%s %s, %d days ago), %d IPv4 ranges in %d countries\n",
 			m.Month, m.Origin, m.Installed.Local().Format("2006-01-02"), st.AgeDays, m.Rows, m.Countries)
 	}
-	auto := "on"
+	if !st.ASN.Available {
+		fmt.Println("AS database:      none yet; logs show no AS until there is one")
+	} else {
+		m := st.ASN.Meta
+		fmt.Printf("AS database:      DB-IP ASN lite %s (%s %s, %d days ago), %d IPv4 ranges for %d ASes\n",
+			m.Month, m.Origin, m.Installed.Local().Format("2006-01-02"), st.ASN.AgeDays, m.Rows, m.ASNs)
+	}
+	auto := "on; both checked daily with DB-IP over the outside link"
 	if !st.AutoUpdate {
 		auto = "off (set system geoip-auto-update on)"
 	}
-	fmt.Printf("auto-update:      %s; checked daily while rules use countries\n", auto)
+	fmt.Printf("auto-update:      %s\n", auto)
 	if !st.LastCheck.Time.IsZero() {
 		res := st.LastCheck.Result
 		if !st.LastCheck.OK {
@@ -89,16 +107,20 @@ func showGeoIPLookup(ip string) error {
 	}
 	var r map[string]string
 	json.Unmarshal(out, &r)
+	as := "no AS"
+	if r["asn"] != "" {
+		as = "AS" + r["asn"] + " " + r["as_org"]
+	}
 	if r["country"] == "" {
-		fmt.Printf("%s: no country (private, reserved or unlisted)\n", ip)
+		fmt.Printf("%s: no country (private, reserved or unlisted); %s\n", ip, as)
 		return nil
 	}
-	fmt.Printf("%s: %s (%s), country:%s in rules\n", ip, r["country"], r["name"], r["country"])
+	fmt.Printf("%s: %s (%s), country:%s in rules; %s\n", ip, r["country"], r["name"], r["country"], as)
 	return nil
 }
 
 func requestGeoIPUpdate() error {
-	fmt.Println("checking DB-IP for a newer country database...")
+	fmt.Println("checking DB-IP for newer country and AS databases...")
 	out, err := call("POST", "/v1/geoip/update", nil)
 	if err != nil {
 		return err
@@ -107,7 +129,8 @@ func requestGeoIPUpdate() error {
 }
 
 // geoipCmd: `fwctl geoip [status]`, `fwctl geoip import FILE` (a DB-IP
-// country CSV, .csv or .csv.gz, for appliances without internet access).
+// country or ASN CSV, .csv or .csv.gz, for appliances without internet
+// access; the columns tell which).
 func geoipCmd(args []string) error {
 	if len(args) == 0 || args[0] == "status" {
 		return showGeoIP()
@@ -124,7 +147,7 @@ func geoipCmd(args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Println("imported; rules naming countries use it now")
+		fmt.Println("imported; rules and logs use it now")
 		return printGeoIP(out)
 	}
 	return fmt.Errorf("usage: geoip [status] | lookup IP | import FILE")

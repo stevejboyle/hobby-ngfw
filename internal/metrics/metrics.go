@@ -315,4 +315,6 @@ type GeoIP struct {
 	AgeSeconds     float64 `json:"age_seconds"` // since it was installed
 	LastUpdateOK   bool    `json:"last_update_ok"`
 	CountriesInUse int     `json:"countries_in_use"`
+	// ASNAgeSeconds is the AS database's age (nil when there is none).
+	ASNAgeSeconds *float64 `json:"asn_age_seconds,omitempty"`
 }

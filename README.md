@@ -209,6 +209,10 @@ on Steve's own ESXi lab):
 - Geo-blocking (0.9.15-r01): rules by country (`country:US`), with
   source and destination negation ("everything except the US"), from
   DB-IP's country data (CC BY 4.0), shipped and refreshed monthly.
+- Country and AS in the logs (0.9.16-r01): every traffic, threat and
+  decryption entry shows the source's and destination's country and
+  autonomous system, searchable and forwarded in JSON and CEF, from DB-IP's
+  country and ASN data.
 - IPS (Suricata, Emerging Threats Open) on chosen allow rules, with
   per-rule profiles, a threat log, and exceptions for one signature by
   rule, client or server (0.9.12-r01).

@@ -176,6 +176,10 @@ td.actions button + button { margin-left: 6px; }
 .seg button.active { background: var(--accent-soft); font-weight: 600; }
 td.time { white-space: nowrap; color: var(--muted); font-size: 12.5px; }
 td.mono button.link, td button.link { padding: 0; font: inherit; }
+td button.link { text-align: left; }
+/* AS columns: one line, the full name on hover. */
+td.as-cell { max-width: 15em; }
+td.as-cell button.link { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 1100px) { #host { display: none; } nav > a, .menu-btn { padding: 6px 8px; } }
 .level-warn { color: var(--warn-ink); font-weight: 600; }
 .level-error { color: var(--danger); font-weight: 600; }

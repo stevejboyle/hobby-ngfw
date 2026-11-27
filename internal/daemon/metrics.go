@@ -170,8 +170,8 @@ func (d *Daemon) slowParts() *slowMetrics {
 			s.nat, s.natErr = d.natStatus()
 			s.dec = d.Decryption()
 			d.mu.Lock()
-			if age, ok, inUse, have := d.geoMetricsLocked(); have {
-				s.geo = &metrics.GeoIP{AgeSeconds: age, LastUpdateOK: ok, CountriesInUse: inUse}
+			if age, ok, inUse, asnAge, have := d.geoMetricsLocked(); have {
+				s.geo = &metrics.GeoIP{AgeSeconds: age, LastUpdateOK: ok, CountriesInUse: inUse, ASNAgeSeconds: asnAge}
 			}
 			d.mu.Unlock()
 			s.status, s.stErr = d.Status()

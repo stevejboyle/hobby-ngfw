@@ -166,11 +166,14 @@ internal/tags/      tag -> IP registry with TTL, persisted to JSON
 internal/nft/       nft -f runner (and a fake for tests)
 internal/conntrack/ conntrack flushes so policy changes hit existing flows
 internal/diff/      line diff for `fwctl diff`
-internal/geoip/     country database for geo-blocking: DB-IP country lite CSV ->
-                    merged IPv4 ranges per country (countries-v4.txt.gz + meta.json),
-                    shipped in usr/share/sjb-os/geoip, newer months in
-                    /var/lib/sjb-os/geoip (newer month wins), monthly download,
-                    ISO codes; the compiler's country sets come from it
+internal/geoip/     country and AS databases: DB-IP country lite CSV -> merged
+                    IPv4 ranges per country (countries-v4.txt.gz + meta.json),
+                    DB-IP ASN lite -> ranges by AS plus names (asn-v4.txt.gz,
+                    asn-names.txt.gz, asn-meta.json); shipped in
+                    usr/share/sjb-os/geoip, newer months in /var/lib/sjb-os/geoip
+                    (newer month wins, per database), monthly download (falls
+                    back a month only on a 404), ISO codes; the compiler's
+                    country sets and the logs' country/AS come from it
 internal/ospkg/     OS package install/repack/restore for upgrades, reboot state
 internal/netdev/    VRF devices (vrf-<name>) and VLAN subinterfaces (parent.id):
                     created at commit, re-synced every 10 s; owns only those
@@ -262,9 +265,16 @@ records `+local-changes` in its source manifest.
 - Negated sides (SourceNegate/DestinationNegate) compile to one rule that
   excludes every term (`ip saddr != {..} ip saddr != @geo_us`); covers()
   treats a negated side as covering nothing but any.
-- ngfwd loads the database (SetGeoIP) before Start; UpdateGeoIP and
-  ImportGeoIP install a month and re-apply the running revision. The daily
-  check runs only while rules use countries and auto-update is on.
+- ngfwd loads the databases (SetGeoIP) before Start; UpdateGeoIP and
+  ImportGeoIP install a month (a country month re-applies the running
+  revision; an AS month touches nothing in the kernel). The daily check
+  runs whenever auto-update is on, since the logs use both databases.
+- Logs (0.9.16): traffic, threat and decryption entries embed logs.Geo,
+  filled at read time by Journal.Geo (the daemon's GeoOf), which reads the
+  databases through d.geoLookup (an atomic pointer) and never takes d.mu:
+  reading or forwarding logs must not wait for a commit. DB-IP's ZZ
+  (private, reserved) is shown blank. A journal line never supplies geo
+  fields (fill replaces them). CEF uses vendor keys sjbSrcCountry etc.
 
 ## Known phase 1 limits
 

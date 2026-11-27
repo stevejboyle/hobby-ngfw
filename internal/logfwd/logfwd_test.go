@@ -33,16 +33,19 @@ var t0 = time.Date(2026, 11, 21, 10, 0, 0, 123456000, time.UTC)
 func records() []logs.Record {
 	return []logs.Record{
 		{Kind: logs.KindTraffic, Entry: logs.Traffic{Time: t0, Type: "start", Rule: "web-out", Action: "allow", FromZone: "users", ToZone: "internet",
-			In: "inside", Out: "outside", Src: "10.0.0.5", Dst: "203.0.113.9", Proto: "tcp", SPort: 40000, DPort: 443, Len: 60, TTL: 64, Flags: "SYN"}},
+			In: "inside", Out: "outside", Src: "10.0.0.5", Dst: "203.0.113.9", Proto: "tcp", SPort: 40000, DPort: 443, Len: 60, TTL: 64, Flags: "SYN",
+			Geo: logs.Geo{DstCountry: "US", DstASN: 15169, DstASOrg: "Google LLC"}}},
 		{Kind: logs.KindTraffic, Entry: logs.Traffic{Time: t0, Type: "end", Rule: "web-out", Action: "allow", Src: "10.0.0.5", Dst: "203.0.113.9",
 			Proto: "tcp", SPort: 40000, DPort: 443, App: "YouTube", Category: "Media", Bytes: 9000, Packets: 12, Duration: 1.5}},
 		{Kind: logs.KindTraffic, Entry: logs.Traffic{Time: t0, Type: "start", Rule: "block|p2p", Action: "deny", In: "inside", Out: "outside",
 			Src: "10.0.0.6", Dst: "198.51.100.7", Proto: "udp", SPort: 6881, DPort: 6881}},
 		{Kind: logs.KindThreat, Entry: logs.Threat{Time: t0, Rule: "web-out", Profile: "strict", Action: "block", Severity: "critical", SID: 9900001,
 			Signature: "SJB-OS test signature: a=b \\ c", Category: "Attempted Administrator Privilege Gain", Proto: "tcp",
-			Src: "10.0.0.5", SPort: 40000, Dst: "203.0.113.9", DPort: 80, Decrypted: true}},
+			Src: "10.0.0.5", SPort: 40000, Dst: "203.0.113.9", DPort: 80, Decrypted: true,
+			Geo: logs.Geo{SrcCountry: "CN", SrcASN: 4134, SrcASOrg: "Chinanet = a\\b", DstCountry: "DE"}}},
 		{Kind: logs.KindDecryption, Entry: logs.Decryption{Time: t0, Rule: "decrypt-web", Decision: "decrypted", ServerName: "example.com",
-			Src: "10.0.0.5", SPort: 40001, Dst: "203.0.113.9", DPort: 443, TLS: "1.3", ALPN: "http/1.1"}},
+			Src: "10.0.0.5", SPort: 40001, Dst: "203.0.113.9", DPort: 443, TLS: "1.3", ALPN: "http/1.1",
+			Geo: logs.Geo{DstCountry: "GB", DstASN: 2856, DstASOrg: "British Telecommunications PLC"}}},
 		{Kind: logs.KindSystem, Entry: logs.System{Time: t0, Source: "ngfwd", Level: "info", Message: "commit", Fields: "revision=4 author=cli:admin"}},
 		{Kind: logs.KindSystem, Entry: logs.System{Time: t0, Source: "sshd", Level: "warn", Message: "Failed password for x\nfrom 10.0.0.9"}},
 	}

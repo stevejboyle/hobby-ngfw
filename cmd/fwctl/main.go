@@ -57,9 +57,9 @@ appliance (run with sudo):
                               whether a reboot is needed
   packages install            install the bundled Debian packages (run by
                               sjb-packages after an upgrade)
-  geoip [status] | lookup IP  the country database for geo-blocking rules
-  geoip import FILE           load a DB-IP country CSV (.csv or .csv.gz), for
-                              appliances without internet access
+  geoip [status] | lookup IP  the country and AS databases (rules and logs)
+  geoip import FILE           load a DB-IP country or ASN CSV (.csv or
+                              .csv.gz), for appliances without internet access
   web-passwd [-user NAME] [-file PATH]
                               set a user's password for SSH, the console and
                               the web UI (prompts, or reads one line from

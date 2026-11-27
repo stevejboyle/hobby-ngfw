@@ -192,6 +192,12 @@ The design below is the target. Phase 1 simplified it on purpose:
   refreshed monthly); the compiler turns each country in use into an nft
   interval set whose ranges go in with the ruleset in one transaction, and
   a new month re-applies the running revision in place.
+- Country and AS in the logs (0.9.16): `internal/geoip` also holds DB-IP's
+  ASN ranges and organisation names. Logs are read from the journal, so
+  ngfwd adds the country and AS of each address at read time
+  (`logs.Journal.Geo`, the daemon's `GeoOf`), as it adds zones and rule
+  names, for the Logs views and log forwarding alike. The lookups read the
+  databases through an atomic pointer, never the daemon lock.
 
 ### As built on the appliance
 

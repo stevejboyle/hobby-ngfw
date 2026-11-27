@@ -266,4 +266,15 @@ func TestPrometheusGeoIP(t *testing.T) {
 			t.Errorf("missing %q", want)
 		}
 	}
+	if strings.Contains(buf.String(), "sjbos_asn_age_seconds") {
+		t.Error("AS age without an AS database")
+	}
+	age := 3600.0
+	s.GeoIP.ASNAgeSeconds = &age
+	buf.Reset()
+	WritePrometheus(&buf, s)
+	checkFormat(t, buf.String())
+	if !strings.Contains(buf.String(), "sjbos_asn_age_seconds 3600\n") {
+		t.Error("no sjbos_asn_age_seconds")
+	}
 }

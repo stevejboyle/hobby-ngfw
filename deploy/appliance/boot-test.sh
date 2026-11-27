@@ -1222,21 +1222,37 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 	# --- geo-blocking (here, while ipscli -> ipssrv traffic flows) ---------------
 	geo=$(cli_run show geoip)
 	[[ $geo == *"country database: DB-IP country lite 20"* && $geo == *"IP Geolocation by DB-IP"* ]] &&
-		pass "a country database is in use: $(grep -o 'lite [0-9-]* ([a-z]*' <<<"$geo")), with DB-IP's attribution" || fail "show geoip: ${geo:0:300}"
+		pass "a country database is in use: $(grep -o 'lite [0-9-]* ([a-z]*' <<<"$geo" | head -1)), with DB-IP's attribution" || fail "show geoip: ${geo:0:300}"
+	[[ $geo == *"AS database:      DB-IP ASN lite 20"*ASes* ]] &&
+		pass "an AS database is in use: $(grep -o 'ASN lite [0-9-]* ([a-z]*' <<<"$geo"))" || fail "show geoip (AS): ${geo:0:400}"
+	lk=$(cli_run show geoip lookup 8.8.8.8)
+	[[ $lk == *"US (United States)"*"AS15169 "* ]] && pass "show geoip lookup 8.8.8.8 with the shipped data: $(cut -d: -f2- <<<"$lk" | tr -d '\r' | head -1)" || fail "lookup 8.8.8.8: $lk"
 	upd=$(cli_run request geoip update 2>&1)
-	[[ $upd == *"last check:"* && $upd != *FAILED* ]] &&
+	[[ $upd == *"last check:"* && $upd != *FAILED* && $upd == *country*AS* ]] &&
 		pass "request geoip update reaches DB-IP: $(grep -o 'last check:.*' <<<"$upd" | cut -c1-80)" || fail "geoip update: ${upd: -300}"
 	# A test database puts the IPS client network in CN and the server's in US.
-	root_run 'cat > /tmp/geo-test.csv' <<<$'10.83.0.0,10.83.0.255,CN\n10.84.0.0,10.84.0.255,US'
+	# The AS database names them, the decryption test's server network and
+	# the log-forwarding test's destination too.
+	root_run 'cat > /tmp/geo-test.csv' <<<$'10.83.0.0,10.83.0.255,CN\n10.84.0.0,10.84.0.255,US\n10.86.0.0,10.86.0.255,GB\n192.0.2.0,192.0.2.255,DE'
+	root_run 'cat > /tmp/asn-test.csv' <<<$'10.83.0.0,10.83.0.255,64501,"Boot Test CN Net"\n10.84.0.0,10.84.0.255,64502,"Boot Test US Net"\n10.86.0.0,10.86.0.255,64503,"Boot Test GB Net"\n192.0.2.0,192.0.2.255,64504,"Boot Test DE Net"'
 	rev0=$(root_run fwctl status | grep -o '"running_revision": [0-9]*' | grep -o '[0-9]*$')
 	imp=$(root_run fwctl geoip import /tmp/geo-test.csv 2>&1)
+	aimp=$(root_run fwctl geoip import /tmp/asn-test.csv 2>&1)
 	lk=$(cli_run show geoip lookup 10.83.0.2)
-	[[ $imp == *imported* && $lk == *"CN (China)"* ]] && pass "fwctl geoip import, and show geoip lookup 10.83.0.2: CN" || fail "geoip import: ${imp: -200} / $lk"
+	[[ $imp == *imported* && $aimp == *"AS database:"*"imported"* && $lk == *"CN (China)"*"AS64501 Boot Test CN Net"* ]] &&
+		pass "fwctl geoip import (country and AS), and show geoip lookup 10.83.0.2: CN, AS64501" || fail "geoip import: ${imp: -200} / ${aimp: -200} / $lk"
+	# Threats logged earlier get the countries and ASes when read.
+	tg=$(cli_run show log threat 50 columns sid,src,src_country,src_asn,dst,dst_country,dst_asn where country = CN and country = US)
+	[[ $tg == *CN*US* || $tg == *US*CN* ]] && [[ $tg == *"AS64501 Boot Test CN Net"* && $tg == *"AS64502 Boot Test US Net"* ]] &&
+		pass "show log threat where country = CN and country = US: entries with both countries and ASes" || fail "threat log geo: ${tg: -400}"
 	script=$'configure\nset rule geo-cn from ipscli source country:CN action deny log yes\nmove rule geo-cn top\ncommit -m "boot test: deny CN"\nexit\nexit\n'
 	out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
 	r=$(get 10.83.0.2 plain)
 	[[ $out == *"committed revision"* && $r == blocked && $(root_run nft list set inet ngfw geo_cn) == *10.83.0.0/24* ]] &&
 		pass "deny country:CN: the CN client is blocked (set geo_cn holds 10.83.0.0/24)" || fail "deny CN: $r / ${out: -200}"
+	for _ in $(seq 5); do lg=$(cli_run show log traffic 20 columns rule,action,src,src_country,src_asn where src_country = CN and asn = 64501); [[ $lg == *geo-cn* ]] && break; sleep 2; done
+	[[ $lg == *geo-cn*deny*10.83.0.2*CN*"AS64501 Boot Test CN Net"* ]] &&
+		pass "show log traffic where src_country = CN and asn = 64501: the denied connection, with its country and AS" || fail "traffic log geo: ${lg: -400}"
 	script=$'configure\ndelete rule geo-cn source country:CN\nset rule geo-cn source country:US source-negate yes\ncommit -m "boot test: only the US"\nexit\nexit\n'
 	out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
 	r=$(get 10.83.0.2 plain)
@@ -1250,8 +1266,9 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 	if [[ -n ${pk:-} ]]; then
 		curl -sk -o "$WORK/metrics-geo.txt" -H "Authorization: Bearer $pk" "https://127.0.0.1:$API_PORT/metrics"
 		mg=$(grep '^sjbos_geoip' "$WORK/metrics-geo.txt")
-		[[ $mg == *"sjbos_geoip_countries_in_use 1"* && $mg == *"sjbos_geoip_last_update_success 1"* && $mg == *sjbos_geoip_age_seconds* ]] &&
-			pass "Prometheus: the geoip metrics (1 country in use, last update ok)" || fail "geoip metrics: $mg"
+		mg+=$'\n'$(grep '^sjbos_asn' "$WORK/metrics-geo.txt")
+		[[ $mg == *"sjbos_geoip_countries_in_use 1"* && $mg == *"sjbos_geoip_last_update_success 1"* && $mg == *sjbos_geoip_age_seconds* && $mg == *sjbos_asn_age_seconds* ]] &&
+			pass "Prometheus: the geoip metrics (1 country in use, last update ok) and sjbos_asn_age_seconds" || fail "geoip metrics: $mg"
 	fi
 	script=$'configure\ndelete rule geo-cn\ncommit -m "boot test: geo cleanup"\nexit\nexit\n'
 	retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
@@ -1345,6 +1362,9 @@ else
 	for _ in $(seq 5); do ld=$(cli_run show log decryption 20 columns decision,server_name); [[ $ld == *decrypted*shop.example* && $ld == *excluded*www.bank.example* && $ld == *learned*app.example* ]] && break; sleep 2; done
 	[[ $ld == *decrypted*shop.example* && $ld == *excluded*www.bank.example* && $ld == *learned*app.example* ]] &&
 		pass "show log decryption: decrypted, excluded and learned entries" || fail "decryption log: $ld"
+	ldg=$(cli_run show log decryption 20 columns decision,server_name,dst,dst_country,dst_asn where dst_country = GB)
+	[[ $ldg == *decrypted*shop.example*10.86.0.2*GB*"AS64503 Boot Test GB Net"* ]] &&
+		pass "show log decryption where dst_country = GB: the server's country and AS" || fail "decryption log geo: ${ldg: -400}"
 fi
 uj=$(ui "$UI/ui/api/decryption")
 [[ $uj == *'"state":"'* && $uj == *'"fingerprint":"'* && $uj != *PRIVATE* ]] && pass "web UI: decryption status" || fail "ui decryption: ${uj:0:200}"
@@ -1389,6 +1409,9 @@ grep -q '^<134>1 .* sjb-os - TRAFFIC - {"log":"traffic".*"rule":"boot-test-fwd"'
 	fail "tls sink: $(tail -c 400 "$SINK/tls.log" 2>/dev/null) / $(cli_run show log-forwarding)"
 grep -q 'CEF:0|SJB Consulting|SJB-OS|[^|]*|traffic-start|.*cs1=boot-test-fwd' "$SINK/tcp.log" 2>/dev/null &&
 	pass "the same line reaches the TCP server as CEF" || fail "tcp sink: $(tail -c 400 "$SINK/tcp.log" 2>/dev/null)"
+grep 'boot-test-fwd' "$SINK/tls.log" 2>/dev/null | grep -q '"dst_country":"DE","dst_asn":64504,"dst_as_org":"Boot Test DE Net"' &&
+	grep 'boot-test-fwd' "$SINK/tcp.log" 2>/dev/null | grep -q 'sjbDstCountry=DE sjbDstAsn=64504 sjbDstAsOrg=Boot Test DE Net' &&
+	pass "forwarded JSON and CEF carry the destination's country and AS" || fail "forwarded geo: $(grep boot-test-fwd "$SINK/tls.log" | tail -c 400)"
 grep -q ' sjb-os - SYSTEM - {"log":"system"' "$SINK/udp.log" 2>/dev/null && ! grep -q -e boot-test-fwd -e ' TRAFFIC - ' "$SINK/udp.log" &&
 	pass "the UDP server gets system lines and no traffic" || fail "udp sink: $(tail -c 400 "$SINK/udp.log" 2>/dev/null)"
 grep -q '"source":"sshd"' "$SINK/tls.log" 2>/dev/null && pass "sshd logins are forwarded as system log lines" || fail "no sshd lines at the TLS server"

@@ -65,6 +65,7 @@ func (j Journal) ParseRecord(line []byte) (Record, bool) {
 		if j.ZoneOf != nil {
 			t.FromZone, t.ToZone = j.ZoneOf(t.In), j.ZoneOf(t.Out)
 		}
+		t.Geo.fill(j.Geo, t.Src, t.Dst)
 		r.Kind, r.Entry = KindTraffic, t
 	case strings.HasPrefix(e.Unit, "appidd"):
 		t, ok := ParseSession(msg)
@@ -80,6 +81,7 @@ func (j Journal) ParseRecord(line []byte) (Record, bool) {
 				}
 			}
 		}
+		t.Geo.fill(j.Geo, t.Src, t.Dst)
 		r.Kind, r.Entry = KindTraffic, t
 	case e.Unit == TLSDUnit:
 		d, ok := ParseDecryption(msg)
@@ -89,12 +91,14 @@ func (j Journal) ParseRecord(line []byte) (Record, bool) {
 		if d.Time.IsZero() {
 			d.Time = e.time()
 		}
+		d.Geo.fill(j.Geo, d.Src, d.Dst)
 		r.Kind, r.Entry = KindDecryption, d
 	default:
 		if t, ok := ParseThreat(msg); ok {
 			if t.Time.IsZero() {
 				t.Time = e.time()
 			}
+			t.Geo.fill(j.Geo, t.Src, t.Dst)
 			r.Kind, r.Entry = KindThreat, t
 			break
 		}

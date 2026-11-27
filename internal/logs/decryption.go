@@ -36,6 +36,7 @@ type Decryption struct {
 	DPort      int       `json:"dport,omitempty"`
 	TLS        string    `json:"tls,omitempty"`  // 1.2 or 1.3
 	ALPN       string    `json:"alpn,omitempty"` // h2, http/1.1, ...
+	Geo
 }
 
 // Line is the journal line for d.
@@ -66,17 +67,21 @@ var DecryptionColumns = []Column{
 	{"server_name", "Server name", "the name the client asked for (TLS server name)"},
 	{"src", "Source", "source address"},
 	{"sport", "Src port", "source port"},
+	{"src_country", "Src country", "the source's country (ISO code), from the DB-IP country database"},
+	{"src_asn", "Src AS", "the source's autonomous system: number and organisation"},
 	{"dst", "Destination", "destination address"},
 	{"dport", "Dst port", "destination port"},
+	{"dst_country", "Dst country", "the destination's country (ISO code)"},
+	{"dst_asn", "Dst AS", "the destination's autonomous system: number and organisation"},
 	{"tls", "TLS", "TLS version, when decrypted"},
 	{"alpn", "Protocol", "application protocol, when decrypted (h2, http/1.1)"},
 }
 
 // DefaultDecryptionColumns are shown when no columns are chosen.
-var DefaultDecryptionColumns = []string{"time", "rule", "decision", "server_name", "src", "dst", "dport", "reason"}
+var DefaultDecryptionColumns = []string{"time", "rule", "decision", "server_name", "src", "src_country", "dst", "dport", "dst_country", "reason"}
 
 // DecryptionSchema is the decryption log's query fields.
-var DecryptionSchema = Schema{
+var DecryptionSchema = withGeo(Schema{
 	"rule":        {kText, []string{"rule"}, "decryption rule name"},
 	"decision":    {kText, []string{"decision"}, "decrypted, would-decrypt, passed, excluded, learned, blocked, failed"},
 	"reason":      {kText, []string{"reason"}, "reason text, e.g. reason ~ pinned"},
@@ -86,10 +91,13 @@ var DecryptionSchema = Schema{
 	"sport":       {kNum, []string{"sport"}, "source port"},
 	"dport":       {kNum, []string{"dport"}, "destination port"},
 	"tls":         {kText, []string{"tls"}, "TLS version"},
-}
+})
 
 // Value is the text of one column of d.
 func (d Decryption) Value(col string) string {
+	if v, ok := d.Geo.value(col); ok {
+		return v
+	}
 	num := func(n int) string {
 		if n == 0 {
 			return ""
@@ -163,6 +171,7 @@ func (j Journal) Decryption(n int, q string) ([]Decryption, error) {
 			if d.Time.IsZero() {
 				d.Time = e.time()
 			}
+			d.Geo.fill(j.Geo, d.Src, d.Dst)
 			if query.Match(d.Value, d.values()) {
 				res = append(res, d)
 			}

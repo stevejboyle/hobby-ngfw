@@ -57,11 +57,16 @@ if ! cmp -s "$OUT/appidd/catalog.json" internal/appid/catalog.json; then
 	exit 1
 fi
 
-# Geo-blocking: the current DB-IP country database (CC BY 4.0), shipped in
-# the image and the bundle; appliances then refresh it monthly.
-echo "==> country database (DB-IP)"
+# The current DB-IP country and ASN databases (CC BY 4.0) for geo-blocking
+# and the logs, shipped in the image and the bundle; appliances then refresh
+# them monthly. GEOIP_IN/ASN_IN: local copies instead of downloading.
+echo "==> country and AS databases (DB-IP)"
 rm -rf "$OUT/geoip"
-go run ./cmd/sjbpkg geoip-convert -o "$OUT/geoip"
+if [ -n "${GEOIP_IN:-}" ]; then
+	go run ./cmd/sjbpkg geoip-convert -in "$GEOIP_IN" -asn-in "$ASN_IN" -month "${GEOIP_MONTH:?GEOIP_MONTH=YYYY-MM with GEOIP_IN}" -o "$OUT/geoip"
+else
+	go run ./cmd/sjbpkg geoip-convert -o "$OUT/geoip"
+fi
 
 if [[ ${BUNDLE_ONLY:-} == 1 ]]; then
 	echo "==> BUNDLE_ONLY: skipping the OVA"

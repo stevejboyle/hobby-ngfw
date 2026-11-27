@@ -143,6 +143,7 @@ func CEF(version string, r logs.Record) string {
 			kv{"cs2Label", "fromZone"}, kv{"cs2", e.FromZone}, kv{"cs3Label", "toZone"}, kv{"cs3", e.ToZone},
 			kv{"deviceInboundInterface", e.In}, kv{"deviceOutboundInterface", e.Out})
 		addAddr(e.Src, e.SPort, e.Dst, e.DPort, e.Proto)
+		ext = append(ext, geoExt(e.Geo)...)
 		ext = append(ext, kv{"app", e.App}, kv{"cat", e.Category})
 		if e.Type == "end" {
 			ext = append(ext, kv{"cn1Label", "bytes"}, kv{"cn1", strconv.FormatInt(e.Bytes, 10)},
@@ -155,6 +156,7 @@ func CEF(version string, r logs.Record) string {
 		ext = append(ext, kv{"rt", ms(e.Time)}, kv{"act", e.Action}, kv{"cs1Label", "rule"}, kv{"cs1", e.Rule},
 			kv{"cs2Label", "profile"}, kv{"cs2", e.Profile}, kv{"cs3Label", "severity"}, kv{"cs3", e.Severity}, kv{"cat", e.Category})
 		addAddr(e.Src, e.SPort, e.Dst, e.DPort, e.Proto)
+		ext = append(ext, geoExt(e.Geo)...)
 		ext = append(ext, kv{"app", e.App})
 		if e.Decrypted {
 			ext = append(ext, kv{"cs4Label", "decrypted"}, kv{"cs4", "yes"})
@@ -170,6 +172,7 @@ func CEF(version string, r logs.Record) string {
 		ext = append(ext, kv{"rt", ms(e.Time)}, kv{"act", e.Decision}, kv{"cs1Label", "rule"}, kv{"cs1", e.Rule},
 			kv{"dhost", e.ServerName}, kv{"reason", e.Reason})
 		addAddr(e.Src, e.SPort, e.Dst, e.DPort, "tcp")
+		ext = append(ext, geoExt(e.Geo)...)
 		ext = append(ext, kv{"cs2Label", "tls"}, kv{"cs2", e.TLS}, kv{"cs3Label", "alpn"}, kv{"cs3", e.ALPN})
 	case logs.System:
 		sig, name = "system-"+e.Source, e.Message
@@ -209,6 +212,22 @@ func CEF(version string, r logs.Record) string {
 }
 
 type kv struct{ k, v string }
+
+// geoExt is the country and AS of both addresses. CEF's dictionary has no
+// keys for them and cs1-cs5 are taken, so they use vendor-prefixed keys, as
+// the CEF spec allows for extensions outside the dictionary.
+func geoExt(g logs.Geo) []kv {
+	asn := func(n uint32) string {
+		if n == 0 {
+			return ""
+		}
+		return strconv.FormatUint(uint64(n), 10)
+	}
+	return []kv{
+		{"sjbSrcCountry", g.SrcCountry}, {"sjbSrcAsn", asn(g.SrcASN)}, {"sjbSrcAsOrg", g.SrcASOrg},
+		{"sjbDstCountry", g.DstCountry}, {"sjbDstAsn", asn(g.DstASN)}, {"sjbDstAsOrg", g.DstASOrg},
+	}
+}
 
 func num(n int) string {
 	if n == 0 {

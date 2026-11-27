@@ -1752,8 +1752,8 @@ async function pageLogs() {
       h("code", {}, "!~"), " ", h("code", {}, "> < >= <="), ". Addresses take an IP or CIDR (", h("code", {}, "dst = 10.0.0.0/8"),
       "); numbers a range too (", h("code", {}, "dport = 1000-2000"), ")."),
     h("p", {}, h("strong", {}, "Examples: "), (L.kind === "traffic"
-      ? ["zone = inside and dst = 4.2.2.2", "app ~ tube or category = media", "action != allow and dport = 22", "type = end and bytes > 1000000"]
-      : threat ? ["severity = critical", "action = block and src = 10.0.0.0/8", "signature ~ trojan", "rule = inside-out and sid = 2100498"]
+      ? ["zone = inside and dst = 4.2.2.2", "app ~ tube or category = media", "action != allow and dport = 22", "type = end and bytes > 1000000", "src_country = CN", "dst_asn = 15169 or org ~ cloudflare"]
+      : threat ? ["severity = critical", "action = block and src = 10.0.0.0/8", "signature ~ trojan", "rule = inside-out and sid = 2100498", "country != US"]
       : dec ? ["decision = decrypted", "decision = learned", "server_name ~ example.com", "decision = blocked and src = 10.0.0.0/8"]
       : ["source = sshd and message ~ failed", "level = error", "source = ngfwd and message = commit"])
       .flatMap((ex, i) => [i ? " · " : null, h("button", { class: "link mono", onclick: () => { L.q = ex; route(); } }, ex)])),
@@ -1823,6 +1823,20 @@ function addCondition(q, field, v) {
   return /\bor\b/i.test(q) ? `(${q}) and ${cond}` : `${q} and ${cond}`;
 }
 
+// geoCells: the country and AS columns of every log with addresses. A
+// click adds the country or AS number to the search.
+function geoCells(filterBy) {
+  const country = (field, cc) => h("td", { title: cc ? countryTitle(COUNTRY + cc) : "" }, filterBy(field, cc));
+  const as = (field, n, org) => h("td", { class: "as-cell" }, !n ? "" : h("button", { class: "link", title: `AS${n} ${org || ""}: add ${field} = ${n} to the search`,
+    onclick: () => { state.logs.q = addCondition(state.logs.q, field, n); route(); } }, `AS${n}${org ? " " + org : ""}`));
+  return {
+    src_country: (r) => country("src_country", r.src_country),
+    dst_country: (r) => country("dst_country", r.dst_country),
+    src_asn: (r) => as("src_asn", r.src_asn, r.src_as_org),
+    dst_asn: (r) => as("dst_asn", r.dst_asn, r.dst_as_org),
+  };
+}
+
 function trafficTable(rows) {
   if (!rows.length) {
     return h("p", { class: "empty panel" }, "Nothing logged yet. Only rules with logging on write here: turn on Log for a rule on the Policy page, or in the CLI: set rule NAME log yes.");
@@ -1854,6 +1868,7 @@ function trafficTable(rows) {
     ttl: (r) => h("td", { class: "mono" }, r.ttl ? String(r.ttl) : ""),
     flags: (r) => h("td", { class: "mono" }, r.flags || ""),
     icmp: (r) => h("td", { class: "mono" }, r.icmp || ""),
+    ...geoCells(filterBy),
   };
   return h("div", { class: "table-wrap" }, h("table", {},
     h("thead", {}, h("tr", {}, L.cols.map((c) => h("th", { title: defs.get(c).help }, defs.get(c).title)))),
@@ -1885,6 +1900,8 @@ function threatTable(rows) {
     dport: (r) => h("td", { class: "mono" }, filterBy("dport", r.dport)),
     proto: (r) => h("td", {}, r.proto),
     decrypted: (r) => h("td", {}, r.decrypted ? "yes" : ""),
+    exception: (r) => h("td", {}, filterBy("exception", r.exception)),
+    ...geoCells(filterBy),
   };
   return h("div", { class: "table-wrap" }, h("table", {},
     h("thead", {}, h("tr", {}, L.tcols.map((c) => h("th", { title: defs.get(c).help }, defs.get(c).title)))),
@@ -1912,6 +1929,7 @@ function decryptionTable(rows) {
     dport: (r) => h("td", { class: "mono" }, filterBy("dport", r.dport)),
     tls: (r) => h("td", {}, r.tls || ""),
     alpn: (r) => h("td", {}, r.alpn || ""),
+    ...geoCells(filterBy),
   };
   return h("div", { class: "table-wrap" }, h("table", {},
     h("thead", {}, h("tr", {}, L.dcols.map((c) => h("th", { title: defs.get(c).help }, defs.get(c).title)))),
@@ -2132,11 +2150,14 @@ async function pageMonitoring() {
     prom, agent, listSection(snmpReceiverSpec(creds)), credPanel);
 }
 
-// geoPanel: the country database behind country:XX in rules.
+// geoPanel: the country database behind country:XX in rules, and the AS
+// database the logs use.
 async function geoPanel() {
   let g;
-  try { g = await api("GET", "geoip"); } catch (e) { return h("section", { class: "panel" }, h("h2", {}, "Geo-blocking"), h("p", { class: "error" }, e.message)); }
+  try { g = await api("GET", "geoip"); } catch (e) { return h("section", { class: "panel" }, h("h2", {}, "Geo-IP and AS data"), h("p", { class: "error" }, e.message)); }
   const m = g.meta || {};
+  const asn = g.asn || {};
+  const am = asn.meta || {};
   const btn = h("button", {}, "Check for an update");
   btn.addEventListener("click", async () => {
     btn.disabled = true; btn.textContent = "Checking DB-IP…";
@@ -2146,16 +2167,18 @@ async function geoPanel() {
   const lookupIn = h("input", { placeholder: "IPv4 address", "aria-label": "Address to look up", size: 16 });
   const lookupOut = h("span", { class: "muted" });
   const lookup = async () => {
-    try { const r = await api("GET", "geoip/lookup?ip=" + encodeURIComponent(lookupIn.value.trim())); lookupOut.textContent = r.country ? `${r.country} (${r.name}): country:${r.country} in rules` : "no country (private, reserved or unlisted)"; }
+    try { const r = await api("GET", "geoip/lookup?ip=" + encodeURIComponent(lookupIn.value.trim())); const as = r.asn ? `AS${r.asn} ${r.as_org || ""}`.trim() : "no AS";
+      lookupOut.textContent = (r.country ? `${r.country} (${r.name}): country:${r.country} in rules` : "no country (private, reserved or unlisted)") + "; " + as; }
     catch (e) { lookupOut.textContent = e.message; }
   };
   lookupIn.addEventListener("keydown", (e) => { if (e.key === "Enter") lookup(); });
   const lc = g.last_check || {};
   const checked = !!lc.time && !lc.time.startsWith("0001");
-  return h("section", { class: "panel" }, h("h2", {}, "Geo-blocking"),
+  return h("section", { class: "panel" }, h("h2", {}, "Geo-IP and AS data"),
     h("div", { class: "cards" },
-      card("Country database", g.available ? m.month : "none", g.available ? `${(m.rows || 0).toLocaleString()} IPv4 ranges, ${m.countries} countries (${m.origin})` : "request geoip update"),
-      card("Age", g.available ? `${g.age_days} days` : "–", g.auto_update ? "checked daily while rules use countries" : "auto-update off (system geoip-auto-update)"),
+      card("Country database", g.available ? m.month : "none", g.available ? `${(m.rows || 0).toLocaleString()} IPv4 ranges, ${m.countries} countries (${m.origin}, ${g.age_days} days old)` : "request geoip update"),
+      card("AS database", asn.available ? am.month : "none", asn.available ? `${(am.rows || 0).toLocaleString()} IPv4 ranges, ${(am.asns || 0).toLocaleString()} ASes (${am.origin}, ${asn.age_days} days old)` : "logs show no AS until there is one"),
+      card("Updates", g.auto_update ? "daily" : "off", g.auto_update ? "both databases, from DB-IP over the outside link" : "auto-update off (system geoip-auto-update)"),
       card("Last check", checked ? new Date(lc.time).toLocaleString() : "never", !checked ? "" : lc.ok ? lc.result || "" : `failed: ${lc.result}`)),
     (g.in_use || []).length ? h("div", { class: "table-wrap" }, h("table", {},
       h("thead", {}, h("tr", {}, h("th", {}, "Country in rules"), h("th", {}, "Ranges"))),
@@ -2164,7 +2187,7 @@ async function geoPanel() {
       : h("p", { class: "muted" }, "No rule names a country yet. Pick countries in a rule's Source or Destination (Policy), or in the CLI: set rule NAME source country:US."),
     h("div", { class: "row" }, h("label", {}, "Look up", lookupIn), h("button", { onclick: lookup }, "Look up"), lookupOut),
     can("ips", "change") ? h("p", {}, btn) : null,
-    h("p", { class: "muted small" }, "IP Geolocation by ", h("a", { href: "https://db-ip.com", target: "_blank", rel: "noopener" }, "DB-IP"), ", CC BY 4.0. Countries match IPv4 addresses only; registrations change monthly, so expect some error at the edges."));
+    h("p", { class: "muted small" }, "IP Geolocation by ", h("a", { href: "https://db-ip.com", target: "_blank", rel: "noopener" }, "DB-IP"), ", CC BY 4.0. Countries and ASes cover IPv4 addresses only; registrations change monthly, so expect some error at the edges. Logs look addresses up when they are read, with the databases in use then."));
 }
 
 async function pageIPS() {

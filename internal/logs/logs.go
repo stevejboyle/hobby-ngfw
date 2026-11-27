@@ -50,6 +50,7 @@ type Traffic struct {
 	TTL      int     `json:"ttl,omitempty"`
 	Flags    string  `json:"flags,omitempty"` // TCP flags, e.g. "SYN"
 	ICMP     string  `json:"icmp,omitempty"`  // ICMP type/code, e.g. "8/0"
+	Geo
 }
 
 // Column is one traffic log column.
@@ -72,8 +73,12 @@ var TrafficColumns = []Column{
 	{"out", "Out", "egress interface"},
 	{"src", "Source", "source address"},
 	{"sport", "Src port", "TCP/UDP source port"},
+	{"src_country", "Src country", "the source's country (ISO code), from the DB-IP country database"},
+	{"src_asn", "Src AS", "the source's autonomous system: number and organisation"},
 	{"dst", "Destination", "destination address"},
 	{"dport", "Dst port", "TCP/UDP destination port"},
+	{"dst_country", "Dst country", "the destination's country (ISO code)"},
+	{"dst_asn", "Dst AS", "the destination's autonomous system: number and organisation"},
 	{"proto", "Protocol", "tcp, udp, icmp, ..."},
 	{"app", "Application", "application (end entries)"},
 	{"category", "Category", "the application's category, e.g. Media (end entries)"},
@@ -87,10 +92,13 @@ var TrafficColumns = []Column{
 }
 
 // DefaultTrafficColumns are shown when no columns are chosen.
-var DefaultTrafficColumns = []string{"time", "type", "rule", "action", "from", "to", "src", "sport", "dst", "dport", "proto", "app", "bytes"}
+var DefaultTrafficColumns = []string{"time", "type", "rule", "action", "from", "to", "src", "sport", "src_country", "dst", "dport", "dst_country", "proto", "app", "bytes"}
 
 // Value is the text of one column of t (empty when it has none).
 func (t Traffic) Value(col string) string {
+	if v, ok := t.Geo.value(col); ok {
+		return v
+	}
 	num := func(n int) string {
 		if n == 0 {
 			return ""
@@ -236,6 +244,9 @@ type Journal struct {
 	// RuleName names the rule at a position in the running config (App Identification
 	// end entries carry the position); nil or "" leaves "rule N".
 	RuleName func(idx int) string
+	// Geo looks up the country and AS of an address for the entries'
+	// Geo fields; nil leaves them empty.
+	Geo GeoFunc
 	// Run executes journalctl; tests replace it.
 	Run func(args ...string) ([]byte, error)
 }
@@ -333,6 +344,7 @@ func (j Journal) Traffic(n int, q string) ([]Traffic, error) {
 		if j.ZoneOf != nil && t.Type == "start" {
 			t.FromZone, t.ToZone = j.ZoneOf(t.In), j.ZoneOf(t.Out)
 		}
+		t.Geo.fill(j.Geo, t.Src, t.Dst)
 		if query.Match(t.Value, t.values()) {
 			res = append(res, t)
 		}

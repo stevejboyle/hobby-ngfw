@@ -66,7 +66,8 @@ type Meta struct {
 	Origin    string    `json:"origin"` // shipped, downloaded or imported
 	SHA256    string    `json:"sha256"` // of the DB-IP file it came from
 	Rows      int       `json:"rows"`   // IPv4 rows in that file
-	Countries int       `json:"countries"`
+	Countries int       `json:"countries,omitempty"`
+	ASNs      int       `json:"asns,omitempty"` // the AS database
 	Installed time.Time `json:"installed"`
 }
 
@@ -318,9 +319,12 @@ func (s Store) CurrentMeta() (Meta, bool) {
 	return m, err == nil
 }
 
-func (s Store) currentDir() string {
-	sm, serr := ReadMeta(s.Shipped)
-	lm, lerr := ReadMeta(s.Local)
+func (s Store) currentDir() string { return s.newerDir(ReadMeta) }
+
+// newerDir is the directory whose copy (read by meta) has the newer month.
+func (s Store) newerDir(meta func(string) (Meta, error)) string {
+	sm, serr := meta(s.Shipped)
+	lm, lerr := meta(s.Local)
 	switch {
 	case serr != nil && lerr != nil:
 		return ""

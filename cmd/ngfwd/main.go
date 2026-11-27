@@ -183,7 +183,7 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 	// Log forwarding to syslog servers (a SIEM): one journal follower,
 	// started only while the running config has log servers.
 	fwd := &logfwd.Forwarder{
-		Journal:    logs.Journal{ZoneOf: d.ZoneOf, RuleName: d.RuleName},
+		Journal:    logs.Journal{ZoneOf: d.ZoneOf, RuleName: d.RuleName, Geo: d.GeoOf},
 		Source:     logfwd.Journalctl(journalctlPath),
 		CursorFile: logfwd.CursorPath(stateDir),
 		Version:    installedVersion(),
@@ -265,7 +265,7 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 		}
 	}
 	d.SetAppID(appid.Source{StatsFile: appidStats})
-	logReader := logs.Journal{Path: journalctlPath, ZoneOf: d.ZoneOf, RuleName: d.RuleName}
+	logReader := logs.Journal{Path: journalctlPath, ZoneOf: d.ZoneOf, RuleName: d.RuleName, Geo: d.GeoOf}
 	d.SetLogs(logReader)
 	d.SetAPIKeysFile(apiKeys)
 	mgmt := http.NewServeMux()

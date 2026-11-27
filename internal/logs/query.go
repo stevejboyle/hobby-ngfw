@@ -46,7 +46,7 @@ type field struct {
 type Schema map[string]field
 
 // TrafficSchema is the traffic log's query fields: its columns plus aliases.
-var TrafficSchema = Schema{
+var TrafficSchema = withGeo(Schema{
 	"rule":      {kText, []string{"rule"}, "rule name"},
 	"action":    {kText, []string{"action"}, "allow, deny, reset"},
 	"type":      {kText, []string{"type"}, "start or end"},
@@ -72,7 +72,7 @@ var TrafficSchema = Schema{
 	"ttl":       {kNum, []string{"ttl"}, "IP time to live"},
 	"flags":     {kText, []string{"flags"}, "TCP flags, e.g. flags ~ SYN"},
 	"icmp":      {kText, []string{"icmp"}, "ICMP type/code, e.g. 8/0"},
-}
+})
 
 // SystemSchema is the system log's query fields.
 var SystemSchema = Schema{

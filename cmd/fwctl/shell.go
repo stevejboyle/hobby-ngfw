@@ -64,9 +64,9 @@ const shellHelp = `SJB-OS commands:
                               signatures (default: the last hour)
   show ips                    IPS: engine, signatures (version, count, last
                               update), rules inspected
-  show geoip                  the country database (DB-IP), its age, and the
-                              countries rules use
-  show geoip lookup IP        which country an address is in
+  show geoip                  the country and AS databases (DB-IP), their
+                              age, and the countries rules use
+  show geoip lookup IP        which country and AS an address is in
   show decryption             TLS decryption: state, CA, rules, connections
   show decryption ca          the decryption CA's certificate (PEM) and
                               fingerprint, to install on clients
@@ -87,7 +87,10 @@ const shellHelp = `SJB-OS commands:
                               add columns LIST to choose what to show, e.g.
                               columns src,sport,dst,dport,app (? lists them);
                               end with where QUERY to filter, e.g.
-                              where zone = inside and dst = 4.2.2.2
+                              where zone = inside and dst = 4.2.2.2;
+                              src_country, dst_country, src_asn, dst_asn
+                              show where addresses are, and country = CN,
+                              asn = 15169, org ~ google search by them
   show log threat [N] [TEXT]  IPS log: signature matches on rules with an
                               ips-profile, blocked or alerted (columns and
                               where work as for traffic)
@@ -120,7 +123,7 @@ const shellHelp = `SJB-OS commands:
   tags unregister IP TAG...
 
   request ips update          download the latest IPS signatures now
-  request geoip update        check DB-IP for a newer country database now
+  request geoip update        check DB-IP for newer country and AS databases now
   request system reboot       restart the appliance (onto a kernel an upgrade
                               installed: show version says when); traffic
                               stops for about a minute

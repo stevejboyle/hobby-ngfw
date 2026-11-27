@@ -109,7 +109,11 @@ providing it. Ask by opening an issue at
   IP Geolocation by DB-IP. A converted copy (IPv4 ranges by country,
   `/usr/share/sjb-os/geoip`) ships in the image and in upgrade bundles, and
   the appliance downloads newer months from DB-IP. The attribution is shown
-  wherever the data is (`show geoip`, the web UI's Geo-blocking panel).
+  wherever the data is (`show geoip`, the web UI's Geo-IP and AS data panel).
+- **DB-IP IP to ASN Lite** (https://db-ip.com), licensed under the same
+  CC BY 4.0 licence: IP Geolocation by DB-IP. A converted copy (IPv4 ranges
+  by autonomous system, with the organisation names) ships beside the
+  country data and is refreshed the same way; the logs show it.
 
 ## Downloaded at run time, not distributed
 

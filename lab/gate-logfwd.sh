@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Log forwarding gate: ngfwd sends the logs to syslog servers in the
 # internet namespace (UDP, TCP and TLS) and keeps its place in the journal.
+# With test country and AS databases, entries carry the destination's
+# country and AS, forwarded (JSON, CEF) and in the Logs views.
 #   - each server gets the log types it asks for, RFC 5424 framed, in JSON
 #     or CEF; TLS checks the server's certificate against the configured CA
 #   - a server in the (missing) management VRF shows an error, not a hang
@@ -50,7 +52,8 @@ record() { # record JSON-FIELDS: appends a journal record with a fresh cursor
 }
 start_ngfwd() {
 	ip netns exec ngfw-fw "$BIN/ngfwd" -state "$WORK/state" -socket "$SOCK" -users "$WORK/users.json" -roles "$WORK/roles.json" \
-		-web-users "$WORK/web-users" -unix-accounts=false -ips-dir "" -journalctl "$PWD/lab/fake-journalctl.py" >>"$WORK/ngfwd.log" 2>&1 &
+		-web-users "$WORK/web-users" -unix-accounts=false -ips-dir "" -journalctl "$PWD/lab/fake-journalctl.py" \
+		-root "$WORK/root" -geoip-dir "$WORK/geoip" >>"$WORK/ngfwd.log" 2>&1 &
 	NGFWD=$!
 	for _ in $(seq 50); do fw status >/dev/null 2>&1 && break; sleep 0.1; done
 }
@@ -117,6 +120,10 @@ sed '/^log_servers:/,$d' "$WORK/fwd.yaml" >"$WORK/none.yaml"
 # --- run ----------------------------------------------------------------------
 start_ngfwd
 commit "$WORK/fwd.yaml" "four log servers"
+# Test country and AS databases: the internet side is CN, AS4134.
+printf '203.0.113.0,203.0.113.255,CN\n' >"$WORK/geo.csv"
+printf '203.0.113.0,203.0.113.255,4134,"Lab Telecom"\n' >"$WORK/asn.csv"
+fw geoip import "$WORK/geo.csv" >/dev/null && fw geoip import "$WORK/asn.csv" >/dev/null || fail "geoip import"
 sleep 1
 record '"_TRANSPORT":"kernel","MESSAGE":"ngfw web-out allow IN=veth-users OUT=veth-inet SRC=10.10.1.10 DST=203.0.113.10 LEN=60 TTL=64 PROTO=TCP SPT=40000 DPT=443 SYN"'
 record '"_SYSTEMD_UNIT":"ngfwd.service","MESSAGE":"ngfw-threat {\"rule\":\"web-out\",\"profile\":\"default\",\"action\":\"block\",\"severity\":\"critical\",\"sid\":9900001,\"signature\":\"SJB-OS test signature\",\"proto\":\"tcp\",\"src\":\"10.10.1.10\",\"dst\":\"203.0.113.10\"}"'
@@ -130,9 +137,17 @@ check "udp, all logs: traffic, threat, decryption and system arrive" bash -c "
 check "udp: RFC 5424 header (local0.info traffic: <134>1, app sjb-os, MSGID TRAFFIC)" grep -q '^<134>1 [0-9T:.Z-]* [^ ]* sjb-os - TRAFFIC - ' "$SINK/udp.log"
 check "udp: traffic entries get zones" grep -q '"from":"users","to":"internet"' "$SINK/udp.log"
 check "udp: unrelated kernel lines are not forwarded" bash -c "! grep -q e1000 $SINK/udp.log"
+check "udp JSON: the destination's country and AS, none for the private source" bash -c "
+	grep TRAFFIC $SINK/udp.log | grep -q '\"dst_country\":\"CN\",\"dst_asn\":4134,\"dst_as_org\":\"Lab Telecom\"' && ! grep TRAFFIC $SINK/udp.log | grep -q src_country"
 check "tcp, CEF, threats only: one CEF threat, octet-counted" bash -c "
 	$(declare -f lines wait_for); SINK=$SINK
 	wait_for tcp 'CEF:0|SJB Consulting|SJB-OS|[^|]*|9900001|SJB-OS test signature|10|' 1 && (( \$(wc -l <$SINK/tcp.log) == 1 ))"
+check "CEF: sjbDstCountry, sjbDstAsn and sjbDstAsOrg on the threat" grep -q 'sjbDstCountry=CN sjbDstAsn=4134 sjbDstAsOrg=Lab Telecom' "$SINK/tcp.log"
+lv=$(fw shell <<<"show log traffic columns src,dst,dst_country,dst_asn where dst_country = CN" 2>&1)
+check "show log traffic where dst_country = CN: the entry, with AS4134 Lab Telecom" grep -q '203.0.113.10 .*CN .*AS4134 Lab Telecom' <<<"$lv"
+fw shell <<<"show log traffic where src_country = CN" >"$WORK/lv2.txt" 2>&1
+check "show log traffic where src_country = CN: nothing (the source is private)" bash -c "! grep -q 203.0.113.10 $WORK/lv2.txt"
+check "show log threat where asn = 4134 and org ~ lab: the threat" grep -q 9900001 <<<"$(fw shell <<<'show log threat where asn = 4134 and org ~ lab' 2>&1)"
 check "tls with the lab CA: system lines only" bash -c "
 	$(declare -f lines wait_for); SINK=$SINK
 	wait_for tls 'gate system line' 1 && ! grep -q -e TRAFFIC -e THREAT $SINK/tls.log"

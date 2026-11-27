@@ -1180,33 +1180,38 @@ In the web UI, a rule's Source and Destination each have a country picker
 database, licensed CC BY 4.0: IP Geolocation by
 [DB-IP](https://db-ip.com). A copy ships with SJB-OS (in the OVA and every
 upgrade bundle), so country rules work at once, even without internet
-access. While rules use countries, the appliance checks DB-IP daily for
-the new month (`set system geoip-auto-update off` to stop), and
-`request geoip update` checks now. A new month is applied to the running
+access. The logs use the same data, together with DB-IP's AS database
+(see [Country and AS in the logs](#country-and-as-in-the-logs)), so the
+appliance checks DB-IP daily for a new month of both over the outside link,
+whether or not rules name countries (`set system geoip-auto-update off` to
+stop), and `request geoip update` checks now. A new month is applied to the running
 rules in place: no new revision, and no gap in enforcement (the ranges go
 in with the rules, in one atomic nftables transaction).
 
 ```
 admin@sjb-fw> show geoip
 country database: DB-IP country lite 2026-11 (shipped 2026-11-27, 0 days ago), 362998 IPv4 ranges in 246 countries
-auto-update:      on; checked daily while rules use countries
+AS database:      DB-IP ASN lite 2026-11 (shipped 2026-11-27, 0 days ago), 409312 IPv4 ranges for 79954 ASes
+auto-update:      on; both checked daily with DB-IP over the outside link
 countries in use:
   CN  China                                5314 ranges
   RU  Russia                               9950 ranges
 IP Geolocation by DB-IP (https://db-ip.com), CC BY 4.0
 admin@sjb-fw> show geoip lookup 8.8.8.8
-8.8.8.8: US (United States), country:US in rules
+8.8.8.8: US (United States), country:US in rules; AS15169 Google LLC
 ```
 
 The IPS page in the web UI shows the same, with **Check for an update** and
 a lookup box. Prometheus has `sjbos_geoip_age_seconds`,
-`sjbos_geoip_last_update_success` and `sjbos_geoip_countries_in_use`.
+`sjbos_geoip_last_update_success` and `sjbos_geoip_countries_in_use`, and
+`sjbos_asn_age_seconds` for the AS database.
 
 **Without internet access**, download the month's
-`dbip-country-lite-YYYY-MM.csv.gz` from db-ip.com elsewhere, copy it over
-as root, and import it: `fwctl geoip import dbip-country-lite-2026-12.csv.gz`.
-An import may also be a partial list in the same format
-(`start,end,country`), for testing.
+`dbip-country-lite-YYYY-MM.csv.gz` and `dbip-asn-lite-YYYY-MM.csv.gz` from
+db-ip.com elsewhere, copy them over as root, and import each:
+`fwctl geoip import dbip-country-lite-2026-12.csv.gz` (the columns tell the
+two apart). An import may also be a partial list in the same format
+(`start,end,country` or `start,end,asn,"organisation"`), for testing.
 
 Good to know:
 
@@ -1450,7 +1455,7 @@ src = 10.10.1.0/24 and not proto = udp
 - Addresses take an IP or a CIDR; numbers also a range (`dport = 1000-2000`).
 - Traffic fields: `rule action type from to zone in out interface src dst
   addr sport dport port proto app category bytes packets duration len ttl
-  flags icmp`. `zone`, `interface`, `addr` and `port` match either side;
+  flags icmp`, plus the country and AS fields below. `zone`, `interface`, `addr` and `port` match either side;
   `!=` on them means neither side.
 - System fields: `source level message fields`.
 - In the web UI, clicking a value in the traffic table adds it as a
@@ -1458,10 +1463,41 @@ src = 10.10.1.0/24 and not proto = udp
   CLI, everything after `where` is the query, and Tab completes field names.
 - A malformed query says what's wrong and which fields exist.
 
-Traffic log columns: `time rule action from to in out src sport dst dport
-proto app len ttl flags icmp` (`from`/`to` are zones, `in`/`out`
-interfaces). Without `columns`, the CLI shows time, rule, action, zones,
-addresses, ports and protocol.
+Traffic log columns: `time rule action from to in out src sport src_country
+src_asn dst dport dst_country dst_asn proto app len ttl flags icmp`
+(`from`/`to` are zones, `in`/`out` interfaces). Without `columns`, the CLI
+shows time, rule, action, zones, addresses with their countries, ports and
+protocol.
+
+### Country and AS in the logs
+
+Every traffic, threat and decryption entry shows where its addresses are:
+the country of the source and destination (`src_country`, `dst_country`)
+and their autonomous system, the network that announces the address
+(`src_asn`, `dst_asn`, shown as `AS15169 Google LLC`). The countries are on
+by default; add the AS columns with **Columns** or `columns`:
+
+```
+show log traffic columns time,rule,src,src_country,src_asn,dst,dst_asn,dport
+show log traffic where src_country = CN or src_country = RU
+show log threat where asn = 4134
+show log traffic where dst_org ~ cloudflare
+```
+
+- Search fields (all three logs): `src_country`, `dst_country`, `country`
+  (either side); `src_asn`, `dst_asn`, `asn` (AS numbers); `src_org`,
+  `dst_org`, `org` (AS organisation, e.g. `org ~ amazon`). Clicking a
+  country or AS in the web UI adds it to the search.
+- Private and reserved addresses (your own networks, for example) have
+  neither, so the columns stay blank for them.
+- The data is DB-IP's free country and ASN databases (CC BY 4.0), the same
+  copies [geo-blocking](#geo-blocking-rules-by-country) uses: shipped with
+  SJB-OS and refreshed monthly (see above). ngfwd looks addresses up when
+  an entry is read or forwarded, with the databases in use then: an old
+  entry read after a monthly refresh shows the new month's answer.
+- Forwarded logs carry them too: JSON gains `src_country`, `src_asn`,
+  `src_as_org`, `dst_country`, `dst_asn` and `dst_as_org` (left out when
+  unknown); CEF uses the keys below.
 
 Both come from the systemd journal on the appliance, which keeps them across
 reboots until it reaches its size limit (oldest first out).
@@ -1491,7 +1527,10 @@ threats by signature severity (critical `crit`, major `err`, minor
 `warning`, informational `info`), decryption `warning` when blocked or
 failed, system entries by their level. In CEF, the rule is `cs1`, zones
 `cs2`/`cs3` (traffic), the IPS profile `cs2` and the signature ID the
-event class (threats), and the server name `dhost` (decryption).
+event class (threats), and the server name `dhost` (decryption). Countries
+and ASes use SJB-OS's own extension keys (CEF has none for them):
+`sjbSrcCountry`, `sjbSrcAsn`, `sjbSrcAsOrg`, `sjbDstCountry`, `sjbDstAsn`
+and `sjbDstAsOrg`.
 
 In the web UI, **System → Log forwarding**: add, edit and delete servers
 (the changes go to the candidate; commit as usual), and see each server's

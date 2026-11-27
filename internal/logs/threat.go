@@ -31,6 +31,7 @@ type Threat struct {
 	Decrypted bool `json:"decrypted,omitempty"`
 	// Exception names the IPS exception that let the match through.
 	Exception string `json:"exception,omitempty"`
+	Geo
 }
 
 // Line is the journal line for t.
@@ -65,18 +66,22 @@ var ThreatColumns = []Column{
 	{"app", "Application", "application, when known"},
 	{"src", "Source", "source address"},
 	{"sport", "Src port", "source port"},
+	{"src_country", "Src country", "the source's country (ISO code), from the DB-IP country database"},
+	{"src_asn", "Src AS", "the source's autonomous system: number and organisation"},
 	{"dst", "Destination", "destination address"},
 	{"dport", "Dst port", "destination port"},
+	{"dst_country", "Dst country", "the destination's country (ISO code)"},
+	{"dst_asn", "Dst AS", "the destination's autonomous system: number and organisation"},
 	{"proto", "Protocol", "tcp, udp, ..."},
 	{"decrypted", "Decrypted", "yes when the match was inside decrypted TLS"},
 	{"exception", "Exception", "the IPS exception that let it through"},
 }
 
 // DefaultThreatColumns are shown when no columns are chosen.
-var DefaultThreatColumns = []string{"time", "rule", "action", "severity", "sid", "signature", "src", "sport", "dst", "dport", "app"}
+var DefaultThreatColumns = []string{"time", "rule", "action", "severity", "sid", "signature", "src", "sport", "src_country", "dst", "dport", "dst_country", "app"}
 
 // ThreatSchema is the threat log's query fields.
-var ThreatSchema = Schema{
+var ThreatSchema = withGeo(Schema{
 	"rule":      {kText, []string{"rule"}, "rule name"},
 	"profile":   {kText, []string{"profile"}, "IPS profile"},
 	"action":    {kText, []string{"action"}, "block or alert"},
@@ -94,10 +99,13 @@ var ThreatSchema = Schema{
 	"proto":     {kText, []string{"proto"}, "tcp, udp, ..."},
 	"decrypted": {kText, []string{"decrypted"}, "yes: inside decrypted TLS"},
 	"exception": {kText, []string{"exception"}, "IPS exception name"},
-}
+})
 
 // Value is the text of one column of t.
 func (t Threat) Value(col string) string {
+	if v, ok := t.Geo.value(col); ok {
+		return v
+	}
 	num := func(n int) string {
 		if n == 0 {
 			return ""
@@ -181,6 +189,7 @@ func (j Journal) Threat(n int, q string) ([]Threat, error) {
 			if t.Time.IsZero() {
 				t.Time = e.time()
 			}
+			t.Geo.fill(j.Geo, t.Src, t.Dst)
 			if query.Match(t.Value, t.values()) {
 				res = append(res, t)
 			}

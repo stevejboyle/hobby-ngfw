@@ -3,6 +3,7 @@ package geoip
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,7 +29,9 @@ func Months(now time.Time) []string {
 
 // Fetch downloads and validates the newest month available at time now
 // that is newer than have ("" for none). It returns nil, nil when have is
-// already the newest.
+// already the newest. Only a month DB-IP hasn't published (404) falls
+// back to the previous one; any other failure is an error, so a passing
+// network fault never installs (or ships) an older month than it should.
 func Fetch(ctx context.Context, client *http.Client, now time.Time, have string) (*DB, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 2 * time.Minute}
@@ -39,9 +42,12 @@ func Fetch(ctx context.Context, client *http.Client, now time.Time, have string)
 			return nil, nil
 		}
 		data, err := get(ctx, client, URL(m))
-		if err != nil {
+		if errors.Is(err, errNotPublished) {
 			errs = append(errs, err)
 			continue
+		}
+		if err != nil {
+			return nil, err
 		}
 		db, err := Parse(bytes.NewReader(data), true)
 		if err != nil {
@@ -52,6 +58,8 @@ func Fetch(ctx context.Context, client *http.Client, now time.Time, have string)
 	}
 	return nil, fmt.Errorf("no database downloaded: %v", errs)
 }
+
+var errNotPublished = errors.New("not published yet")
 
 func get(ctx context.Context, client *http.Client, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -64,6 +72,9 @@ func get(ctx context.Context, client *http.Client, url string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("%s: %w", url, errNotPublished)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%s: %s", url, resp.Status)
 	}

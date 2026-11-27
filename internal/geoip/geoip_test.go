@@ -188,6 +188,23 @@ func TestFetch(t *testing.T) {
 	if _, err := Fetch(context.Background(), srv.Client(), now, "2026-11"); err == nil {
 		t.Error("incomplete download accepted")
 	}
+	// A server error on the current month is an error, not a fallback.
+	months["2026-12"] = nil
+	fail := true
+	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail && strings.HasSuffix(r.URL.Path, "2026-12.csv.gz") {
+			http.Error(w, "busy", http.StatusServiceUnavailable)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "2026-11.csv.gz") {
+			w.Write(months["2026-11"])
+			return
+		}
+		http.NotFound(w, r)
+	})
+	if db, err := Fetch(context.Background(), srv.Client(), now, ""); err == nil || db != nil {
+		t.Errorf("503 on the current month fell back: %v %v", db, err)
+	}
 	// Nothing published: an error.
 	delete(months, "2026-12")
 	delete(months, "2026-11")

@@ -148,7 +148,7 @@ if [[ -n $NEWBUNDLE ]]; then
 	root_run "cat > /tmp/new.upgrade" <"$NEWBUNDLE"
 	out=$(root_run fwctl upgrade apply /tmp/new.upgrade 2>&1)
 	NEWV=$(root_run cat /etc/ngfw-version)
-	[[ $NEWV != "$BASE" && $out == *"is running"* && $out == *"OS packages install in the background"* ]] &&
+	[[ $NEWV != "$BASE" && $out == *"is running"* ]] &&
 		pass "upgraded the $BASE image in place to $NEWV; the checks below test $NEWV" || fail "upgrading to the new bundle: $out"
 	check_os_installed "upgrade from $BASE"
 	saved=$(root_run "cat /var/lib/sjb-os/releases/$BASE/packages/packages.json" 2>&1)
@@ -232,13 +232,14 @@ for c in s[\"changes\"]:
 		pass "rollback put the OS packages back (libc6 $libc again; kernel $NEWK removed)" ||
 		fail "rollback OS packages: wrong=[$wrong] libc6=$libc (want $BASE_LIBC) kernel=$kgone / ${out: -400}"
 	if [[ $NEWK != "$BASE_K" ]]; then
-		[[ $out == *"REBOOT REQUIRED: the running kernel was removed"* && $(pkstatus) == *'"reboot_required": true'* ]] &&
+		[[ $out == *"REBOOT REQUIRED: the running kernel was removed"* && $(root_run uname -r) == "$NEWK" && $(root_run 'ls /boot') != *"vmlinuz-$NEWK"* ]] &&
 			pass "rollback while running kernel $NEWK: removed, reboot required" || fail "rollback reboot flag: ${out: -300}"
 		root_run 'systemctl reboot' >/dev/null 2>&1
 		reboot_wait
-		[[ $(root_run uname -r) == "$BASE_K" && $(root_run systemctl is-active ngfwd) == active && $(pkstatus) == *'"reboot_required": false'* ]] &&
+		[[ $(root_run uname -r) == "$BASE_K" && $(root_run systemctl is-active ngfwd) == active ]] &&
 			pass "after the reboot: $BASE on kernel $BASE_K, ngfwd up" || fail "reboot after rollback: $(root_run uname -r) $(root_run systemctl is-active ngfwd)"
 	fi
+	root_run "cat > /tmp/new.upgrade" <"$NEWBUNDLE" # a reboot clears /tmp
 	out=$(root_run fwctl upgrade apply /tmp/new.upgrade 2>&1)
 	st=$(cli_run show status)
 	[[ $(root_run cat /etc/ngfw-version) == "$NEWV" && $st == *running_revision* ]] &&

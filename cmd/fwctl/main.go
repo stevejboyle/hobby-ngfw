@@ -52,11 +52,14 @@ appliance (run with sudo):
                               install a signed bundle; restores the previous
                               version if ngfwd does not come back healthy
   upgrade rollback            return to the version before the last upgrade,
-							  Debian packages included
+                              Debian packages included
   packages [status [-json]]   OS packages the last upgrade installed, and
-							  whether a reboot is needed
+                              whether a reboot is needed
   packages install            install the bundled Debian packages (run by
-							  sjb-packages after an upgrade)
+                              sjb-packages after an upgrade)
+  geoip [status] | lookup IP  the country database for geo-blocking rules
+  geoip import FILE           load a DB-IP country CSV (.csv or .csv.gz), for
+                              appliances without internet access
   web-passwd [-user NAME] [-file PATH]
                               set a user's password for SSH, the console and
                               the web UI (prompts, or reads one line from
@@ -148,6 +151,8 @@ func dispatch(cmd string, args []string) error {
 		return upgradeCmd(args)
 	case "packages":
 		return packagesCmd(args)
+	case "geoip":
+		return geoipCmd(args)
 	case "shell":
 		return shellCmd(args)
 	case "web-passwd":

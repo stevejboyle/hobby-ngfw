@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/stevejboyle/sjb-os/internal/accounts"
+	"github.com/stevejboyle/sjb-os/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/geoip"
 	"github.com/stevejboyle/sjb-os/internal/logs"
 )
 
@@ -28,6 +30,11 @@ func (c *cands) add(word, help string) { *c = append(*c, Candidate{word, help}) 
 func Filter(all []Candidate, partial string) []Candidate {
 	var out []Candidate
 	for _, c := range all {
+		// The 250 countries are offered once two characters are typed
+		// ("co"), so they don't flood every address list.
+		if strings.HasPrefix(c.Word, config.CountryPrefix) && len(partial) < 2 {
+			continue
+		}
 		if c.IsHint() || strings.HasPrefix(c.Word, partial) {
 			out = append(out, c)
 		}
@@ -421,6 +428,19 @@ func valueCandidates(m *Model, cmd string, a *Attr, obj map[string]any, inList b
 			if !slices.Contains(listed, n) {
 				c.add(n, "")
 			}
+		}
+		if a.Countries {
+			codes := make([]string, 0, len(geoip.Names))
+			for cc := range geoip.Names {
+				codes = append(codes, cc)
+			}
+			slices.Sort(codes)
+			for _, cc := range codes {
+				if ref := config.CountryPrefix + cc; !slices.Contains(listed, ref) {
+					c.add(ref, geoip.Names[cc])
+				}
+			}
+			c.add("<country:XX>", "a country by its two-letter code (type co and Tab to list them)")
 		}
 		if a.Any && !inList {
 			c.add("any", "match everything")

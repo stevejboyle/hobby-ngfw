@@ -115,6 +115,7 @@ type slowMetrics struct {
 	nat    []NATEntry
 	natErr error
 	dec    DecryptionStatus
+	geo    *metrics.GeoIP
 	status Status
 	stErr  error
 }
@@ -168,6 +169,11 @@ func (d *Daemon) slowParts() *slowMetrics {
 			s.ips = d.IPS()
 			s.nat, s.natErr = d.natStatus()
 			s.dec = d.Decryption()
+			d.mu.Lock()
+			if age, ok, inUse, have := d.geoMetricsLocked(); have {
+				s.geo = &metrics.GeoIP{AgeSeconds: age, LastUpdateOK: ok, CountriesInUse: inUse}
+			}
+			d.mu.Unlock()
 			s.status, s.stErr = d.Status()
 			s.at = d.Now()
 			d.metrics.slow.Store(&s)
@@ -386,6 +392,11 @@ func (d *Daemon) collect() metrics.Snapshot {
 		s.AppID.Apps = topApps(seen)
 	} else if prev != nil {
 		s.AppID.Apps = prev.AppID.Apps
+	}
+
+	// Geo-blocking (read with the IPS section's locked parts).
+	if s.Valid("ips") && slow != nil {
+		s.GeoIP = slow.geo
 	}
 
 	// Decryption.

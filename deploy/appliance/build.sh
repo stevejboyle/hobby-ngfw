@@ -57,6 +57,12 @@ if ! cmp -s "$OUT/appidd/catalog.json" internal/appid/catalog.json; then
 	exit 1
 fi
 
+# Geo-blocking: the current DB-IP country database (CC BY 4.0), shipped in
+# the image and the bundle; appliances then refresh it monthly.
+echo "==> country database (DB-IP)"
+rm -rf "$OUT/geoip"
+go run ./cmd/sjbpkg geoip-convert -o "$OUT/geoip"
+
 if [[ ${BUNDLE_ONLY:-} == 1 ]]; then
 	echo "==> BUNDLE_ONLY: skipping the OVA"
 else
@@ -90,6 +96,8 @@ if [[ -f $SIGNING_KEY ]]; then
 	install -d "$STAGE/usr/share/sjb-os/lib" "$STAGE/usr/share/sjb-os/appid" "$STAGE/usr/share/sjb-os/licenses"
 	install -m 644 "$OUT"/appidd/libndpi.so.* "$STAGE/usr/share/sjb-os/lib/"
 	install -m 644 "$OUT/appidd/catalog.json" "$STAGE/usr/share/sjb-os/appid/"
+	install -d "$STAGE/usr/share/sjb-os/geoip"
+	install -m 644 "$OUT"/geoip/* "$STAGE/usr/share/sjb-os/geoip/"
 	install -m 644 "$OUT/appidd/nDPI-COPYING" "$STAGE/usr/share/sjb-os/licenses/"
 	install -m 644 LICENSE NOTICE THIRD_PARTY_NOTICES.md "$STAGE/usr/share/sjb-os/licenses/"
 	chmod 755 "$STAGE"/usr/local/sbin/* "$STAGE/etc/update-motd.d/10-sjb"

@@ -90,6 +90,8 @@ install -m 755 "$OUT/bin/ngfwd" "$OUT/bin/fwctl" "$OUT/bin/tlsd" "$OUT/appidd/ap
 install -d "$MNT/usr/share/sjb-os/lib" "$MNT/usr/share/sjb-os/appid" "$MNT/usr/share/sjb-os/licenses"
 install -m 644 "$OUT"/appidd/libndpi.so.* "$MNT/usr/share/sjb-os/lib/"
 install -m 644 "$OUT/appidd/catalog.json" "$MNT/usr/share/sjb-os/appid/"
+install -d "$MNT/usr/share/sjb-os/geoip"
+install -m 644 "$OUT"/geoip/* "$MNT/usr/share/sjb-os/geoip/"
 install -m 644 "$OUT/appidd/nDPI-COPYING" "$MNT/usr/share/sjb-os/licenses/"
 install -m 644 "$SRC/LICENSE" "$SRC/NOTICE" "$SRC/THIRD_PARTY_NOTICES.md" "$MNT/usr/share/sjb-os/licenses/"
 # Corresponding source of the image: build.sh's manifest (SJB-OS, nDPI, Go)

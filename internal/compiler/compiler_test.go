@@ -13,6 +13,7 @@ import (
 
 	"github.com/stevejboyle/sjb-os/internal/appid"
 	"github.com/stevejboyle/sjb-os/internal/config"
+	"github.com/stevejboyle/sjb-os/internal/geoip"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -414,4 +415,112 @@ func TestTrunkDropsUntagged(t *testing.T) {
 	if strings.Contains(compile(t, base()).Ruleset, "trunk: untagged") {
 		t.Error("no trunks: no trunk drops")
 	}
+}
+
+type fakeGeo map[string][]geoip.Range
+
+func (f fakeGeo) Ranges(cc string) []geoip.Range { return f[cc] }
+
+func TestCountrySets(t *testing.T) {
+	c := base()
+	c.AddressGroups = append(c.AddressGroups, config.AddressGroup{Name: "embargo", Static: []string{"country:KP", "h1"}})
+	c.Rules = []config.Rule{
+		{Name: "deny-cn", From: []string{"a"}, Source: []string{"country:cn", "embargo", "bad"}, Action: "deny"},
+		{Name: "us-only", From: []string{"a"}, Source: []string{"country:US", "n1"}, SourceNegate: true, Action: "deny"},
+		{Name: "not-to", To: []string{"b"}, Destination: []string{"country:US"}, DestinationNegate: true, Action: "reset"},
+		{Name: "allow", Action: "allow"},
+	}
+	geo := fakeGeo{
+		"CN": {{Start: 0x01000100, End: 0x010003ff}},
+		"US": {{Start: 0x05000000, End: 0x05000000}, {Start: 0x08080800, End: 0x080808ff}},
+		// KP has no ranges: an empty set and a warning.
+	}
+	res, err := CompileWith(c, nil, Options{Geo: geo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"set geo_cn {\n\t\ttype ipv4_addr\n\t\tflags interval\n\t\tcomment \"country:CN\"\n\t}",
+		"set geo_kp {", "set geo_us {",
+		// A positive side: one rule per term (addresses, countries, tag sets).
+		`iifname "eth1" ip saddr 10.0.0.1 counter drop comment "rule:deny-cn"`,
+		`iifname "eth1" ip saddr @geo_cn counter drop comment "rule:deny-cn"`,
+		`iifname "eth1" ip saddr @geo_kp counter drop comment "rule:deny-cn"`,
+		`iifname "eth1" ip saddr @dag_bad_actors counter drop comment "rule:deny-cn"`,
+		// A negated side: one rule excluding every term.
+		`iifname "eth1" ip saddr != 10.1.0.0/16 ip saddr != @geo_us counter drop comment "rule:us-only"`,
+		`ip daddr != @geo_us`,
+	} {
+		if !strings.Contains(res.Ruleset, want) {
+			t.Errorf("missing %q in:\n%s", want, res.Ruleset)
+		}
+	}
+	if n := strings.Count(res.Ruleset, `comment "rule:us-only"`); n != 1 {
+		t.Errorf("negated rule expanded to %d lines, want 1", n)
+	}
+	// The elements are applied with the ruleset, not shown in it.
+	if strings.Contains(res.Ruleset, "8.8.8.0-8.8.8.255") {
+		t.Error("elements in the readable ruleset")
+	}
+	for _, want := range []string{
+		"add element inet ngfw geo_cn { 1.0.1.0-1.0.3.255 }\n",
+		"add element inet ngfw geo_us { 5.0.0.0, 8.8.8.0-8.8.8.255 }\n",
+	} {
+		if !strings.Contains(res.GeoElements, want) || !strings.Contains(res.Script(), want) {
+			t.Errorf("missing %q in elements:\n%s", want, res.GeoElements)
+		}
+	}
+	if !strings.HasPrefix(res.Script(), res.Ruleset) {
+		t.Error("Script must apply the ruleset, then the elements")
+	}
+	if !slicesContains(res.Warnings, "country:KP: the country database has no addresses for it") {
+		t.Errorf("no warning for an empty country: %v", res.Warnings)
+	}
+	if got := strings.Join(UsedCountries(c), " "); got != "CN KP US" {
+		t.Errorf("UsedCountries %q", got)
+	}
+	// No database at all: empty sets, a warning, rules still compile.
+	res, err = CompileWith(c, nil, Options{})
+	if err != nil || res.GeoElements != "" || !slicesContains(res.Warnings, "there is no country database yet") {
+		t.Errorf("no database: %v %q %v", err, res.GeoElements, res.Warnings)
+	}
+}
+
+func TestCountryChunks(t *testing.T) {
+	c := base()
+	c.Rules = []config.Rule{{Name: "r", Source: []string{"country:US"}, Action: "deny"}}
+	var rs []geoip.Range
+	for i := uint32(0); i < 4500; i++ {
+		rs = append(rs, geoip.Range{Start: 0x0b000000 + i*4, End: 0x0b000000 + i*4 + 1})
+	}
+	res, err := CompileWith(c, nil, Options{Geo: fakeGeo{"US": rs}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(res.GeoElements, "add element inet ngfw geo_us {"); n != 3 {
+		t.Errorf("%d add element statements for 4500 ranges, want 3 (2000 each)", n)
+	}
+	if n := strings.Count(res.GeoElements, "-"); n != 4500 {
+		t.Errorf("%d ranges written, want 4500", n)
+	}
+}
+
+func TestNegationShadowing(t *testing.T) {
+	a := config.Rule{Source: []string{"country:US"}, SourceNegate: true}
+	b := config.Rule{Source: []string{"country:US"}}
+	if covers(a, b) || covers(b, a) {
+		t.Error("a negated side never covers, nor is covered by, a positive one")
+	}
+	if !covers(config.Rule{}, a) {
+		t.Error("an any rule covers a negated one")
+	}
+}
+
+func slicesContains(list []string, sub string) bool {
+	for _, s := range list {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/stevejboyle/sjb-os/internal/config"
 
 	"github.com/stevejboyle/sjb-os/internal/appid"
+	"github.com/stevejboyle/sjb-os/internal/geoip"
 )
 
 // Table is the nftables table this firewall owns. Nothing else touches it.
@@ -41,6 +42,22 @@ type Result struct {
 	// (hairpin NAT of a port-forward on an interface with no configured
 	// address); ngfwd fills them.
 	IfAddrSets map[string]string
+	// GeoSets maps each country the rules use (upper-case code) to its nft
+	// set name.
+	GeoSets map[string]string
+	// GeoElements fills the country sets: nft statements to apply in the
+	// same transaction as Ruleset (Script joins them). Kept apart so the
+	// ruleset stays readable.
+	GeoElements string
+}
+
+// Script is what to apply: the ruleset and the country set elements, as
+// one atomic transaction.
+func (r *Result) Script() string { return r.Ruleset + r.GeoElements }
+
+// GeoSource gives each country's IPv4 ranges (a *geoip.DB).
+type GeoSource interface {
+	Ranges(cc string) []geoip.Range
 }
 
 // Compile builds the ruleset. cfg must already be validated. tags is the
@@ -58,11 +75,14 @@ type Options struct {
 	// IPSInactive are signatures AssignIPSCodes found no safe code for:
 	// their exceptions are left out, with a warning.
 	IPSInactive []int
+	// Geo is the country database; nil leaves every country set empty
+	// (rules naming countries then match nothing, with a warning).
+	Geo GeoSource
 }
 
 // CompileWith is Compile with options.
 func CompileWith(cfg *config.Config, tags map[string][]TagEntry, opt Options) (*Result, error) {
-	c := &compiler{cfg: cfg, ipsCodes: opt.IPSCodes, ipsInactive: opt.IPSInactive, res: &Result{Sets: map[string]string{}, IfAddrSets: map[string]string{}}}
+	c := &compiler{cfg: cfg, ipsCodes: opt.IPSCodes, ipsInactive: opt.IPSInactive, res: &Result{Sets: map[string]string{}, IfAddrSets: map[string]string{}, GeoSets: map[string]string{}}}
 	if c.ipsCodes == nil {
 		c.ipsCodes = IPSExceptionCodes(cfg)
 	}
@@ -82,6 +102,7 @@ func CompileWith(cfg *config.Config, tags map[string][]TagEntry, opt Options) (*
 		}
 		b.WriteString("\t}\n\n")
 	}
+	c.geoSets(&b, opt.Geo)
 
 	if cfg.System.AppIDOn() {
 		// App Identification: the first packets of each TCP/UDP connection go to
@@ -449,7 +470,19 @@ func (c *compiler) addrTerms(names []string) []*addrTerm {
 	}
 	var static []string
 	var terms []*addrTerm
+	geo := func(n string) bool {
+		cc, ok := config.CountryCode(n)
+		if ok {
+			if set := c.res.GeoSets[cc]; set != "" && !slices.ContainsFunc(terms, func(t *addrTerm) bool { return t.set == set }) {
+				terms = append(terms, &addrTerm{set: set})
+			}
+		}
+		return ok
+	}
 	for _, n := range names {
+		if geo(n) {
+			continue
+		}
 		if p, ok := c.addrs[n]; ok {
 			static = appendUnique(static, p)
 			continue
@@ -460,7 +493,9 @@ func (c *compiler) addrTerms(names []string) []*addrTerm {
 			continue
 		}
 		for _, m := range g.Static {
-			static = appendUnique(static, c.addrs[m])
+			if !geo(m) {
+				static = appendUnique(static, c.addrs[m])
+			}
 		}
 	}
 	if len(static) > 0 {
@@ -611,8 +646,8 @@ func (c *compiler) rule(r config.Rule) ([]string, error) {
 	var lines []string
 	for _, zp := range pairs {
 		from, to := zp.from, zp.to
-		for _, src := range c.addrTerms(r.Source) {
-			for _, dst := range c.addrTerms(r.Destination) {
+		for _, src := range c.addrExprs(r.Source, r.SourceNegate, "saddr") {
+			for _, dst := range c.addrExprs(r.Destination, r.DestinationNegate, "daddr") {
 				for _, svc := range c.svcTerms(r.Service) {
 					for _, v := range verdicts(r.Action, svc) {
 						parts := []string{}
@@ -621,11 +656,11 @@ func (c *compiler) rule(r config.Rule) ([]string, error) {
 								parts = append(parts, p)
 							}
 						}
-						if src != nil {
-							parts = append(parts, src.expr("saddr"))
+						if src != "" {
+							parts = append(parts, src)
 						}
-						if dst != nil {
-							parts = append(parts, dst.expr("daddr"))
+						if dst != "" {
+							parts = append(parts, dst)
 						}
 						if svc != nil {
 							parts = append(parts, svc.expr())
@@ -675,7 +710,16 @@ func covers(a, b config.Rule) bool {
 		}
 		return true
 	}
-	return sup(a.From, b.From) && sup(a.To, b.To) && sup(a.Source, b.Source) && sup(a.Destination, b.Destination) &&
+	// A negated side covers only when the other rule's side is any (a
+	// negated list never is) and not negated.
+	side := func(x, y []string, xneg, yneg bool) bool {
+		if xneg || yneg {
+			return !xneg && isAny(x)
+		}
+		return sup(x, y)
+	}
+	return sup(a.From, b.From) && sup(a.To, b.To) && side(a.Source, b.Source, a.SourceNegate, b.SourceNegate) &&
+		side(a.Destination, b.Destination, a.DestinationNegate, b.DestinationNegate) &&
 		sup(a.Service, b.Service) && sup(a.Application, b.Application)
 }
 
@@ -1142,4 +1186,109 @@ func (c *compiler) trunkDrop(b *strings.Builder, forward bool) {
 	if forward {
 		fmt.Fprintf(b, "\t\toifname %s counter drop comment \"trunk: untagged\"\n", set(ts))
 	}
+}
+
+// addrExprs turns a rule's source or destination into match expressions,
+// one nft rule each ("" matches any). A negated list is one expression
+// that excludes every term: not in the addresses, and not in each set.
+func (c *compiler) addrExprs(names []string, negate bool, field string) []string {
+	terms := c.addrTerms(names)
+	if !negate {
+		out := make([]string, len(terms))
+		for i, t := range terms {
+			if t != nil {
+				out[i] = t.expr(field)
+			}
+		}
+		return out
+	}
+	var parts []string
+	for _, t := range terms {
+		if t == nil {
+			return []string{""} // validation refuses negating any
+		}
+		parts = append(parts, t.notExpr(field))
+	}
+	return []string{strings.Join(parts, " ")}
+}
+
+func (t addrTerm) notExpr(field string) string {
+	if t.set != "" {
+		return fmt.Sprintf("ip %s != @%s", field, t.set)
+	}
+	if len(t.static) == 1 {
+		return fmt.Sprintf("ip %s != %s", field, t.static[0])
+	}
+	return fmt.Sprintf("ip %s != { %s }", field, strings.Join(t.static, ", "))
+}
+
+// geoChunk is how many ranges go in one add element statement.
+const geoChunk = 2000
+
+// usedCountries lists the countries security rules use, directly or
+// through static groups.
+func (c *compiler) usedCountries() []string {
+	seen := map[string]bool{}
+	var add func(names []string)
+	add = func(names []string) {
+		for _, n := range names {
+			if cc, ok := config.CountryCode(n); ok {
+				seen[cc] = true
+			} else if g, ok := c.groups[n]; ok {
+				add(g.Static)
+			}
+		}
+	}
+	for _, r := range c.cfg.Rules {
+		add(r.Source)
+		add(r.Destination)
+	}
+	out := make([]string, 0, len(seen))
+	for cc := range seen {
+		out = append(out, cc)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// geoSets declares an interval set per country the rules use and writes
+// its ranges to GeoElements, applied in the same transaction.
+func (c *compiler) geoSets(b *strings.Builder, geo GeoSource) {
+	var els strings.Builder
+	for _, cc := range c.usedCountries() {
+		set := "geo_" + strings.ToLower(cc)
+		c.res.GeoSets[cc] = set
+		fmt.Fprintf(b, "\tset %s {\n\t\ttype ipv4_addr\n\t\tflags interval\n\t\tcomment \"country:%s\"\n\t}\n\n", set, cc)
+		var rs []geoip.Range
+		if geo != nil {
+			rs = geo.Ranges(cc)
+		}
+		if len(rs) == 0 {
+			if geo == nil {
+				c.res.Warnings = append(c.res.Warnings, fmt.Sprintf("country:%s: there is no country database yet, so rules naming countries match no address (request geoip update)", cc))
+			} else {
+				c.res.Warnings = append(c.res.Warnings, fmt.Sprintf("country:%s: the country database has no addresses for it, so rules naming it match no address", cc))
+			}
+			continue
+		}
+		for i := 0; i < len(rs); i += geoChunk {
+			end := min(i+geoChunk, len(rs))
+			strs := make([]string, 0, end-i)
+			for _, r := range rs[i:end] {
+				strs = append(strs, r.String())
+			}
+			fmt.Fprintf(&els, "add element %s %s { %s }\n", Table, set, strings.Join(strs, ", "))
+		}
+	}
+	c.res.GeoElements = els.String()
+}
+
+// UsedCountries lists the countries a config's security rules use (upper
+// case, sorted), directly or through static groups.
+func UsedCountries(cfg *config.Config) []string {
+	c := &compiler{cfg: cfg, groups: map[string]config.AddressGroup{}}
+	for _, g := range cfg.AddressGroups {
+		c.groups[g.Name] = g
+	}
+	return c.usedCountries()
 }

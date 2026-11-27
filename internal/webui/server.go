@@ -26,6 +26,7 @@ import (
 	"github.com/stevejboyle/sjb-os/internal/backup"
 	"github.com/stevejboyle/sjb-os/internal/config"
 	"github.com/stevejboyle/sjb-os/internal/daemon"
+	"github.com/stevejboyle/sjb-os/internal/geoip"
 	"github.com/stevejboyle/sjb-os/internal/logs"
 	"github.com/stevejboyle/sjb-os/internal/netdev"
 	"github.com/stevejboyle/sjb-os/internal/nicaddr"
@@ -132,6 +133,21 @@ func New(d *daemon.Daemon, o Options) http.Handler {
 	mux.HandleFunc("POST /ui/api/ips/update", s.auth(accounts.NeedChange(accounts.IPS), func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
 		s.o.Log.Info("IPS signature update requested", "by", s.author(ss))
 		v, err := s.d.UpdateIPS(r.Context())
+		reply(w, v, err)
+	}))
+	mux.HandleFunc("GET /ui/api/countries", s.auth(accounts.ConfigView, func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+		reply(w, geoip.Names, nil)
+	}))
+	mux.HandleFunc("GET /ui/api/geoip", s.auth(accounts.NeedView(accounts.IPS), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+		reply(w, s.d.GeoIP(), nil)
+	}))
+	mux.HandleFunc("GET /ui/api/geoip/lookup", s.auth(accounts.NeedView(accounts.IPS), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+		v, err := s.d.GeoIPLookup(r.URL.Query().Get("ip"))
+		reply(w, v, err)
+	}))
+	mux.HandleFunc("POST /ui/api/geoip/update", s.auth(accounts.NeedChange(accounts.IPS), func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+		s.o.Log.Info("country database update requested", "by", s.author(ss))
+		v, err := s.d.UpdateGeoIP(r.Context())
 		reply(w, v, err)
 	}))
 	mux.HandleFunc("POST /ui/api/backup/export", s.auth(accounts.ConfigView, func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {

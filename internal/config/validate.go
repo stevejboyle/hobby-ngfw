@@ -5,6 +5,7 @@ import (
 
 	"fmt"
 	"github.com/stevejboyle/sjb-os/internal/appid"
+	"github.com/stevejboyle/sjb-os/internal/geoip"
 	"net/netip"
 	"regexp"
 	"strconv"
@@ -16,7 +17,24 @@ var (
 )
 
 // validator collects every error instead of stopping at the first.
-type validator struct{ errs []error }
+type validator struct {
+	errs []error
+	// geoGroups are static address groups with country members: only
+	// security rules can match countries.
+	geoGroups map[string]bool
+}
+
+// noGeo refuses countries, and groups holding them, where only addresses
+// make sense (NAT, decryption rules, IPS exceptions).
+func (v *validator) noGeo(path, field string, vals []string) {
+	for _, s := range vals {
+		if _, ok := CountryCode(s); ok {
+			v.add(path, "%s: %q: countries can only be used in security rules", field, s)
+		} else if v.geoGroups[s] {
+			v.add(path, "%s: group %q has countries in it, which only security rules can use", field, s)
+		}
+	}
+}
 
 func (v *validator) add(path, format string, args ...any) {
 	v.errs = append(v.errs, fmt.Errorf("%s: %s", path, fmt.Sprintf(format, args...)))
@@ -34,6 +52,11 @@ func (c *Config) Validate() error {
 	case "", "on", "off":
 	default:
 		v.add("system.app_id", "must be on or off, got %q", c.System.AppID)
+	}
+	switch c.System.GeoIPAutoUpdate {
+	case "", "on", "off":
+	default:
+		v.add("system.geoip_auto_update", "must be on or off, got %q", c.System.GeoIPAutoUpdate)
 	}
 
 	zones := v.names("zones", len(c.Zones), func(i int) string { return c.Zones[i].Name })
@@ -69,8 +92,18 @@ func (c *Config) Validate() error {
 			}
 		}
 		for _, m := range g.Static {
+			if cc, ok := CountryCode(m); ok {
+				if !geoip.Known(cc) {
+					v.add(p, "unknown country %q (ISO 3166 two-letter codes, e.g. country:US)", m)
+				}
+				if v.geoGroups == nil {
+					v.geoGroups = map[string]bool{}
+				}
+				v.geoGroups[g.Name] = true
+				continue
+			}
 			if !containsAddress(c.Addresses, m) {
-				v.add(p, "unknown address %q (static members must be addresses)", m)
+				v.add(p, "unknown address %q (static members must be addresses or countries)", m)
 			}
 		}
 	}
@@ -238,8 +271,20 @@ func (c *Config) Validate() error {
 		ruleNames[r.Name] = true
 		v.refs(p, "from", r.From, "zone", func(s string) bool { return zones[s] })
 		v.refs(p, "to", r.To, "zone", func(s string) bool { return zones[s] })
-		v.refs(p, "source", r.Source, "address or group", func(s string) bool { return addrs[s] })
-		v.refs(p, "destination", r.Destination, "address or group", func(s string) bool { return addrs[s] })
+		addrOrCountry := func(s string) bool {
+			if cc, ok := CountryCode(s); ok {
+				return geoip.Known(cc)
+			}
+			return addrs[s]
+		}
+		v.refs(p, "source", r.Source, "address, group or country", addrOrCountry)
+		v.refs(p, "destination", r.Destination, "address, group or country", addrOrCountry)
+		if r.SourceNegate && isAnyList(r.Source) {
+			v.add(p, "source_negate needs a source to negate (not any)")
+		}
+		if r.DestinationNegate && isAnyList(r.Destination) {
+			v.add(p, "destination_negate needs a destination to negate (not any)")
+		}
 		v.refs(p, "service", r.Service, "service", func(s string) bool { return services[s] })
 		v.refs(p, "application", r.Application, "application, category or application group (show app catalog lists them)",
 			func(s string) bool { return knownAppOrCategory(s) || appGroups[s] })
@@ -549,3 +594,18 @@ func port(s string) (int, error) {
 	}
 	return n, nil
 }
+
+// CountryPrefix starts a country reference in a rule or group:
+// "country:US".
+const CountryPrefix = "country:"
+
+// CountryCode returns the upper-case code of a country reference.
+func CountryCode(s string) (string, bool) {
+	if len(s) == len(CountryPrefix)+2 && strings.EqualFold(s[:len(CountryPrefix)], CountryPrefix) {
+		return strings.ToUpper(s[len(CountryPrefix):]), true
+	}
+	return "", false
+}
+
+// isAnyList reports whether a match list matches everything.
+func isAnyList(vals []string) bool { return len(vals) == 0 || (len(vals) == 1 && vals[0] == Any) }

@@ -1,0 +1,78 @@
+package geoip
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+)
+
+// BaseURL is where DB-IP publishes the monthly country database.
+var BaseURL = "https://download.db-ip.com/free"
+
+// maxDownload caps a download (the real file is about 5 MB).
+var maxDownload int64 = 64 << 20
+
+// URL is the file of one month.
+func URL(month string) string { return fmt.Sprintf("%s/dbip-country-lite-%s.csv.gz", BaseURL, month) }
+
+// Months to try at time now: this month, then the previous one (DB-IP
+// publishes early in the month).
+func Months(now time.Time) []string {
+	now = now.UTC()
+	first := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	return []string{first.Format("2006-01"), first.AddDate(0, -1, 0).Format("2006-01")}
+}
+
+// Fetch downloads and validates the newest month available at time now
+// that is newer than have ("" for none). It returns nil, nil when have is
+// already the newest.
+func Fetch(ctx context.Context, client *http.Client, now time.Time, have string) (*DB, error) {
+	if client == nil {
+		client = &http.Client{Timeout: 2 * time.Minute}
+	}
+	var errs []error
+	for _, m := range Months(now) {
+		if have != "" && m <= have {
+			return nil, nil
+		}
+		data, err := get(ctx, client, URL(m))
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		db, err := Parse(bytes.NewReader(data), true)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", URL(m), err)
+		}
+		db.SetMeta(m, "downloaded", now)
+		return db, nil
+	}
+	return nil, fmt.Errorf("no database downloaded: %v", errs)
+}
+
+func get(ctx context.Context, client *http.Client, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "SJB-OS geoip")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%s: %s", url, resp.Status)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxDownload+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > maxDownload {
+		return nil, fmt.Errorf("%s: larger than %d bytes", url, maxDownload)
+	}
+	return b, nil
+}

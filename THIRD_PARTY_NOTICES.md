@@ -102,6 +102,15 @@ version's OVA or upgrade bundle contains, for no more than the cost of
 providing it. Ask by opening an issue at
 <https://github.com/stevejboyle/sjb-os/issues> naming the version.
 
+## Data
+
+- **DB-IP IP to Country Lite** (https://db-ip.com), licensed under the
+  Creative Commons Attribution 4.0 International License (CC BY 4.0):
+  IP Geolocation by DB-IP. A converted copy (IPv4 ranges by country,
+  `/usr/share/sjb-os/geoip`) ships in the image and in upgrade bundles, and
+  the appliance downloads newer months from DB-IP. The attribution is shown
+  wherever the data is (`show geoip`, the web UI's Geo-blocking panel).
+
 ## Downloaded at run time, not distributed
 
 When a rule uses an IPS profile, the appliance downloads the **Emerging

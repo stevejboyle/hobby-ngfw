@@ -92,6 +92,15 @@ services:
     - name: ping
       protocol: icmp
 rules:
+    # Geo-blocking (0.9.15-r01 or later): uncomment to let only US and
+    # Canadian addresses reach the DMZ from outside (show geoip lookup IP
+    # says which country an address is in).
+    # - name: dmz-north-america-only
+    #   from: [outside]
+    #   to: [dmz]
+    #   source: [country:US, country:CA]
+    #   source_negate: true
+    #   action: deny
     - name: block-quarantined
       from:
         - inside

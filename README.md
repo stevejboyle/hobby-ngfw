@@ -206,6 +206,9 @@ on Steve's own ESXi lab):
 - Host tags through a REST API (and XML user-ID messages for existing
   integrations), applied in about 20 ms, no commit needed.
 - App Identification (nDPI) with application, category and group rules.
+- Geo-blocking (0.9.15-r01): rules by country (`country:US`), with
+  source and destination negation ("everything except the US"), from
+  DB-IP's country data (CC BY 4.0), shipped and refreshed monthly.
 - IPS (Suricata, Emerging Threats Open) on chosen allow rules, with
   per-rule profiles, a threat log, and exceptions for one signature by
   rule, client or server (0.9.12-r01).

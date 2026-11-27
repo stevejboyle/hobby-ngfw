@@ -111,11 +111,13 @@ st=$(cli_run show status)
 
 # OS packages (Debian updates and the kernel, carried by bundles since 0.9.14).
 pkstatus() { root_run fwctl packages status -json 2>/dev/null; }
-wait_os() { # until the background install has finished (ok or failed)
+wait_os() { # until the background install has finished (ok or failed), or had nothing to do
 	local s
+	sleep 10 # sjb-packages starts in the background with ngfwd
 	for _ in $(seq 240); do
 		s=$(pkstatus)
-		[[ $s == *'"state": "ok"'* || $s == *'"state": "failed"'* ]] && [[ $(root_run systemctl is-active sjb-packages) != active ]] && return 0
+		[[ $(root_run systemctl is-active sjb-packages) != active ]] &&
+			[[ $s == *'"state": "ok"'* || $s == *'"state": "failed"'* || ($s == *'"pending": 0'* && $s == *'"state": "idle"'*) ]] && return 0
 		sleep 5
 	done
 	return 1
@@ -136,7 +138,7 @@ check_os_installed() { # label
 	behind=$(os_behind)
 	newk=$(root_run "awk '\$1 ~ /^linux-image-[0-9]/ {sub(/^linux-image-/, \"\", \$1); print \$1}' /usr/share/sjb-os/packages/os-updates.txt | sort -V | tail -1")
 	NEWK=${newk:-$(root_run uname -r)}
-	[[ $st == *'"state": "ok"'* && -z $behind && $(root_run "dpkg-query -W -f='\${db:Status-Status}' linux-image-$NEWK") == installed ]] &&
+	[[ ( $st == *'"state": "ok"'* || $st == *'"state": "idle"'* ) && $st == *'"pending": 0'* && -z $behind && $(root_run "dpkg-query -W -f='\${db:Status-Status}' linux-image-$NEWK") == installed ]] &&
 		pass "$1: OS updates installed ($(root_run 'wc -l </usr/share/sjb-os/packages/os-updates.txt') listed, kernel $NEWK), every one at the bundled version or newer" ||
 		fail "$1: OS updates: behind=[$behind] status=${st:0:400} $(root_run 'journalctl -u sjb-packages --no-pager -n 8' 2>&1 | cut -c1-200)"
 }
@@ -153,8 +155,15 @@ if [[ -n $NEWBUNDLE ]]; then
 	check_os_installed "upgrade from $BASE"
 	saved=$(root_run "cat /var/lib/sjb-os/releases/$BASE/packages/packages.json" 2>&1)
 	nrepack=$(root_run "ls /var/lib/sjb-os/releases/$BASE/packages/*.deb 2>/dev/null | wc -l")
-	[[ $saved == *'"version": "'"$NEWV"'"'* && ${nrepack:-0} -ge 1 ]] &&
-		pass "the versions the upgrade replaced are saved for a rollback ($nrepack repacked)" || fail "saved packages: ${saved:0:300} ($nrepack debs)"
+	SAVED_PKGS=1
+	if [[ $(pkstatus) == *'"state": "ok"'* ]]; then
+		[[ $saved == *'"version": "'"$NEWV"'"'* && ${nrepack:-0} -ge 1 ]] &&
+			pass "the versions the upgrade replaced are saved for a rollback ($nrepack repacked)" || fail "saved packages: ${saved:0:300} ($nrepack debs)"
+	else
+		# The base image already had every bundled version: nothing replaced.
+		SAVED_PKGS=0
+		[[ $saved == *"No such file"* ]] && pass "the $BASE image already had every bundled package: nothing replaced, nothing to save" || fail "saved packages with nothing installed: ${saved:0:200}"
+	fi
 	if [[ $NEWK != "$BASE_K" ]]; then
 		ver=$(cli_run show version)
 		ps=$(pkstatus)
@@ -211,7 +220,7 @@ exit
 	# The rollback put the OS packages back too: every saved version is
 	# installed again, packages the upgrade added are gone (the new kernel,
 	# even while running it), and a reboot onto the old kernel is required.
-	wrong=$(root_run "python3 -c '
+	wrong=$( ((SAVED_PKGS)) && root_run "python3 -c '
 import json, subprocess
 s = json.load(open(\"/var/lib/sjb-os/releases/$BASE/packages/packages.json\"))
 for c in s[\"changes\"]:
@@ -228,7 +237,7 @@ for c in s[\"changes\"]:
 	wrong=$(while read -r p rest; do [[ -n $p && " $kept " != *" $p "* ]] && echo "$p $rest"; done <<<"$wrong")
 	libc=$(root_run "dpkg-query -W -f='\${Version}' libc6")
 	kgone=$(root_run "dpkg-query -W -f='\${db:Status-Status}' linux-image-$NEWK 2>&1")
-	[[ $out == *"OS packages: "*" put back to their earlier versions"* && -z $wrong && $libc == "$BASE_LIBC" && ( $NEWK == "$BASE_K" || $kgone != installed ) ]] &&
+	[[ ( $out == *"OS packages: "*" put back to their earlier versions"* || $SAVED_PKGS == 0 ) && -z $wrong && $libc == "$BASE_LIBC" && ( $NEWK == "$BASE_K" || $kgone != installed ) ]] &&
 		pass "rollback put the OS packages back (libc6 $libc again; kernel $NEWK removed)" ||
 		fail "rollback OS packages: wrong=[$wrong] libc6=$libc (want $BASE_LIBC) kernel=$kgone / ${out: -400}"
 	if [[ $NEWK != "$BASE_K" ]]; then
@@ -1209,6 +1218,43 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 	else
 		fail "SNMP checks need net-snmp's client tools (nix shell nixpkgs#net-snmp) and Docker on this host"
 	fi
+	# --- geo-blocking (here, while ipscli -> ipssrv traffic flows) ---------------
+	geo=$(cli_run show geoip)
+	[[ $geo == *"country database: DB-IP country lite 20"* && $geo == *"IP Geolocation by DB-IP"* ]] &&
+		pass "a country database is in use: $(grep -o 'lite [0-9-]* ([a-z]*' <<<"$geo")), with DB-IP's attribution" || fail "show geoip: ${geo:0:300}"
+	upd=$(cli_run request geoip update 2>&1)
+	[[ $upd == *"last check:"* && $upd != *FAILED* ]] &&
+		pass "request geoip update reaches DB-IP: $(grep -o 'last check:.*' <<<"$upd" | cut -c1-80)" || fail "geoip update: ${upd: -300}"
+	# A test database puts the IPS client network in CN and the server's in US.
+	root_run 'cat > /tmp/geo-test.csv' <<<$'10.83.0.0,10.83.0.255,CN\n10.84.0.0,10.84.0.255,US'
+	rev0=$(root_run fwctl status | grep -o '"running_revision": [0-9]*' | grep -o '[0-9]*$')
+	imp=$(root_run fwctl geoip import /tmp/geo-test.csv 2>&1)
+	lk=$(cli_run show geoip lookup 10.83.0.2)
+	[[ $imp == *imported* && $lk == *"CN (China)"* ]] && pass "fwctl geoip import, and show geoip lookup 10.83.0.2: CN" || fail "geoip import: ${imp: -200} / $lk"
+	script=$'configure\nset rule geo-cn from ipscli source country:CN action deny log yes\nmove rule geo-cn top\ncommit -m "boot test: deny CN"\nexit\nexit\n'
+	out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
+	r=$(get 10.83.0.2 plain)
+	[[ $out == *"committed revision"* && $r == blocked && $(root_run nft list set inet ngfw geo_cn) == *10.83.0.0/24* ]] &&
+		pass "deny country:CN: the CN client is blocked (set geo_cn holds 10.83.0.0/24)" || fail "deny CN: $r / ${out: -200}"
+	script=$'configure\nset rule geo-cn source country:US source-negate yes\ncommit -m "boot test: only the US"\nexit\nexit\n'
+	out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
+	r=$(get 10.83.0.2 plain)
+	[[ $out == *"committed revision"* && $r == blocked && $(root_run nft list chain inet ngfw forward) == *'ip saddr != @geo_us'* ]] &&
+		pass "source-negate: everything but country:US is denied, so the CN client is blocked" || fail "negate: $r / ${out: -200}"
+	# Re-importing (a refresh) re-applies without a revision; the rule holds.
+	rev1=$(root_run fwctl status | grep -o '"running_revision": [0-9]*' | grep -o '[0-9]*$')
+	root_run fwctl geoip import /tmp/geo-test.csv >/dev/null 2>&1
+	rev2=$(root_run fwctl status | grep -o '"running_revision": [0-9]*' | grep -o '[0-9]*$')
+	[[ $rev2 == "$rev1" && $(get 10.83.0.2 plain) == blocked ]] && pass "a database refresh made no revision ($rev2) and the rule still holds" || fail "refresh: revision $rev1 -> $rev2"
+	if [[ -n ${pk:-} ]]; then
+		curl -sk -o "$WORK/metrics-geo.txt" -H "Authorization: Bearer $pk" "https://127.0.0.1:$API_PORT/metrics"
+		mg=$(grep '^sjbos_geoip' "$WORK/metrics-geo.txt")
+		[[ $mg == *"sjbos_geoip_countries_in_use 1"* && $mg == *"sjbos_geoip_last_update_success 1"* && $mg == *sjbos_geoip_age_seconds* ]] &&
+			pass "Prometheus: the geoip metrics (1 country in use, last update ok)" || fail "geoip metrics: $mg"
+	fi
+	script=$'configure\ndelete rule geo-cn\ncommit -m "boot test: geo cleanup"\nexit\nexit\n'
+	retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
+	[[ $(get 10.83.0.2 plain) == 200 ]] && pass "geo rule removed: the client gets through again" || fail "after geo cleanup"
 	script=$'configure\nset system ips off\ncommit -m "boot test: ips off"\nexit\nexit\n'
 	out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
 	for _ in $(seq 10); do [[ $(root_run systemctl is-active sjb-ips) != active ]] && break; sleep 1; done

@@ -198,6 +198,9 @@ type System struct {
 	// IPS turns IPS inspection on or off: "on" (also when unset) or "off".
 	// Inspection runs for allow rules that name an IPS profile.
 	IPS string `yaml:"ips,omitempty" json:"ips"`
+	// GeoIPAutoUpdate turns the daily check for a newer country database
+	// on (also when unset) or off.
+	GeoIPAutoUpdate string `yaml:"geoip_auto_update,omitempty" json:"geoip_auto_update"`
 	// IPSDisabledSignatures are signature IDs left out of the IPS rules
 	// (false positives).
 	IPSDisabledSignatures []string `yaml:"ips_disabled_signatures,omitempty" json:"ips_disabled_signatures"`
@@ -268,10 +271,18 @@ type Rule struct {
 	To          []string `yaml:"to,omitempty" json:"to"`                   // destination zones
 	Source      []string `yaml:"source,omitempty" json:"source"`           // address or group names
 	Destination []string `yaml:"destination,omitempty" json:"destination"` // address or group names
-	Application []string `yaml:"application,omitempty" json:"application"` // App Identification names (catalog arrives in phase 2)
-	Service     []string `yaml:"service,omitempty" json:"service"`         // service names
-	Action      string   `yaml:"action" json:"action"`                     // allow, deny or reset
-	Log         bool     `yaml:"log,omitempty" json:"log"`
+	// SourceNegate and DestinationNegate match everything except the listed
+	// addresses (countries, groups and tag groups included).
+	SourceNegate      bool     `yaml:"source_negate,omitempty" json:"source_negate"`
+	DestinationNegate bool     `yaml:"destination_negate,omitempty" json:"destination_negate"`
+	Application       []string `yaml:"application,omitempty" json:"application"` // App Identification names (catalog arrives in phase 2)
+	Service           []string `yaml:"service,omitempty" json:"service"`         // service names
+	Action            string   `yaml:"action" json:"action"`                     // allow, deny or reset
+	Log               bool     `yaml:"log,omitempty" json:"log"`
 	// IPSProfile inspects the rule's traffic with the IPS (allow rules).
 	IPSProfile string `yaml:"ips_profile,omitempty" json:"ips_profile"`
 }
+
+// GeoIPAutoUpdateOn reports whether the appliance checks daily for a newer
+// country database.
+func (s System) GeoIPAutoUpdateOn() bool { return s.GeoIPAutoUpdate != "off" }

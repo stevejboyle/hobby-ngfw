@@ -34,6 +34,7 @@ type Snapshot struct {
 	IPS        IPS          `json:"ips"`
 	AppID      AppID        `json:"app_id"`
 	Decryption Decryption   `json:"decryption"`
+	GeoIP      *GeoIP       `json:"geoip,omitempty"`
 	LogServers []LogServer  `json:"log_servers"`
 	Tags       []TagCount   `json:"tags"`
 	Threats    []ThreatStat `json:"threats"` // IPS matches by severity (same data as IPS.Matches, as rows)
@@ -307,4 +308,11 @@ func Load(path string) (Snapshot, error) {
 		return s, fmt.Errorf("%s: %w", path, err)
 	}
 	return s, nil
+}
+
+// GeoIP is the country database's state.
+type GeoIP struct {
+	AgeSeconds     float64 `json:"age_seconds"` // since it was installed
+	LastUpdateOK   bool    `json:"last_update_ok"`
+	CountriesInUse int     `json:"countries_in_use"`
 }

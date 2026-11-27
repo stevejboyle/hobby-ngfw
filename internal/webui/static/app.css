@@ -295,3 +295,8 @@ input.log-query { min-width: 22em; }
 
 table.kv th { text-align: left; padding-right: 1.5em; font-weight: 600; }
 details.spaced { margin: 4px 0 14px; }
+.chip.neg { background: var(--warn-bg); color: var(--warn-ink); font-weight: 600; }
+.picked { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+.chip.removable { display: inline-flex; align-items: center; gap: 2px; }
+.chip-x { border: 0; background: none; color: inherit; cursor: pointer; padding: 0 2px; font-size: 14px; line-height: 1; }
+.side { grid-column: 1 / -1; border-top: 1px solid var(--border); padding-top: 8px; }

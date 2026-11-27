@@ -29,6 +29,7 @@ import (
 	"github.com/stevejboyle/sjb-os/internal/decrypt"
 	"github.com/stevejboyle/sjb-os/internal/dhcp"
 	"github.com/stevejboyle/sjb-os/internal/frr"
+	"github.com/stevejboyle/sjb-os/internal/geoip"
 	"github.com/stevejboyle/sjb-os/internal/ips"
 	"github.com/stevejboyle/sjb-os/internal/logfwd"
 	"github.com/stevejboyle/sjb-os/internal/logs"
@@ -67,6 +68,7 @@ func main() {
 	flag.StringVar(&decryptPolicy, "decryption-policy", decrypt.PolicyFile, "where to write tlsd's policy (readable by tlsd's user)")
 	flag.StringVar(&tlsdSocket, "tlsd-socket", "/run/sjb-tlsd/tlsd.sock", "tlsd's status socket")
 	flag.StringVar(&tlsdPath, "tlsd", "/usr/local/sbin/tlsd", "tlsd, the TLS decryption daemon (empty: no decryption, for development)")
+	flag.StringVar(&geoDir, "geoip-dir", "/var/lib/sjb-os/geoip", "downloaded or imported country database (empty: no geo-blocking, for development)")
 	flag.StringVar(&ipsDir, "ips-dir", "/var/lib/sjb-os/ips", "IPS signature directory (empty: no IPS, for development)")
 	flag.StringVar(&keaPath, "kea", "/usr/sbin/kea-dhcp4", "path to kea-dhcp4, the DHCP server (empty: don't manage DHCP, for development)")
 	flag.StringVar(&snmpdPath, "snmpd", "/usr/sbin/snmpd", "path to snmpd, the SNMP agent (empty: don't manage SNMP, for development)")
@@ -210,6 +212,12 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 	}
 	acct.Reconcile()
 	d.SetAccounts(acct)
+	// The country database, before the first ruleset goes in: country sets
+	// are filled in the same transaction.
+	if geoDir != "" {
+		d.SetGeoIP(geoip.Store{Shipped: filepath.Join(ui.root, "usr/share/sjb-os/geoip"), Local: geoDir}, nil)
+		go d.RunGeoIPUpdates(context.Background())
+	}
 	if err := d.Start(); err != nil {
 		return err
 	}
@@ -400,6 +408,10 @@ var snmpdPath, snmpCreds string
 
 // ipsDir holds the IPS signatures; empty: no IPS (development).
 var ipsDir string
+
+// geoDir holds the downloaded or imported country database ("": no
+// geo-blocking, for development).
+var geoDir string
 
 // tlsdPath is the TLS decryption daemon; empty: no decryption (development).
 var tlsdPath, tlsdSocket, decryptCA, decryptPolicy string

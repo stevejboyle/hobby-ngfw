@@ -218,6 +218,8 @@ func (v *validator) ipsExceptions(c *Config, addrs map[string]bool) {
 					v.add(p, "%s: leave it out rather than %q", f.field, Any)
 				} else if !addrs[s] {
 					v.add(p, "%s: unknown address or group %q", f.field, s)
+				} else {
+					v.noGeo(p, f.field, []string{s})
 				}
 			}
 		}

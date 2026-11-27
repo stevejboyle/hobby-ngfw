@@ -212,6 +212,27 @@ func (d *Daemon) mgmtRoutes() []mgmtRoute {
 			v, err := d.UpdateIPS(r.Context())
 			reply(w, v, err)
 		}},
+		{"GET /v1/geoip", view(accounts.IPS), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			reply(w, d.GeoIP(), nil)
+		}},
+		{"GET /v1/geoip/lookup", view(accounts.IPS), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			v, err := d.GeoIPLookup(r.URL.Query().Get("ip"))
+			reply(w, v, err)
+		}},
+		{"POST /v1/geoip/update", change(accounts.IPS), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			d.log.Info("country database update requested", "by", c.Author())
+			v, err := d.UpdateGeoIP(r.Context())
+			reply(w, v, err)
+		}},
+		{"POST /v1/geoip/import", change(accounts.IPS), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			data, err := io.ReadAll(io.LimitReader(r.Body, 64<<20))
+			if err != nil {
+				fail(w, err)
+				return
+			}
+			v, err := d.ImportGeoIP(c, data)
+			reply(w, v, err)
+		}},
 		{"GET /v1/decryption", view(accounts.Decryption), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
 			reply(w, d.Decryption(), nil)
 		}},

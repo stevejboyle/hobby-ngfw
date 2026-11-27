@@ -249,3 +249,21 @@ func TestPrometheusFreshness(t *testing.T) {
 		}
 	}
 }
+
+func TestPrometheusGeoIP(t *testing.T) {
+	s := sample()
+	var buf bytes.Buffer
+	WritePrometheus(&buf, s)
+	if strings.Contains(buf.String(), "sjbos_geoip") {
+		t.Error("geoip metrics without a country database")
+	}
+	s.GeoIP = &GeoIP{AgeSeconds: 86400, LastUpdateOK: false, CountriesInUse: 3}
+	buf.Reset()
+	WritePrometheus(&buf, s)
+	checkFormat(t, buf.String())
+	for _, want := range []string{"sjbos_geoip_age_seconds 86400\n", "sjbos_geoip_last_update_success 0\n", "sjbos_geoip_countries_in_use 3\n"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+}

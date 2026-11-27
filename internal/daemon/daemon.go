@@ -43,6 +43,7 @@ var ErrInvalid = errors.New("invalid")
 
 // Daemon is the commit and tag engine.
 type Daemon struct {
+	geo     *geoState    // the country database (nil: geo-blocking unavailable)
 	reboot  func() error // nil: systemctl reboot
 	mu      sync.Mutex
 	store   *store.Store
@@ -497,7 +498,7 @@ func (d *Daemon) Start() error {
 	if err != nil {
 		return err
 	}
-	if err := d.nft.Apply(res.Ruleset); err != nil {
+	if err := d.nft.Apply(res.Script()); err != nil {
 		return err
 	}
 	d.sets = res.Sets
@@ -769,7 +770,7 @@ func (d *Daemon) commitLocked(data []byte, author, message string, confirm time.
 	}
 
 	// 2. Apply. nft -f is atomic: on failure the previous ruleset stays.
-	if err := d.nft.Apply(res.Ruleset); err != nil {
+	if err := d.nft.Apply(res.Script()); err != nil {
 		undo()
 		return nil, fmt.Errorf("apply failed, previous ruleset still active: %w", err)
 	}
@@ -873,7 +874,7 @@ func (d *Daemon) reapplyRunningLocked() error {
 	if err != nil {
 		return err
 	}
-	return d.nft.Apply(res.Ruleset)
+	return d.nft.Apply(res.Script())
 }
 
 // policyOf is a config's ruleset without tag set elements (they change
@@ -972,7 +973,7 @@ func (d *Daemon) rollbackToNothingLocked() error {
 	if err != nil {
 		return err
 	}
-	if err := d.nft.Apply(res.Ruleset); err != nil {
+	if err := d.nft.Apply(res.Script()); err != nil {
 		return err
 	}
 	if err := d.store.SetRunning(0); err != nil {

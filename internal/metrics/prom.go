@@ -95,6 +95,11 @@ func WritePrometheus(out io.Writer, s Snapshot) error {
 		}
 		p.one("sjbos_os_packages_pending", "gauge", "Bundled Debian packages not installed yet.", float64(o.PackagesPending))
 	}
+	if g := s.GeoIP; g != nil {
+		p.one("sjbos_geoip_age_seconds", "gauge", "Seconds since the country database in use was installed.", g.AgeSeconds)
+		p.one("sjbos_geoip_last_update_success", "gauge", "1 unless the last country database update check failed.", b2f(g.LastUpdateOK))
+		p.one("sjbos_geoip_countries_in_use", "gauge", "Countries the security rules match.", float64(g.CountriesInUse))
+	}
 	if len(s.System.Disks) > 0 {
 		p.family("sjbos_filesystem_size_bytes", "gauge", "Filesystem size.")
 		for _, d := range s.System.Disks {

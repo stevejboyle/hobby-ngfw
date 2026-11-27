@@ -22,6 +22,8 @@ const usage = `usage:
   sjbpkg build -root DIR -version V [-min-from V] -key KEYFILE -o FILE
                                               sign the overlay under DIR into a bundle
   sjbpkg verify -keys DIR FILE              check a bundle against the *.pub keys in DIR
+  sjbpkg geoip-convert [-in F -month M] -o DIR
+                                              the DB-IP country database, in the appliance's format
 `
 
 func main() {
@@ -37,6 +39,8 @@ func main() {
 		err = build(os.Args[2:])
 	case "verify":
 		err = verify(os.Args[2:])
+	case "geoip-convert":
+		err = geoipConvert(os.Args[2:])
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)

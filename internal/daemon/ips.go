@@ -85,7 +85,7 @@ const ipsCodesFile = "ips-codes.json"
 // (compiler.AssignIPSCodes). Callers hold d.mu.
 func (d *Daemon) compileOpts(cfg *config.Config) compiler.Options {
 	codes, none := compiler.AssignIPSCodes(d.ipsCodes, d.liveIPSCodesLocked(), cfg)
-	return compiler.Options{IPSCodes: codes, IPSInactive: none}
+	return compiler.Options{IPSCodes: codes, IPSInactive: none, Geo: d.geoSource()}
 }
 
 // liveIPSCodesLocked are the mappings of the rules files Suricata may

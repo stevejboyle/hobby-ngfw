@@ -174,6 +174,7 @@ async function enter(s) {
   applyNav();
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
+  try { state.countries = await api("GET", "countries"); } catch { state.countries = {}; }
   await refresh();
   route();
 }
@@ -346,7 +347,70 @@ function listField(label, values, hint) {
 }
 
 const chips = (list, anyWord = "any") =>
-  !list || list.length === 0 ? h("span", { class: "chip any" }, anyWord) : list.map((x) => h("span", { class: "chip" + (x === "any" ? " any" : "") }, x));
+  !list || list.length === 0 ? h("span", { class: "chip any" }, anyWord) : list.map((x) => h("span", { class: "chip" + (x === "any" ? " any" : ""), title: countryTitle(x) }, x));
+
+// Countries in rules and groups: "country:US".
+const COUNTRY = "country:";
+const isCountry = (x) => typeof x === "string" && x.toLowerCase().startsWith(COUNTRY);
+const countryTitle = (x) => (isCountry(x) ? (state.countries || {})[x.slice(COUNTRY.length).toUpperCase()] || "" : undefined);
+// A rule side: chips, with "not" in front when negated.
+const sideChips = (list, negate) => (negate && list && list.length ? [h("span", { class: "chip neg" }, "not"), " ", chips(list)] : chips(list));
+
+// countryField picks countries: a search box over code and name, and a
+// list of the matches; the picked ones show as chips above it.
+function countryField(label, values, hint) {
+  const names = state.countries || {};
+  let picked = (values || []).filter(isCountry).map((x) => x.slice(COUNTRY.length).toUpperCase());
+  const chipsBox = h("div", { class: "picked" });
+  const search = h("input", { type: "search", placeholder: "Search countries (code or name)", "aria-label": label + ": search" });
+  const list = h("select", { size: 6, "aria-label": label });
+  const draw = () => {
+    chipsBox.replaceChildren(...(picked.length ? picked.map((cc) => h("span", { class: "chip removable", title: names[cc] || "" }, cc + " ",
+      h("button", { type: "button", class: "chip-x", "aria-label": "Remove " + cc, onclick: () => { picked = picked.filter((p) => p !== cc); draw(); } }, "×")))
+      : [h("span", { class: "muted small" }, "none")]));
+    // Best matches first: the code, then names starting with the text,
+    // then names containing it ("rus" finds Russia before Belarus).
+    const q = search.value.trim().toLowerCase();
+    const rank = (cc) => {
+      const n = names[cc].toLowerCase();
+      if (!q) return 0;
+      if (cc.toLowerCase() === q) return 1;
+      if (n.startsWith(q)) return 2;
+      if (cc.toLowerCase().startsWith(q)) return 3;
+      return n.includes(q) ? 4 : 9;
+    };
+    const opts = Object.keys(names).filter((cc) => !picked.includes(cc) && rank(cc) < 9)
+      .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+    list.replaceChildren(...opts.map((cc) => h("option", { value: cc }, `${cc}  ${names[cc]}`)));
+  };
+  const add = () => { if (list.value && !picked.includes(list.value)) { picked.push(list.value); picked.sort(); search.value = ""; draw(); } };
+  list.addEventListener("dblclick", add);
+  list.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } });
+  search.addEventListener("input", draw);
+  search.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); if (!list.value && list.options.length) list.value = list.options[0].value; add(); } });
+  draw();
+  return {
+    node: h("label", {}, label, h("span", { class: "hint" }, hint || "Double-click or Enter to add"), chipsBox, search, list),
+    get: () => picked.map((cc) => COUNTRY + cc),
+  };
+}
+
+// A rule side: addresses and groups, countries, and negation.
+function sideFields(label, values, negate) {
+  const addrs = (values || []).filter((x) => !isCountry(x));
+  const countries = (values || []).filter(isCountry);
+  const f = {
+    addr: multiField(label, addrs, addrNames(), { hint: "Addresses and groups", anyLabel: "any (only the countries, if you pick some below)" }),
+    country: countryField(label + " countries", countries, "IPv4 by country (DB-IP); double-click or Enter to add"),
+    negate: checkField(`Negate: match every ${label.toLowerCase()} except these`, negate),
+  };
+  const get = () => {
+    const c = f.country.get();
+    const a = f.addr.get();
+    return c.length ? [...a.filter((x) => x !== "any"), ...c] : a;
+  };
+  return { node: h("div", { class: "side" }, h("div", { class: "grid2" }, f.addr.node, f.country.node), f.negate.node), get, negate: () => f.negate.get() };
+}
 
 const zoneNames = () => state.cand.zones.map((z) => z.name);
 const addrNames = () => [...state.cand.addresses.map((a) => a.name), ...state.cand.address_groups.map((g) => g.name)];
@@ -495,7 +559,7 @@ const ruleSpec = () => ({
   columns: [
     ["Name", (r) => h("strong", {}, r.name)],
     ["From", (r) => chips(r.from)], ["To", (r) => chips(r.to)],
-    ["Source", (r) => chips(r.source)], ["Destination", (r) => chips(r.destination)],
+    ["Source", (r) => sideChips(r.source, r.source_negate)], ["Destination", (r) => sideChips(r.destination, r.destination_negate)],
     ["Application", (r) => chips((r.application || []).map(appLabel))], ["Service", (r) => chips(r.service)],
     ["Action", (r) => h("span", { class: "action-" + r.action }, r.action)],
     ["Log", (r) => (r.log ? "yes" : "")],
@@ -507,8 +571,8 @@ const ruleSpec = () => ({
       action: selectField("Action", r.action, ["allow", "deny", "reset"], { hint: "reset sends a TCP reset or ICMP unreachable" }),
       from: multiField("From zones", r.from, zoneNames()),
       to: multiField("To zones", r.to, zoneNames()),
-      source: multiField("Source", r.source, addrNames(), { hint: "Addresses and groups" }),
-      destination: multiField("Destination", r.destination, addrNames(), { hint: "Addresses and groups" }),
+      source: sideFields("Source", r.source, r.source_negate),
+      destination: sideFields("Destination", r.destination, r.destination_negate),
       service: multiField("Service", r.service, serviceNames()),
       application: appPicker("Applications", r.application),
       log: checkField("Log matches to the kernel log", r.log),
@@ -517,6 +581,7 @@ const ruleSpec = () => ({
     };
     return form(Object.values(f), () => ({
       name: f.name.get(), from: f.from.get(), to: f.to.get(), source: f.source.get(), destination: f.destination.get(),
+      source_negate: f.source.negate(), destination_negate: f.destination.negate(),
       application: f.application.get(), service: f.service.get(), action: f.action.get(), log: f.log.get(),
       ips_profile: f.action.get() === "allow" ? f.ips.get() : "",
     }));
@@ -641,13 +706,14 @@ const groupSpec = () => ({
   form: (g) => {
     const kind = selectField("Kind", g.tag ? "tag" : "static", [{ value: "static", label: "Static: a list of addresses" }, { value: "tag", label: "Dynamic: IPs registered with a tag" }]);
     const name = textField("Name", g.name, { required: true });
-    const members = multiField("Members", g.static, state.cand.addresses.map((a) => a.name), { noAny: true });
+    const members = multiField("Members", (g.static || []).filter((x) => !isCountry(x)), state.cand.addresses.map((a) => a.name), { noAny: true });
+    const countries = countryField("Countries", (g.static || []).filter(isCountry), "A group with countries works in security rules only");
     const tag = textField("Tag", g.tag, { placeholder: "e.g. quarantine", hint: "Registered through the tag API or the Tags page" });
     const sel = kind.node.querySelector("select");
-    const sync = () => { members.node.classList.toggle("hidden", sel.value !== "static"); tag.node.classList.toggle("hidden", sel.value !== "tag"); };
+    const sync = () => { for (const n of [members, countries]) n.node.classList.toggle("hidden", sel.value !== "static"); tag.node.classList.toggle("hidden", sel.value !== "tag"); };
     sel.addEventListener("change", sync);
     sync();
-    return form([name, kind, members, tag], () => (sel.value === "tag" ? { name: name.get(), tag: tag.get(), static: [] } : { name: name.get(), static: members.get(), tag: "" }));
+    return form([name, kind, members, countries, tag], () => (sel.value === "tag" ? { name: name.get(), tag: tag.get(), static: [] } : { name: name.get(), static: [...members.get(), ...countries.get()], tag: "" }));
   },
 });
 
@@ -2066,6 +2132,41 @@ async function pageMonitoring() {
     prom, agent, listSection(snmpReceiverSpec(creds)), credPanel);
 }
 
+// geoPanel: the country database behind country:XX in rules.
+async function geoPanel() {
+  let g;
+  try { g = await api("GET", "geoip"); } catch (e) { return h("section", { class: "panel" }, h("h2", {}, "Geo-blocking"), h("p", { class: "error" }, e.message)); }
+  const m = g.meta || {};
+  const btn = h("button", {}, "Check for an update");
+  btn.addEventListener("click", async () => {
+    btn.disabled = true; btn.textContent = "Checking DB-IP…";
+    try { const r = await api("POST", "geoip/update"); toast((r.last_check || {}).result || "Checked"); route(); }
+    catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "Check for an update"; }
+  });
+  const lookupIn = h("input", { placeholder: "IPv4 address", "aria-label": "Address to look up", size: 16 });
+  const lookupOut = h("span", { class: "muted" });
+  const lookup = async () => {
+    try { const r = await api("GET", "geoip/lookup?ip=" + encodeURIComponent(lookupIn.value.trim())); lookupOut.textContent = r.country ? `${r.country} (${r.name}): country:${r.country} in rules` : "no country (private, reserved or unlisted)"; }
+    catch (e) { lookupOut.textContent = e.message; }
+  };
+  lookupIn.addEventListener("keydown", (e) => { if (e.key === "Enter") lookup(); });
+  const lc = g.last_check || {};
+  const checked = !!lc.time && !lc.time.startsWith("0001");
+  return h("section", { class: "panel" }, h("h2", {}, "Geo-blocking"),
+    h("div", { class: "cards" },
+      card("Country database", g.available ? m.month : "none", g.available ? `${(m.rows || 0).toLocaleString()} IPv4 ranges, ${m.countries} countries (${m.origin})` : "request geoip update"),
+      card("Age", g.available ? `${g.age_days} days` : "–", g.auto_update ? "checked daily while rules use countries" : "auto-update off (system geoip-auto-update)"),
+      card("Last check", checked ? new Date(lc.time).toLocaleString() : "never", !checked ? "" : lc.ok ? lc.result || "" : `failed: ${lc.result}`)),
+    (g.in_use || []).length ? h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, h("th", {}, "Country in rules"), h("th", {}, "Ranges"))),
+      h("tbody", {}, g.in_use.map((c) => h("tr", {}, h("td", {}, h("span", { class: "chip" }, "country:" + c.code), " ", c.name),
+        h("td", { class: "mono" }, c.ranges ? c.ranges.toLocaleString() : h("span", { class: "action-deny" }, "none: matches nothing")))))))
+      : h("p", { class: "muted" }, "No rule names a country yet. Pick countries in a rule's Source or Destination (Policy), or in the CLI: set rule NAME source country:US."),
+    h("div", { class: "row" }, h("label", {}, "Look up", lookupIn), h("button", { onclick: lookup }, "Look up"), lookupOut),
+    can("ips", "change") ? h("p", {}, btn) : null,
+    h("p", { class: "muted small" }, "IP Geolocation by ", h("a", { href: "https://db-ip.com", target: "_blank", rel: "noopener" }, "DB-IP"), ", CC BY 4.0. Countries match IPv4 addresses only; registrations change monthly, so expect some error at the edges."));
+}
+
 async function pageIPS() {
   const st = await api("GET", "ips");
   const sig = st.signatures || {};
@@ -2107,7 +2208,8 @@ async function pageIPS() {
       (st.rules || []).length ? chips(st.rules)
         : h("p", { class: "muted" }, "No rule uses an IPS profile yet. Pick one on an allow rule (Policy → IPS profile), or in the CLI: set rule NAME ips-profile default."),
       h("p", { class: "muted small" }, "Matches show in Logs → Threats. Test from a client behind the firewall: a request containing SJB-IPS-TEST-CRITICAL (or MAJOR, MINOR, INFO) matches SJB-OS's test signatures.")),
-    listSection(ipsExceptionSpec(st.exceptions)));
+    listSection(ipsExceptionSpec(st.exceptions)),
+    await geoPanel());
 }
 
 // osPackagesPanel shows what the last upgrade did to the OS packages and

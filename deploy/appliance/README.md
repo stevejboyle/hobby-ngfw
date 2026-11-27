@@ -1149,6 +1149,80 @@ Suricata as not installed.
   `sjb-ips.service`.
 - Not yet: reset instead of drop, file and URL filtering, IPv6.
 
+## Geo-blocking (rules by country)
+
+Security rules can match IPv4 addresses by country: `country:US`,
+`country:CN` and so on, with ISO 3166 two-letter codes, wherever a rule
+takes an address. A static address group can hold countries too, for a
+reusable list.
+
+```
+admin@sjb-fw# set rule no-cn-ru from outside source [ country:CN country:RU ] action deny
+admin@sjb-fw# set rule dmz-in from outside to dmz destination web-server source country:US action allow
+admin@sjb-fw# set address-group embargo static [ country:KP country:IR ]
+```
+
+**Negation.** `source-negate yes` (or `destination-negate`) makes a rule
+match everything *except* what it lists: countries, addresses, groups and
+tag groups alike. "Deny everything from outside except the US and Canada"
+is one rule:
+
+```
+admin@sjb-fw# set rule only-na from outside source [ country:US country:CA ] source-negate yes action deny
+admin@sjb-fw# move rule only-na top
+```
+
+In the web UI, a rule's Source and Destination each have a country picker
+(search by code or name) and a **Negate** box; the rules table shows
+"not" in front of a negated list.
+
+**The data.** The countries come from DB-IP's free "IP to Country Lite"
+database, licensed CC BY 4.0: IP Geolocation by
+[DB-IP](https://db-ip.com). A copy ships with SJB-OS (in the OVA and every
+upgrade bundle), so country rules work at once, even without internet
+access. While rules use countries, the appliance checks DB-IP daily for
+the new month (`set system geoip-auto-update off` to stop), and
+`request geoip update` checks now. A new month is applied to the running
+rules in place: no new revision, and no gap in enforcement (the ranges go
+in with the rules, in one atomic nftables transaction).
+
+```
+admin@sjb-fw> show geoip
+country database: DB-IP country lite 2026-11 (shipped 2026-11-27, 0 days ago), 362998 IPv4 ranges in 246 countries
+auto-update:      on; checked daily while rules use countries
+countries in use:
+  CN  China                                5314 ranges
+  RU  Russia                               9950 ranges
+IP Geolocation by DB-IP (https://db-ip.com), CC BY 4.0
+admin@sjb-fw> show geoip lookup 8.8.8.8
+8.8.8.8: US (United States), country:US in rules
+```
+
+The IPS page in the web UI shows the same, with **Check for an update** and
+a lookup box. Prometheus has `sjbos_geoip_age_seconds`,
+`sjbos_geoip_last_update_success` and `sjbos_geoip_countries_in_use`.
+
+**Without internet access**, download the month's
+`dbip-country-lite-YYYY-MM.csv.gz` from db-ip.com elsewhere, copy it over
+as root, and import it: `fwctl geoip import dbip-country-lite-2026-12.csv.gz`.
+An import may also be a partial list in the same format
+(`start,end,country`), for testing.
+
+Good to know:
+
+- Countries match IPv4 only (SJB-OS has no IPv6 yet).
+- Geolocation is approximate: addresses move between countries, and cloud,
+  VPN and CDN ranges are listed where they are registered or measured, not
+  where a user sits. Treat country rules as noise reduction, not identity.
+- If a country has no addresses in the database, or there is no database
+  yet, a rule naming it matches nothing: an allow rule then lets nothing
+  in, and a deny rule blocks nothing. The commit warns, and `show geoip`
+  lists it with "NO ADDRESSES".
+- A refreshed database applies to new connections; existing ones keep
+  their verdict until they end.
+- Countries can only be used in security rules: NAT, decryption rules and
+  IPS exceptions refuse them (and groups that hold them).
+
 ## TLS decryption
 
 **Read this first.** TLS decryption puts the firewall in the middle of

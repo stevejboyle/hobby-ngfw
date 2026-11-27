@@ -26,8 +26,11 @@ type Attr struct {
 	Fixed []string // built-in names a vRef also accepts (e.g. the default vrf)
 	Refs  []string // JSON keys of the objects a vRef/vList names (completion, rename)
 	Any   bool     // list accepts "any"
-	Help  string
-	Hint  string // shown by "?" when no fixed values exist, e.g. "<cidr>"
+	// Countries: the list also takes countries (country:US); completion
+	// offers them.
+	Countries bool
+	Help      string
+	Hint      string // shown by "?" when no fixed values exist, e.g. "<cidr>"
 }
 
 // Kind is an object type: zone, rule, route...
@@ -87,6 +90,7 @@ var Kinds = []*Kind{
 		{Name: "mgmt-interface", Field: "mgmt_interface", Kind: vRef, Refs: ifaces, Help: "never filtered by policy"},
 		{Name: "app-identification", Field: "app_id", Kind: vEnum, Enum: []string{"on", "off"}, Help: "App Identification: name the application in each connection (on unless set off)"},
 		{Name: "ips", Field: "ips", Kind: vEnum, Enum: []string{"on", "off"}, Help: "IPS: inspect traffic of rules with an ips-profile (on unless set off)"},
+		{Name: "geoip-auto-update", Field: "geoip_auto_update", Kind: vEnum, Enum: []string{"on", "off"}, Help: "check daily for a newer country database while rules use countries (on unless set off)"},
 		{Name: "ips-disabled-signatures", Field: "ips_disabled_signatures", Kind: vList, Hint: "<sid>", Help: "signature IDs to leave out of the IPS (false positives; the threat log shows SIDs)"},
 		{Name: "decryption", Field: "decryption", Kind: vEnum, Enum: []string{"on", "off", "observe"}, Help: "TLS decryption for connections a decryption-rule decrypts: on (default), off, or observe (log what it would decrypt, pass everything through)"},
 		{Name: "decryption-builtin-exclusions", Field: "decryption_builtin_exclusions", Kind: vEnum, Enum: []string{"on", "off"}, Help: "never decrypt SJB-OS's built-in list of banking, payment, health and government sites (on unless set off)"},
@@ -138,7 +142,7 @@ var Kinds = []*Kind{
 		{Name: "member", Field: "members", Kind: vList, Enum: appValues(), Hint: "<app>", Help: "applications or categories (category:video); Tab or ? lists them"},
 	}},
 	{Name: "address-group", Key: "address_groups", Help: "static or tag-based address groups", Attrs: []Attr{
-		{Name: "static", Field: "static", Kind: vList, Refs: addrs, Help: "member addresses"},
+		{Name: "static", Field: "static", Kind: vList, Refs: addrs, Countries: true, Help: "member addresses and countries (country:US; groups with countries are for security rules only)"},
 		{Name: "tag", Field: "tag", Kind: vStr, Hint: "<tag>", Help: "members are IPs registered with this tag"},
 	}},
 	{Name: "service", Key: "services", Help: "protocol and port objects", Attrs: []Attr{
@@ -148,8 +152,10 @@ var Kinds = []*Kind{
 	{Name: "rule", Key: "rules", Ordered: true, Help: "security rules, first match wins", Attrs: []Attr{
 		{Name: "from", Field: "from", Kind: vList, Refs: zones, Any: true, Help: "source zones"},
 		{Name: "to", Field: "to", Kind: vList, Refs: zones, Any: true, Help: "destination zones"},
-		{Name: "source", Field: "source", Kind: vList, Refs: addrGrps, Any: true, Help: "source addresses and groups"},
-		{Name: "destination", Field: "destination", Kind: vList, Refs: addrGrps, Any: true, Help: "destination addresses and groups"},
+		{Name: "source", Field: "source", Kind: vList, Refs: addrGrps, Any: true, Countries: true, Help: "source addresses, groups and countries (country:US)"},
+		{Name: "source-negate", Field: "source_negate", Kind: vBool, Help: "match every source except these (yes or no)"},
+		{Name: "destination", Field: "destination", Kind: vList, Refs: addrGrps, Any: true, Countries: true, Help: "destination addresses, groups and countries (country:US)"},
+		{Name: "destination-negate", Field: "destination_negate", Kind: vBool, Help: "match every destination except these (yes or no)"},
 		{Name: "service", Field: "service", Kind: vList, Refs: services, Any: true, Help: "services"},
 		{Name: "application", Field: "application", Kind: vList, Any: true, Enum: appValues(), Refs: appGrps, Hint: "<app>", Help: "applications (App Identification), categories (category:video) or application groups; Tab or ? lists them"},
 		{Name: "action", Field: "action", Kind: vEnum, Enum: []string{"allow", "deny", "reset"}, Help: "allow, deny or reset"},

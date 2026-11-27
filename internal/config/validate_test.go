@@ -103,7 +103,7 @@ func TestInvalid(t *testing.T) {
 		{"iface network addr", func(c *Config) { c.Interfaces[1].Address = "10.0.0.0/24" }, "is the network address"},
 		{"iface ipv6 addr", func(c *Config) { c.Interfaces[1].Address = "fd00::1/64" }, "must be IPv4"},
 		{"rule unknown zone", func(c *Config) { c.Rules[0].To = []string{"dmz"} }, `to: unknown zone "dmz"`},
-		{"rule unknown source", func(c *Config) { c.Rules[0].Source = []string{"nope"} }, `source: unknown address or group "nope"`},
+		{"rule unknown source", func(c *Config) { c.Rules[0].Source = []string{"nope"} }, `source: unknown address, group or country "nope"`},
 		{"rule any mixed", func(c *Config) { c.Rules[0].From = []string{"any", "users"} }, "cannot be combined"},
 		{"rule bad app", func(c *Config) { c.Rules[0].Application = []string{"BitTorrent!"} }, `unknown application, category or application group (show app catalog lists them) "BitTorrent!"`},
 		{"rule bad category", func(c *Config) { c.Rules[0].Application = []string{"category:nope"} }, `"category:nope"`},
@@ -405,5 +405,54 @@ func TestTrunkInterfaces(t *testing.T) {
 				t.Fatalf("want %q, got %v", tc.want, err)
 			}
 		})
+	}
+}
+
+func TestCountries(t *testing.T) {
+	c := base()
+	c.Rules[0].Source = []string{"country:CN", "country:ru", "lan"}
+	c.Rules[0].Destination = []string{"country:US"}
+	c.AddressGroups = append(c.AddressGroups, AddressGroup{Name: "embargo", Static: []string{"country:KP", "h1"}})
+	c.Rules = append(c.Rules, Rule{Name: "r2", Source: []string{"embargo"}, SourceNegate: true, Action: "deny"})
+	if err := c.Validate(); err != nil {
+		t.Fatalf("countries should be valid: %v", err)
+	}
+	for _, tt := range []struct {
+		name string
+		mod  func(*Config)
+		want string
+	}{
+		{"unknown country", func(c *Config) { c.Rules[0].Source = []string{"country:XX"} }, `unknown address, group or country "country:XX"`},
+		{"not a code", func(c *Config) { c.Rules[0].Source = []string{"country:USA"} }, `unknown address, group or country "country:USA"`},
+		{"unknown in group", func(c *Config) {
+			c.AddressGroups = append(c.AddressGroups, AddressGroup{Name: "g", Static: []string{"country:UK"}})
+		}, `unknown country "country:UK"`},
+		{"negate any", func(c *Config) { c.Rules[0].Source = nil; c.Rules[0].SourceNegate = true }, "source_negate needs a source"},
+		{"negate any dst", func(c *Config) { c.Rules[0].Destination = []string{"any"}; c.Rules[0].DestinationNegate = true }, "destination_negate needs a destination"},
+		{"country in NAT", func(c *Config) {
+			c.NAT = []NATRule{{Name: "n", Type: "masquerade", Source: []string{"country:US"}}}
+		}, "countries can only be used in security rules"},
+		{"geo group in NAT", func(c *Config) {
+			c.AddressGroups = append(c.AddressGroups, AddressGroup{Name: "g", Static: []string{"country:US"}})
+			c.NAT = []NATRule{{Name: "n", Type: "masquerade", Source: []string{"g"}}}
+		}, `group "g" has countries in it`},
+		{"geo group in decryption", func(c *Config) {
+			c.AddressGroups = append(c.AddressGroups, AddressGroup{Name: "g", Static: []string{"country:US"}})
+			c.DecryptionRules = []DecryptionRule{{Name: "d", Source: []string{"g"}, Action: "decrypt"}}
+		}, `group "g" has countries in it`},
+		{"bad auto-update", func(c *Config) { c.System.GeoIPAutoUpdate = "daily" }, "geoip_auto_update"},
+	} {
+		c := base()
+		tt.mod(c)
+		err := c.Validate()
+		if err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: want error containing %q, got %v", tt.name, tt.want, err)
+		}
+	}
+	if cc, ok := CountryCode("Country:gb"); !ok || cc != "GB" {
+		t.Errorf("CountryCode: %q %v", cc, ok)
+	}
+	if _, ok := CountryCode("countries"); ok {
+		t.Error("not a country reference")
 	}
 }

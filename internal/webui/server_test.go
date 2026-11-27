@@ -18,6 +18,7 @@ import (
 	"github.com/stevejboyle/sjb-os/internal/config"
 	"github.com/stevejboyle/sjb-os/internal/conntrack"
 	"github.com/stevejboyle/sjb-os/internal/daemon"
+	"github.com/stevejboyle/sjb-os/internal/geoip"
 	"github.com/stevejboyle/sjb-os/internal/logs"
 	"github.com/stevejboyle/sjb-os/internal/nft"
 	"github.com/stevejboyle/sjb-os/internal/ospkg"
@@ -425,5 +426,34 @@ func TestLogRoutes(t *testing.T) {
 	}
 	if code, _, _ := c.do("GET", "/ui/api/logs/bogus", nil); code != 404 {
 		t.Fatalf("bogus kind: %d", code)
+	}
+}
+
+func TestCountriesAndGeoIP(t *testing.T) {
+	h, _, d := setup(t, nil)
+	c := login(t, h)
+	code, out, _ := c.do("GET", "/ui/api/countries", nil)
+	if code != 200 || out["US"] != "United States" || out["CN"] != "China" {
+		t.Fatalf("countries: %d %v", code, out["US"])
+	}
+	root := t.TempDir()
+	d.SetGeoIP(geoip.Store{Shipped: root + "/share", Local: root + "/var"}, nil)
+	code, out, _ = c.do("GET", "/ui/api/geoip", nil)
+	if code != 200 || out["available"] != false || !strings.Contains(out["attribution"].(string), "DB-IP") {
+		t.Fatalf("geoip: %d %v", code, out)
+	}
+	// A rule with a country and a negated destination saves from the UI.
+	cfg := labJSON(t)
+	r := cfg["rules"].([]any)[0].(map[string]any)
+	r["source"] = []string{"country:CN"}
+	r["destination_negate"] = true
+	r["destination"] = []string{"country:US"}
+	if code, out, _ := c.do("PUT", "/ui/api/config/candidate", cfg); code != 200 {
+		t.Fatalf("put: %d %v", code, out)
+	}
+	_, out, _ = c.do("GET", "/ui/api/config/candidate", nil)
+	r = out["rules"].([]any)[0].(map[string]any)
+	if r["destination_negate"] != true || r["source"].([]any)[0] != "country:CN" {
+		t.Errorf("rule after save: %v", r)
 	}
 }

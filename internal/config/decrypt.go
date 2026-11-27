@@ -218,6 +218,8 @@ func (v *validator) decryption(c *Config, zones, addrs map[string]bool) {
 		v.refs(path, "to", r.To, "zone", func(s string) bool { return zones[s] })
 		v.refs(path, "source", r.Source, "address or group", func(s string) bool { return addrs[s] })
 		v.refs(path, "destination", r.Destination, "address or group", func(s string) bool { return addrs[s] })
+		v.noGeo(path, "source", r.Source)
+		v.noGeo(path, "destination", r.Destination)
 		v.refs(path, "service", r.Service, "service", func(s string) bool { _, ok := services[s]; return ok })
 		for _, s := range r.Service {
 			if svc, ok := services[s]; ok && svc.Protocol != "tcp" {

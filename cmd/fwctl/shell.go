@@ -64,6 +64,9 @@ const shellHelp = `SJB-OS commands:
                               signatures (default: the last hour)
   show ips                    IPS: engine, signatures (version, count, last
                               update), rules inspected
+  show geoip                  the country database (DB-IP), its age, and the
+                              countries rules use
+  show geoip lookup IP        which country an address is in
   show decryption             TLS decryption: state, CA, rules, connections
   show decryption ca          the decryption CA's certificate (PEM) and
                               fingerprint, to install on clients
@@ -117,6 +120,7 @@ const shellHelp = `SJB-OS commands:
   tags unregister IP TAG...
 
   request ips update          download the latest IPS signatures now
+  request geoip update        check DB-IP for a newer country database now
   request system reboot       restart the appliance (onto a kernel an upgrade
                               installed: show version says when); traffic
                               stops for about a minute
@@ -521,6 +525,8 @@ func runShellLine(line string, in io.Reader) error {
 		switch strings.Join(rest, " ") {
 		case "ips update":
 			return requestIPSUpdate()
+		case "geoip update":
+			return requestGeoIPUpdate()
 		case "system reboot":
 			return requestReboot(in)
 		case "decryption ca generate":
@@ -530,7 +536,7 @@ func runShellLine(line string, in io.Reader) error {
 		case "decryption learned clear":
 			return requestDecryptionLearnedClear()
 		}
-		return fmt.Errorf("request ips update | system reboot | decryption ca generate | decryption ca import | decryption learned clear | management-certificate import|self-signed | log-forwarding test NAME | snmp credential ... | api-key add|delete ... | backup ... | user ... | role ...")
+		return fmt.Errorf("request ips update | geoip update | system reboot | decryption ca generate | decryption ca import | decryption learned clear | management-certificate import|self-signed | log-forwarding test NAME | snmp credential ... | api-key add|delete ... | backup ... | user ... | role ...")
 	case "ping":
 		return pingCmd(rest)
 	case "passwd":
@@ -613,6 +619,10 @@ func showCmd(args []string) error {
 		return showAppCatalog(q)
 	case what == "ips" && len(rest) == 0:
 		return showIPS()
+	case what == "geoip" && len(rest) == 0:
+		return showGeoIP()
+	case what == "geoip" && len(rest) == 2 && rest[0] == "lookup":
+		return showGeoIPLookup(rest[1])
 	case what == "decryption" && len(rest) == 0:
 		return showDecryption()
 	case what == "decryption" && len(rest) == 1 && rest[0] == "ca":

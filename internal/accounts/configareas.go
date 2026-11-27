@@ -46,6 +46,7 @@ var systemFieldArea = map[string]Area{
 	"AppID":                       Policy,
 	"IPS":                         IPS,
 	"IPSDisabledSignatures":       IPS,
+	"GeoIPAutoUpdate":             IPS,
 	"Decryption":                  Decryption,
 	"DecryptionBuiltinExclusions": Decryption,
 }

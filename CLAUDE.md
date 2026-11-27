@@ -166,6 +166,12 @@ internal/tags/      tag -> IP registry with TTL, persisted to JSON
 internal/nft/       nft -f runner (and a fake for tests)
 internal/conntrack/ conntrack flushes so policy changes hit existing flows
 internal/diff/      line diff for `fwctl diff`
+internal/geoip/     country database for geo-blocking: DB-IP country lite CSV ->
+                    merged IPv4 ranges per country (countries-v4.txt.gz + meta.json),
+                    shipped in usr/share/sjb-os/geoip, newer months in
+                    /var/lib/sjb-os/geoip (newer month wins), monthly download,
+                    ISO codes; the compiler's country sets come from it
+internal/ospkg/     OS package install/repack/restore for upgrades, reboot state
 internal/netdev/    VRF devices (vrf-<name>) and VLAN subinterfaces (parent.id):
                     created at commit, re-synced every 10 s; owns only those
                     (never mgmt/inside/outside/vrf-mgmt)
@@ -240,6 +246,25 @@ the release (Steve's rule):
 
 Build any release from a clean commit: a build with uncommitted changes
 records `+local-changes` in its source manifest.
+
+## Geo-blocking
+
+- Rules and static groups name countries as `country:XX` (config.CountryCode;
+  geoip.Known validates). Only security rules may use them: NAT, decryption
+  rules and IPS exceptions refuse countries and groups holding them
+  (validator.noGeo).
+- The compiler declares one interval set per country the rules use
+  (`geo_xx`), and puts the ranges in Result.GeoElements (add element, 2,000
+  per statement); Result.Script() is what ngfwd applies, so ranges go in the
+  same atomic transaction as the ruleset. Result.Ruleset stays readable
+  (preview), and policyOf leaves the elements out, so a database refresh is
+  not a policy change (no conntrack flush, no revision).
+- Negated sides (SourceNegate/DestinationNegate) compile to one rule that
+  excludes every term (`ip saddr != {..} ip saddr != @geo_us`); covers()
+  treats a negated side as covering nothing but any.
+- ngfwd loads the database (SetGeoIP) before Start; UpdateGeoIP and
+  ImportGeoIP install a month and re-apply the running revision. The daily
+  check runs only while rules use countries and auto-update is on.
 
 ## Known phase 1 limits
 

@@ -82,6 +82,7 @@ func (v *validator) nat(c *Config, zones, addrs map[string]bool) {
 			v.refs(p, "from", n.From, "zone", func(s string) bool { return zones[s] })
 			v.refs(p, "to", n.To, "zone", func(s string) bool { return zones[s] })
 			v.refs(p, "source", n.Source, "address or group", func(s string) bool { return addrs[s] })
+			v.noGeo(p, "source", n.Source)
 			for _, f := range [][2]string{
 				{"interface", n.Interface}, {"public_address", n.PublicAddress}, {"protocol", n.Protocol},
 				{"public_port", n.PublicPort}, {"server", n.Server}, {"server_port", n.ServerPort}, {"bidirectional", n.Bidirectional}, {"hairpin", n.Hairpin},

@@ -1,4 +1,4 @@
-.PHONY: build test validate lab-up lab-down lab-status lab-smoke lab-gate1 lab-gate-sessions lab-gate-decrypt lab-gate-nat lab-gate-trunk lab-gate-logfwd lab-gate-users harness-test clean
+.PHONY: build test validate lab-up lab-down lab-status lab-smoke lab-gate1 lab-gate-sessions lab-gate-decrypt lab-gate-nat lab-gate-trunk lab-gate-logfwd lab-gate-users lab-gate-geo harness-test clean
 
 build:
 	go build -o bin/ ./cmd/...
@@ -54,6 +54,11 @@ lab-gate-trunk:
 # python3 and openssl).
 lab-gate-logfwd:
 	./lab/gate-logfwd.sh
+
+# Geo-blocking gate: country rules, negation and database refreshes, with a
+# test country database.
+lab-gate-geo:
+	./lab/gate-geo.sh
 
 # Users and roles on a real Debian system. It creates accounts and rewrites
 # PAM, so it runs in a throwaway container (Docker; Linux binaries in bin/).

@@ -187,6 +187,11 @@ The design below is the target. Phase 1 simplified it on purpose:
   `internal/ospkg` installs them in the background, saves the versions it
   replaces (repacked from dpkg's records) so a rollback can put them back,
   and reports when a reboot is needed (never automatic).
+- Geo-blocking (0.9.15): rules name countries (`country:US`), optionally
+  negated. `internal/geoip` holds DB-IP's country ranges (shipped, then
+  refreshed monthly); the compiler turns each country in use into an nft
+  interval set whose ranges go in with the ruleset in one transaction, and
+  a new month re-applies the running revision in place.
 
 ### As built on the appliance
 

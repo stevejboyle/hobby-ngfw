@@ -238,7 +238,7 @@ for c in s[\"changes\"]:
 	libc=$(root_run "dpkg-query -W -f='\${Version}' libc6")
 	kgone=$(root_run "dpkg-query -W -f='\${db:Status-Status}' linux-image-$NEWK 2>&1")
 	[[ ( $out == *"OS packages: "*" put back to their earlier versions"* || $SAVED_PKGS == 0 ) && -z $wrong && $libc == "$BASE_LIBC" && ( $NEWK == "$BASE_K" || $kgone != installed ) ]] &&
-		pass "rollback put the OS packages back (libc6 $libc again; kernel $NEWK removed)" ||
+		pass "rollback: OS packages as before the upgrade (libc6 $libc$( ((SAVED_PKGS)) && [[ $NEWK != "$BASE_K" ]] && echo "; kernel $NEWK removed"))" ||
 		fail "rollback OS packages: wrong=[$wrong] libc6=$libc (want $BASE_LIBC) kernel=$kgone / ${out: -400}"
 	if [[ $NEWK != "$BASE_K" ]]; then
 		[[ $out == *"REBOOT REQUIRED: the running kernel was removed"* && $(root_run uname -r) == "$NEWK" && $(root_run 'ls /boot') != *"vmlinuz-$NEWK"* ]] &&
@@ -1090,7 +1090,8 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 		pass "the scrape shows the IPS blocks ($crit critical), rule hits, Suricata up and interface counters" ||
 		fail "metrics content: crit=$crit $(grep -E 'ips-test|service_up|interface_up' <<<"$m" | head -8)"
 	want_os=idle
-	[[ -n $NEWBUNDLE ]] && want_os=ok
+	# ok only when an upgrade replaced packages; a base that already had them stays idle.
+	[[ -n $NEWBUNDLE && ${SAVED_PKGS:-0} == 1 ]] && want_os=ok
 	# Literal matches: the kernel name holds regex characters (6.12.118+deb13).
 	[[ $m == *"sjbos_reboot_required{kernel=\"$(root_run uname -r)\"} 0"* && $m == *"sjbos_os_packages_state{state=\"$want_os\"} 1"* && $m == *"sjbos_os_packages_pending 0"* ]] &&
 		pass "the scrape shows the OS packages ($want_os, none pending) and no reboot needed" ||
@@ -1236,7 +1237,7 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 	r=$(get 10.83.0.2 plain)
 	[[ $out == *"committed revision"* && $r == blocked && $(root_run nft list set inet ngfw geo_cn) == *10.83.0.0/24* ]] &&
 		pass "deny country:CN: the CN client is blocked (set geo_cn holds 10.83.0.0/24)" || fail "deny CN: $r / ${out: -200}"
-	script=$'configure\nset rule geo-cn source country:US source-negate yes\ncommit -m "boot test: only the US"\nexit\nexit\n'
+	script=$'configure\ndelete rule geo-cn source country:CN\nset rule geo-cn source country:US source-negate yes\ncommit -m "boot test: only the US"\nexit\nexit\n'
 	out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
 	r=$(get 10.83.0.2 plain)
 	[[ $out == *"committed revision"* && $r == blocked && $(root_run nft list chain inet ngfw forward) == *'ip saddr != @geo_us'* ]] &&

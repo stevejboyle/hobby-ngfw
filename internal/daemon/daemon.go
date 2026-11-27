@@ -43,6 +43,7 @@ var ErrInvalid = errors.New("invalid")
 
 // Daemon is the commit and tag engine.
 type Daemon struct {
+	reboot  func() error // nil: systemctl reboot
 	mu      sync.Mutex
 	store   *store.Store
 	tags    *tags.Registry

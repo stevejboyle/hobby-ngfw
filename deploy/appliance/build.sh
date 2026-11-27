@@ -16,7 +16,7 @@
 #                      key (otherwise a missing key stops the build)
 #   BASE_RAW=path      image the bundle's Debian packages are worked out against
 #                      (default build/appliance/sjb-os-0.9.9-r03.raw)
-#   PACKAGES="..."     Debian packages bundles carry (default: frr frr-pythontools kea-dhcp4-server libnetfilter-queue1 suricata ca-certificates snmpd)
+#   PACKAGES="..."     Debian packages bundles carry besides OS updates (default: frr frr-pythontools kea-dhcp4-server libnetfilter-queue1 suricata ca-certificates snmpd)
 #   ROOT_KEY_FILE=path SSH public key the OVA lets root log in with (your own lab
 #                      builds only; never for a published release: release images
 #                      carry no root key, operators set one at deploy time)
@@ -94,7 +94,8 @@ if [[ -f $SIGNING_KEY ]]; then
 	install -m 644 LICENSE NOTICE THIRD_PARTY_NOTICES.md "$STAGE/usr/share/sjb-os/licenses/"
 	chmod 755 "$STAGE"/usr/local/sbin/* "$STAGE/etc/update-motd.d/10-sjb"
 	echo "$VERSION" >"$STAGE/etc/ngfw-version"
-	# Debian packages the base image lacks (FRR, Kea and their dependencies), as
+	# Debian packages the base image lacks (FRR, Kea and their dependencies) and
+	# Debian's updates to the ones it has (security fixes, the kernel), as
 	# signed bundle files; sjb-packages installs them on the appliance.
 	BASE_RAW=${BASE_RAW:-build/appliance/sjb-os-0.9.9-r03.raw}
 	PACKAGES=${PACKAGES:-frr frr-pythontools kea-dhcp4-server libnetfilter-queue1 suricata ca-certificates snmpd}
@@ -111,6 +112,9 @@ if [[ -f $SIGNING_KEY ]]; then
 		-key "$SIGNING_KEY" -o "$OUT/sjb-os-$VERSION.upgrade"
 	go run ./cmd/sjbpkg verify -keys deploy/appliance/rootfs/usr/share/sjb-os/upgrade-keys \
 		"$OUT/sjb-os-$VERSION.upgrade" >/dev/null
+	# Appliances read a bundle into memory (at most 256 MB): keep headroom.
+	size=$(wc -c <"$OUT/sjb-os-$VERSION.upgrade")
+	((size <= 200 * 1024 * 1024)) || { echo "bundle is $((size >> 20)) MB, over the 200 MB limit"; exit 1; }
 	rm -rf "$STAGE"
 else
 	echo "NO_BUNDLE=1: no signing key, so no .upgrade bundle"

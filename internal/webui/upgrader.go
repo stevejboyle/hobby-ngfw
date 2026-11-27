@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/stevejboyle/sjb-os/internal/ospkg"
 	"github.com/stevejboyle/sjb-os/internal/upgrade"
 )
 
@@ -16,7 +17,17 @@ import (
 // being restarted halfway through.
 type SystemdUpgrader struct {
 	Installer *upgrade.Installer
-	Fwctl     string // path to fwctl
+	Fwctl     string         // path to fwctl
+	OS        *ospkg.Manager // nil: no OS package state
+}
+
+// Packages reports the OS package and reboot state.
+func (u *SystemdUpgrader) Packages() *ospkg.Status {
+	if u.OS == nil {
+		return nil
+	}
+	st := u.OS.Report()
+	return &st
 }
 
 const stagedName = "staged.upgrade"

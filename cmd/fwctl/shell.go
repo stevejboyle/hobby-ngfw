@@ -34,7 +34,8 @@ import (
 const shellHelp = `SJB-OS commands:
 
   show status                 running revision, uncommitted changes, pending confirm
-  show version                SJB-OS version and upgrade history
+  show version                SJB-OS version, upgrade history, OS packages
+                              and whether a reboot is needed
   show running | candidate    the config, as YAML
   show diff                   running vs candidate
   show ruleset                nftables ruleset the candidate compiles to
@@ -116,6 +117,9 @@ const shellHelp = `SJB-OS commands:
   tags unregister IP TAG...
 
   request ips update          download the latest IPS signatures now
+  request system reboot       restart the appliance (onto a kernel an upgrade
+                              installed: show version says when); traffic
+                              stops for about a minute
   request decryption ca generate
                               make a new decryption CA (clients must then
                               trust its certificate: show decryption ca)
@@ -517,6 +521,8 @@ func runShellLine(line string, in io.Reader) error {
 		switch strings.Join(rest, " ") {
 		case "ips update":
 			return requestIPSUpdate()
+		case "system reboot":
+			return requestReboot(in)
 		case "decryption ca generate":
 			return requestDecryptionCAGenerate(in)
 		case "decryption ca import":
@@ -524,7 +530,7 @@ func runShellLine(line string, in io.Reader) error {
 		case "decryption learned clear":
 			return requestDecryptionLearnedClear()
 		}
-		return fmt.Errorf("request ips update | decryption ca generate | decryption ca import | decryption learned clear | management-certificate import|self-signed | log-forwarding test NAME | snmp credential ... | api-key add|delete ... | backup ... | user ... | role ...")
+		return fmt.Errorf("request ips update | system reboot | decryption ca generate | decryption ca import | decryption learned clear | management-certificate import|self-signed | log-forwarding test NAME | snmp credential ... | api-key add|delete ... | backup ... | user ... | role ...")
 	case "ping":
 		return pingCmd(rest)
 	case "passwd":

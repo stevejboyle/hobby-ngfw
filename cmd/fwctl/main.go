@@ -51,7 +51,12 @@ appliance (run with sudo):
   upgrade apply [-reinstall] FILE
                               install a signed bundle; restores the previous
                               version if ngfwd does not come back healthy
-  upgrade rollback            return to the version before the last upgrade
+  upgrade rollback            return to the version before the last upgrade,
+							  Debian packages included
+  packages [status [-json]]   OS packages the last upgrade installed, and
+							  whether a reboot is needed
+  packages install            install the bundled Debian packages (run by
+							  sjb-packages after an upgrade)
   web-passwd [-user NAME] [-file PATH]
                               set a user's password for SSH, the console and
                               the web UI (prompts, or reads one line from
@@ -141,6 +146,8 @@ func dispatch(cmd string, args []string) error {
 		return tagsCmd(args)
 	case "upgrade":
 		return upgradeCmd(args)
+	case "packages":
+		return packagesCmd(args)
 	case "shell":
 		return shellCmd(args)
 	case "web-passwd":

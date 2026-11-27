@@ -160,7 +160,9 @@ func OperationalCandidates(words []string) []Candidate {
 	case words[0] == "show" && len(words) == 2 && words[1] == "statistics":
 		return []Candidate{{"1h", "the last hour (default)"}, {"24h", "the last day"}, {"7d", "the last week"}}
 	case words[0] == "request" && len(words) == 1:
-		return []Candidate{{"ips", "the IPS"}, {"decryption", "TLS decryption"}, {"management-certificate", "the web UI and tag API certificate"}, {"user", "add, change or delete users (superusers)"}, {"role", "add, change or delete custom roles (superusers)"}, {"snmp", "SNMP credentials (superusers)"}, {"api-key", "add or delete API keys (superusers)"}}
+		return []Candidate{{"ips", "the IPS"}, {"decryption", "TLS decryption"}, {"management-certificate", "the web UI and tag API certificate"}, {"user", "add, change or delete users (superusers)"}, {"role", "add, change or delete custom roles (superusers)"}, {"snmp", "SNMP credentials (superusers)"}, {"api-key", "add or delete API keys (superusers)"}, {"system", "reboot the appliance"}}
+	case words[0] == "request" && len(words) == 2 && words[1] == "system":
+		return []Candidate{{"reboot", "restart the appliance (traffic stops for about a minute)"}}
 	case words[0] == "request" && len(words) == 2 && words[1] == "snmp":
 		return []Candidate{{"credential", "v3 users and v2c communities"}}
 	case words[0] == "request" && len(words) == 3 && words[1] == "snmp" && words[2] == "credential":

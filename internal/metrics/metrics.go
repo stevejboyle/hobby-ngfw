@@ -89,6 +89,20 @@ type System struct {
 	MemTotal      uint64             `json:"mem_total_bytes"`
 	MemAvailable  uint64             `json:"mem_available_bytes"`
 	Disks         []Disk             `json:"disks"`
+	// OS is the state of the Debian packages upgrades install (nil when
+	// unknown, such as off the appliance).
+	OS *OS `json:"os,omitempty"`
+}
+
+// OS package states, as fwctl records them.
+var OSStates = []string{"idle", "installing", "ok", "failed"}
+
+// OS is the OS package and reboot state.
+type OS struct {
+	PackagesState   string `json:"packages_state"` // one of OSStates
+	PackagesPending int    `json:"packages_pending"`
+	RebootRequired  bool   `json:"reboot_required"`
+	Kernel          string `json:"kernel"`
 }
 
 // Disk is one filesystem's size and free space.

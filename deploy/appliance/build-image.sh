@@ -58,6 +58,13 @@ cp /etc/resolv.conf "$MNT/etc/resolv.conf"
 
 in_root() { chroot "$MNT" /usr/bin/env DEBIAN_FRONTEND=noninteractive "$@"; }
 in_root apt-get update -qq
+# Ship with Debian's current security fixes and kernel; keep only the newest
+# kernel (upgrades keep the previous one as a fallback from then on).
+in_root apt-get dist-upgrade -y -qq --no-install-recommends >/dev/null
+newest=$(ls "$MNT"/boot/vmlinuz-* | sed 's|.*/vmlinuz-||' | sort -V | tail -1)
+for k in $(ls "$MNT"/boot/vmlinuz-* | sed 's|.*/vmlinuz-||'); do
+	[[ $k == "$newest" ]] || in_root apt-get purge -y -qq "linux-image-$k" >/dev/null
+done
 in_root apt-get install -y -qq --no-install-recommends \
 	nftables conntrack libnetfilter-queue1 open-vm-tools cloud-guest-utils sudo openssl curl openssh-server ca-certificates >/dev/null
 # What upgrade bundles ship to older appliances, installed here directly:

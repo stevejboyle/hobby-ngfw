@@ -87,6 +87,14 @@ func WritePrometheus(out io.Writer, s Snapshot) error {
 	}
 	p.one("sjbos_memory_total_bytes", "gauge", "Total memory.", float64(s.System.MemTotal))
 	p.one("sjbos_memory_available_bytes", "gauge", "Memory available for new work.", float64(s.System.MemAvailable))
+	if o := s.System.OS; o != nil {
+		p.one("sjbos_reboot_required", "gauge", "1 when a newer kernel is installed than the one running (or the running kernel was removed).", b2f(o.RebootRequired), "kernel", o.Kernel)
+		p.family("sjbos_os_packages_state", "gauge", "State of the last OS package install (1 for the current state).")
+		for _, st := range OSStates {
+			p.sample("sjbos_os_packages_state", b2f(o.PackagesState == st), "state", st)
+		}
+		p.one("sjbos_os_packages_pending", "gauge", "Bundled Debian packages not installed yet.", float64(o.PackagesPending))
+	}
 	if len(s.System.Disks) > 0 {
 		p.family("sjbos_filesystem_size_bytes", "gauge", "Filesystem size.")
 		for _, d := range s.System.Disks {

@@ -16,13 +16,16 @@ IMPORTS
         FROM NET-SNMP-MIB;
 
 sjbOS MODULE-IDENTITY
-    LAST-UPDATED "202611260000Z"
+    LAST-UPDATED "202611261200Z"
     ORGANIZATION "SJB Consulting"
     CONTACT-INFO "https://github.com/stevejboyle/sjb-os"
     DESCRIPTION
         "SJB-OS, an experimental firewall appliance for isolated lab
         use: services, configuration, sessions, security rules, NAT,
         the IPS, TLS decryption and log forwarding."
+    REVISION "202611261200Z"
+    DESCRIPTION "sjbRebootRequired, sjbOsPackagesState and
+        sjbOsPackagesPending (0.9.14)."
     REVISION "202611260000Z"
     DESCRIPTION "sjbCollectionTable; faults are raised on fresh readings only (0.9.13-r03)."
     REVISION "202611250000Z"
@@ -60,6 +63,21 @@ sjbNgfwdUp OBJECT-TYPE
 sjbUptime OBJECT-TYPE
     SYNTAX TimeTicks MAX-ACCESS read-only STATUS current
     DESCRIPTION "Time since the appliance booted." ::= { sjbSystem 5 }
+sjbRebootRequired OBJECT-TYPE
+    SYNTAX Integer32 (0..1) MAX-ACCESS read-only STATUS current
+    DESCRIPTION "1 when a newer kernel is installed than the one running
+        (an upgrade brought a kernel update), or a rollback removed the
+        running kernel: reboot to run the installed kernel." ::= { sjbSystem 6 }
+sjbOsPackagesState OBJECT-TYPE
+    SYNTAX INTEGER { idle(1), installing(2), ok(3), failed(4) }
+    MAX-ACCESS read-only STATUS current
+    DESCRIPTION "The last install of the Debian packages an upgrade
+        bundle carries: idle (none yet), installing, ok or failed."
+    ::= { sjbSystem 7 }
+sjbOsPackagesPending OBJECT-TYPE
+    SYNTAX Gauge32 MAX-ACCESS read-only STATUS current
+    DESCRIPTION "Bundled Debian packages not installed yet."
+    ::= { sjbSystem 8 }
 
 -- Configuration
 
@@ -330,6 +348,7 @@ sjbCompliance MODULE-COMPLIANCE
 
 sjbGroup OBJECT-GROUP
     OBJECTS { sjbVersion, sjbHostname, sjbSnapshotAge, sjbNgfwdUp, sjbUptime,
+        sjbRebootRequired, sjbOsPackagesState, sjbOsPackagesPending,
         sjbRunningRevision, sjbUncommitted, sjbLastCommitOK, sjbRecovery, sjbLastCommitNote,
         sjbSessionCount, sjbSessionMax,
         sjbIpsState, sjbIpsUp, sjbIpsSignaturesLoaded, sjbIpsQueueDropped,

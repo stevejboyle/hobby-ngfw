@@ -356,3 +356,28 @@ func indexOf(list []string, v string) int {
 	}
 	return -1
 }
+
+func TestMIBOSPackages(t *testing.T) {
+	now := time.Unix(1795400000, 0)
+	path := filepath.Join(t.TempDir(), "metrics.json")
+	s := snapshot(now.Add(-5 * time.Second))
+	get := func(oid string) string {
+		r := talk(t, path, "get\n"+Base+oid+"\n", now)
+		return strings.Join(r, " ")
+	}
+	metrics.Save(path, s, 0o644, -1)
+	if r := get(".1.6.0"); !strings.HasPrefix(r, "NONE") {
+		t.Errorf("rebootRequired without OS state: %q", r)
+	}
+	s.System.OS = &metrics.OS{PackagesState: "failed", PackagesPending: 3, RebootRequired: true}
+	metrics.Save(path, s, 0o644, -1)
+	for oid, want := range map[string]string{
+		".1.6.0": "integer 1", // reboot required
+		".1.7.0": "integer 4", // failed
+		".1.8.0": "gauge 3",   // pending
+	} {
+		if r := get(oid); !strings.Contains(r, want) {
+			t.Errorf("%s: %q, want %q", oid, r, want)
+		}
+	}
+}

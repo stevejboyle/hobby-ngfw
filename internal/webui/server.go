@@ -29,6 +29,7 @@ import (
 	"github.com/stevejboyle/sjb-os/internal/logs"
 	"github.com/stevejboyle/sjb-os/internal/netdev"
 	"github.com/stevejboyle/sjb-os/internal/nicaddr"
+	"github.com/stevejboyle/sjb-os/internal/ospkg"
 	"github.com/stevejboyle/sjb-os/internal/snmp"
 	"github.com/stevejboyle/sjb-os/internal/upgrade"
 )
@@ -45,6 +46,8 @@ type Upgrader interface {
 	Start() error
 	// Rollback returns to the previous version in the background.
 	Rollback() error
+	// Packages is the OS package and reboot state (nil if unknown).
+	Packages() *ospkg.Status
 }
 
 // Options configures the UI.
@@ -387,6 +390,7 @@ func New(d *daemon.Daemon, o Options) http.Handler {
 	mux.HandleFunc("POST /ui/api/upgrade", s.auth(accounts.NeedChange(accounts.Upgrades), s.upgradeUpload))
 	mux.HandleFunc("POST /ui/api/upgrade/start", s.auth(accounts.NeedChange(accounts.Upgrades), s.upgradeStart))
 	mux.HandleFunc("POST /ui/api/upgrade/rollback", s.auth(accounts.NeedChange(accounts.Upgrades), s.upgradeRollback))
+	mux.HandleFunc("POST /ui/api/reboot", s.auth(accounts.NeedChange(accounts.Upgrades), s.reboot))
 	s.accountRoutes(mux)
 	mux.HandleFunc("/ui/api/", func(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, "no such API call")
@@ -888,7 +892,18 @@ func (s *server) upgradeStatus(w http.ResponseWriter, r *http.Request, _ *sessio
 		return
 	}
 	st, err := s.o.Upgrader.Status()
-	reply(w, st, err)
+	reply(w, struct {
+		upgrade.Status
+		Packages *ospkg.Status `json:"packages,omitempty"`
+	}{st, s.o.Upgrader.Packages()}, err)
+}
+
+func (s *server) reboot(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+	if st, err := s.d.Status(); err == nil && st.ConfirmBy != nil {
+		fail(w, http.StatusConflict, errPendingConfirm)
+		return
+	}
+	reply(w, map[string]bool{"rebooting": true}, s.d.Reboot(ss.caller()))
 }
 
 func (s *server) upgradeUpload(w http.ResponseWriter, r *http.Request, ss *session, _ string) {

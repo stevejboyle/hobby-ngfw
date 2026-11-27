@@ -118,6 +118,9 @@ main { padding: 20px; max-width: 1200px; margin: 0 auto; }
 .bar.info { background: var(--info-bg); color: var(--info-ink); }
 .bar.warn { background: var(--warn-bg); color: var(--warn-ink); }
 .bar .spacer { flex: 1; }
+.notice { padding: 10px 14px; border-radius: 6px; margin: 8px 0; }
+.notice.warn { background: var(--warn-bg); color: var(--warn-ink); }
+.notice button { margin-left: 8px; }
 .bar .buttons { display: flex; gap: 8px; flex-wrap: nowrap; }
 
 /* controls */
@@ -291,3 +294,4 @@ input.log-query { min-width: 22em; }
 .badge-threat { font-size: 11px; padding: 1px 6px; border-radius: 10px; background: var(--danger-soft); color: var(--danger); }
 
 table.kv th { text-align: left; padding-right: 1.5em; font-weight: 600; }
+details.spaced { margin: 4px 0 14px; }

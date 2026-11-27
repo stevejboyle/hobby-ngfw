@@ -83,6 +83,8 @@ type backup struct {
 
 // RollbackResult says what a rollback did beyond restoring files.
 type RollbackResult struct {
+	// Packages summarises what RestorePackages did ("" if not set).
+	Packages string
 	// ConfigRestored is set when the config had changed since the upgrade
 	// and the upgrade-time config was committed again as Revision.
 	ConfigRestored bool
@@ -102,6 +104,11 @@ type Installer struct {
 	// and the older one may not expect. The restored version redoes its own
 	// setup when ngfwd starts.
 	BeforeRollback func() error
+	// RestorePackages, if set, puts back the Debian packages the upgrade
+	// replaced (saved in the release's backup directory, bdir). A rollback
+	// runs it first, so a failure changes nothing else; a failed upgrade
+	// runs it after putting the files back. It returns a summary to show.
+	RestorePackages func(bdir string) (string, error)
 }
 
 func (in *Installer) p(rel string) string { return filepath.Join(in.Root, filepath.FromSlash(rel)) }
@@ -241,12 +248,18 @@ func (in *Installer) Rollback() (res RollbackResult, err error) {
 	if err != nil {
 		return res, err
 	}
+	bdir := in.p(filepath.Join(StateDir, "releases", st.RollbackTo))
+	pkgs := ""
+	if in.RestorePackages != nil {
+		if pkgs, err = in.RestorePackages(bdir); err != nil {
+			return res, in.finish(ev, "failed", fmt.Errorf("restoring OS packages: %w", err))
+		}
+	}
 	if in.BeforeRollback != nil {
 		if err := in.BeforeRollback(); err != nil {
 			return res, in.finish(ev, "failed", fmt.Errorf("preparing rollback: %w", err))
 		}
 	}
-	bdir := in.p(filepath.Join(StateDir, "releases", st.RollbackTo))
 	changed, err := in.restore(bdir)
 	if err != nil {
 		return res, in.finish(ev, "failed", err)
@@ -254,6 +267,7 @@ func (in *Installer) Rollback() (res RollbackResult, err error) {
 	if res, err = in.restoreConfig(bdir, st, cur); err != nil {
 		return res, in.finish(ev, "failed", fmt.Errorf("restoring the config: %w", err))
 	}
+	res.Packages = pkgs
 	if res.ConfigRestored {
 		if e, ok := in.Sys.(RevisionExpecter); ok {
 			e.ExpectRevision(res.Revision)
@@ -385,6 +399,13 @@ func (in *Installer) restoreAfter(ev int, bdir string, cause error) error {
 	changed, err := in.restore(bdir)
 	if err == nil {
 		err = in.activate(changed)
+	}
+	if err == nil && in.RestorePackages != nil {
+		// The new version's packages may have started installing when its
+		// ngfwd started: put the saved versions back too.
+		if _, perr := in.RestorePackages(bdir); perr != nil {
+			err = fmt.Errorf("restoring OS packages: %w", perr)
+		}
 	}
 	if err != nil {
 		return in.finish(ev, "failed", fmt.Errorf("%v; restoring the previous version also failed: %v", cause, err))

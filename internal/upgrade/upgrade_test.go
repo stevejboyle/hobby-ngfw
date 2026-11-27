@@ -451,3 +451,77 @@ func TestLoadKeysSkipsForeignLines(t *testing.T) {
 		t.Fatalf("keys %v, %v", keys, err)
 	}
 }
+
+func TestRollbackRestoresPackagesFirst(t *testing.T) {
+	priv, keys := key(t)
+	in, _ := installed(t)
+	b, _ := Read(bytes.NewReader(build(t, priv, "0.3.1", v031)), keys)
+	if err := in.Apply(b, false); err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	in.BeforeRollback = func() error { order = append(order, "before"); return nil }
+	in.RestorePackages = func(bdir string) (string, error) {
+		if filepath.Base(bdir) != "0.3.0" {
+			t.Errorf("restore from %s, want the 0.3.0 backup", bdir)
+		}
+		// Files are still the new version's while packages are restored.
+		order = append(order, "packages:"+read(t, in, "usr/local/sbin/ngfwd"))
+		return "OS packages: 3 put back", nil
+	}
+	res, err := in.Rollback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(order, ",") != "packages:ngfwd 0.3.1,before" || res.Packages != "OS packages: 3 put back" {
+		t.Fatalf("order %v, result %+v", order, res)
+	}
+}
+
+func TestRollbackStopsWhenPackagesFail(t *testing.T) {
+	priv, keys := key(t)
+	in, sys := installed(t)
+	b, _ := Read(bytes.NewReader(build(t, priv, "0.3.1", v031)), keys)
+	if err := in.Apply(b, false); err != nil {
+		t.Fatal(err)
+	}
+	restarts := sys.restarts
+	in.RestorePackages = func(string) (string, error) { return "", errors.New("dpkg: exit status 1") }
+	if _, err := in.Rollback(); err == nil || !strings.Contains(err.Error(), "restoring OS packages") {
+		t.Fatalf("err %v", err)
+	}
+	st, _ := in.Status()
+	if read(t, in, "usr/local/sbin/ngfwd") != "ngfwd 0.3.1" || st.Version != "0.3.1" || st.RollbackTo != "0.3.0" || sys.restarts != restarts {
+		t.Fatalf("a failed package restore changed the files or restarted ngfwd: %+v", st)
+	}
+	if last := st.History[len(st.History)-1]; last.Action != "rollback" || last.Result != "failed" {
+		t.Fatalf("history %+v", last)
+	}
+	// It can be retried once the packages are fixed.
+	in.RestorePackages = func(string) (string, error) { return "", nil }
+	if _, err := in.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFailedUpgradeRestoresPackages(t *testing.T) {
+	priv, keys := key(t)
+	in, sys := installed(t)
+	calls := 0
+	sys.healthy = func() error {
+		calls++
+		if calls == 1 {
+			return errors.New("ngfwd exited")
+		}
+		return nil
+	}
+	restored := 0
+	in.RestorePackages = func(string) (string, error) { restored++; return "", nil }
+	b, _ := Read(bytes.NewReader(build(t, priv, "0.3.1", v031)), keys)
+	if err := in.Apply(b, false); err == nil || !strings.Contains(err.Error(), "previous version restored") {
+		t.Fatalf("got %v", err)
+	}
+	if restored != 1 {
+		t.Fatalf("packages restored %d times after a failed upgrade, want 1", restored)
+	}
+}

@@ -109,13 +109,69 @@ ADMIN=admin
 st=$(cli_run show status)
 [[ $st == *running_revision* ]] && pass "$ADMIN logs in to the captive CLI (show status)" || fail "CLI show status: $st"
 
+# OS packages (Debian updates and the kernel, carried by bundles since 0.9.14).
+pkstatus() { root_run fwctl packages status -json 2>/dev/null; }
+wait_os() { # until the background install has finished (ok or failed)
+	local s
+	for _ in $(seq 240); do
+		s=$(pkstatus)
+		[[ $s == *'"state": "ok"'* || $s == *'"state": "failed"'* ]] && [[ $(root_run systemctl is-active sjb-packages) != active ]] && return 0
+		sleep 5
+	done
+	return 1
+}
+reboot_wait() { # the appliance is rebooting: wait for root and ngfwd
+	sleep 20
+	for _ in $(seq 60); do root_run true 2>/dev/null && break; sleep 5; done
+	for _ in $(seq 30); do [[ $(root_run systemctl is-active ngfwd) == active ]] && break; sleep 2; done
+}
+# Every OS update the bundle lists is installed at that version or newer.
+os_behind() {
+	root_run 'while read -r n o v s k; do c=$(dpkg-query -W -f="\${Version}" "$n" 2>/dev/null); dpkg --compare-versions "$c" ge "$v" || echo "$n:$c<$v"; done </usr/share/sjb-os/packages/os-updates.txt'
+}
+check_os_installed() { # label
+	wait_os
+	local st behind newk
+	st=$(pkstatus)
+	behind=$(os_behind)
+	newk=$(root_run "awk '\$1 ~ /^linux-image-[0-9]/ {sub(/^linux-image-/, \"\", \$1); print \$1}' /usr/share/sjb-os/packages/os-updates.txt | sort -V | tail -1")
+	NEWK=${newk:-$(root_run uname -r)}
+	[[ $st == *'"state": "ok"'* && -z $behind && $(root_run "dpkg-query -W -f='\${db:Status-Status}' linux-image-$NEWK") == installed ]] &&
+		pass "$1: OS updates installed ($(root_run 'wc -l </usr/share/sjb-os/packages/os-updates.txt') listed, kernel $NEWK), every one at the bundled version or newer" ||
+		fail "$1: OS updates: behind=[$behind] status=${st:0:400} $(root_run 'journalctl -u sjb-packages --no-pager -n 8' 2>&1 | cut -c1-200)"
+}
+
 if [[ -n $NEWBUNDLE ]]; then
 	BASE=$(root_run cat /etc/ngfw-version)
+	BASE_K=$(root_run uname -r)
+	BASE_LIBC=$(root_run "dpkg-query -W -f='\${Version}' libc6")
 	root_run "cat > /tmp/new.upgrade" <"$NEWBUNDLE"
 	out=$(root_run fwctl upgrade apply /tmp/new.upgrade 2>&1)
 	NEWV=$(root_run cat /etc/ngfw-version)
-	[[ $NEWV != "$BASE" && $out == *"is running"* ]] &&
+	[[ $NEWV != "$BASE" && $out == *"is running"* && $out == *"OS packages install in the background"* ]] &&
 		pass "upgraded the $BASE image in place to $NEWV; the checks below test $NEWV" || fail "upgrading to the new bundle: $out"
+	check_os_installed "upgrade from $BASE"
+	saved=$(root_run "cat /var/lib/sjb-os/releases/$BASE/packages/packages.json" 2>&1)
+	nrepack=$(root_run "ls /var/lib/sjb-os/releases/$BASE/packages/*.deb 2>/dev/null | wc -l")
+	[[ $saved == *'"version": "'"$NEWV"'"'* && ${nrepack:-0} -ge 1 ]] &&
+		pass "the versions the upgrade replaced are saved for a rollback ($nrepack repacked)" || fail "saved packages: ${saved:0:300} ($nrepack debs)"
+	if [[ $NEWK != "$BASE_K" ]]; then
+		ver=$(cli_run show version)
+		ps=$(pkstatus)
+		[[ $ver == *"REBOOT REQUIRED: kernel"* && $ver == *"OS packages: "*" updated ("* && $ps == *'"reboot_required": true'* ]] &&
+			pass "show version: OS packages updated, reboot required for kernel $NEWK (running $BASE_K)" || fail "reboot flag: ${ver: -400}"
+		out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<$'request system reboot
+yes
+exit
+' 2>&1)
+		reboot_wait
+		ps=$(pkstatus)
+		[[ $out == *rebooting* && $(root_run uname -r) == "$NEWK" && $ps == *'"reboot_required": false'* && $(root_run systemctl is-active ngfwd) == active ]] &&
+			pass "request system reboot (CLI): running kernel $NEWK, reboot flag cleared, ngfwd up" ||
+			fail "reboot onto $NEWK: $(root_run uname -r) / ${out: -200} / ${ps:0:300}"
+	else
+		pass "the bundle's kernel is already the running one ($NEWK): no reboot needed"
+	fi
 	if [[ $DEPLOYKEY == 0 ]]; then
 		# From an image before 0.9.9 (built-in root key): the upgrade keeps
 		# root's access by moving the key to /etc/ngfw and drops the shipped
@@ -152,10 +208,55 @@ if [[ -n $NEWBUNDLE ]]; then
 		$now == $((before + 1)) && $cfg != *rbtest* && $st == *running_revision* ]] &&
 		pass "rollback to $BASE: ngfwd starts on the config that was running at the upgrade (revision $now)" ||
 		fail "rollback to base $BASE: ngfwd $act, revisions $before -> $now: $out"
+	# The rollback put the OS packages back too: every saved version is
+	# installed again, packages the upgrade added are gone (the new kernel,
+	# even while running it), and a reboot onto the old kernel is required.
+	wrong=$(root_run "python3 -c '
+import json, subprocess
+s = json.load(open(\"/var/lib/sjb-os/releases/$BASE/packages/packages.json\"))
+for c in s[\"changes\"]:
+    r = subprocess.run([\"dpkg-query\", \"-W\", \"-f=\${db:Status-Status} \${Version}\", c[\"package\"]], capture_output=True, text=True).stdout.strip()
+    if c[\"from\"] == \"absent\":
+        bad = r.startswith(\"installed\")
+    else:
+        bad = r != \"installed \" + c[\"from\"]
+    if bad: print(c[\"package\"], r, \"want\", c[\"from\"])
+'")
+	# Added packages dpkg kept because something still needs them are fine
+	# (the rollback lists them as kept).
+	kept=$(grep -o 'kept [^(]*' <<<"$out" | sed 's/^kept //')
+	wrong=$(while read -r p rest; do [[ -n $p && " $kept " != *" $p "* ]] && echo "$p $rest"; done <<<"$wrong")
+	libc=$(root_run "dpkg-query -W -f='\${Version}' libc6")
+	kgone=$(root_run "dpkg-query -W -f='\${db:Status-Status}' linux-image-$NEWK 2>&1")
+	[[ $out == *"OS packages: "*" put back to their earlier versions"* && -z $wrong && $libc == "$BASE_LIBC" && ( $NEWK == "$BASE_K" || $kgone != installed ) ]] &&
+		pass "rollback put the OS packages back (libc6 $libc again; kernel $NEWK removed)" ||
+		fail "rollback OS packages: wrong=[$wrong] libc6=$libc (want $BASE_LIBC) kernel=$kgone / ${out: -400}"
+	if [[ $NEWK != "$BASE_K" ]]; then
+		[[ $out == *"REBOOT REQUIRED: the running kernel was removed"* && $(pkstatus) == *'"reboot_required": true'* ]] &&
+			pass "rollback while running kernel $NEWK: removed, reboot required" || fail "rollback reboot flag: ${out: -300}"
+		root_run 'systemctl reboot' >/dev/null 2>&1
+		reboot_wait
+		[[ $(root_run uname -r) == "$BASE_K" && $(root_run systemctl is-active ngfwd) == active && $(pkstatus) == *'"reboot_required": false'* ]] &&
+			pass "after the reboot: $BASE on kernel $BASE_K, ngfwd up" || fail "reboot after rollback: $(root_run uname -r) $(root_run systemctl is-active ngfwd)"
+	fi
 	out=$(root_run fwctl upgrade apply /tmp/new.upgrade 2>&1)
 	st=$(cli_run show status)
 	[[ $(root_run cat /etc/ngfw-version) == "$NEWV" && $st == *running_revision* ]] &&
 		pass "upgraded to $NEWV again" || fail "second upgrade: $out / $st"
+	check_os_installed "second upgrade"
+	if [[ $NEWK != "$(root_run uname -r)" ]]; then
+		root_run 'systemctl reboot' >/dev/null 2>&1
+		reboot_wait
+		[[ $(root_run uname -r) == "$NEWK" ]] && pass "rebooted onto kernel $NEWK again; the checks below run on it" || fail "kernel after second reboot: $(root_run uname -r)"
+	fi
+else
+	# A fresh appliance ships with Debian's updates and one kernel, and
+	# has nothing to install or reboot for.
+	ps=$(pkstatus)
+	nk=$(root_run 'ls /boot/vmlinuz-* | wc -l')
+	[[ $ps == *'"state": "idle"'* && $ps == *'"pending": 0'* && $ps == *'"reboot_required": false'* && $nk == 1 && $(root_run 'ls /boot/vmlinuz-*') == *"$(root_run uname -r)" ]] &&
+		pass "fresh image: OS packages as shipped, one kernel ($(root_run uname -r)), nothing pending, no reboot needed" ||
+		fail "fresh image OS state: kernels=$nk ${ps:0:400}"
 fi
 REV0=$(root_run fwctl status | grep -o '"running_revision": [0-9]*' | grep -o '[0-9]*$')
 names=$(root_run "ip -br link" | awk '{print $1}' | tr '\n' ' ')
@@ -978,6 +1079,11 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 	[[ ${crit:-0} -ge 1 && $m =~ sjbos_rule_packets_total\{rule=\"ips-test\",action=\"allow\"\}\ [1-9] && $m == *'sjbos_service_up{service="suricata"} 1'* && $m == *'sjbos_interface_receive_bytes_total{interface="mgmt",zone=""}'* ]] &&
 		pass "the scrape shows the IPS blocks ($crit critical), rule hits, Suricata up and interface counters" ||
 		fail "metrics content: crit=$crit $(grep -E 'ips-test|service_up|interface_up' <<<"$m" | head -8)"
+	want_os=idle
+	[[ -n $NEWBUNDLE ]] && want_os=ok
+	[[ $m =~ sjbos_reboot_required\{kernel=\"$(root_run uname -r)\"\}\ 0 && $m == *"sjbos_os_packages_state{state=\"$want_os\"} 1"* && $m == *"sjbos_os_packages_pending 0"* ]] &&
+		pass "the scrape shows the OS packages ($want_os, none pending) and no reboot needed" ||
+		fail "metrics OS state: $(grep -E 'reboot_required|os_packages' <<<"$m")"
 	if command -v snmpget >/dev/null && docker info >/dev/null 2>&1; then
 		export MIBS= SNMP_PERSISTENT_DIR=$WORK/snmp-host
 		mkdir -p "$SNMP_PERSISTENT_DIR" "$WORK/trapd"
@@ -1006,6 +1112,8 @@ if [[ $(root_run "dpkg-query -W -f='\${db:Status-Status}' suricata" 2>/dev/null)
 		for _ in $(seq 20); do [[ $(snmpget "${V3[@]}" -Oqv "$AG" .1.3.6.1.4.1.8072.9999.9999.7.1.1.0 2>/dev/null) == *0.9.* ]] && break; sleep 1; done
 		sw=$(snmpwalk "${V3[@]}" "$AG" .1.3.6.1.4.1.8072.9999.9999.7 2>&1)
 		[[ $sw == *'"ips-test"'* && $sw == *'"suricata"'* && $sw =~ \.7\.1\.4\.0\ =\ INTEGER:\ 1 ]] && pass "SJB-OS-MIB: rules, services, ngfwd up (pass_persist from the snapshot)" || fail "sjb-os-mib: ${sw:0:400}"
+		[[ $sw =~ \.7\.1\.6\.0\ =\ INTEGER:\ 0 && $sw =~ \.7\.1\.7\.0\ =\ INTEGER:\ [13] && $sw =~ \.7\.1\.8\.0\ =\ Gauge32:\ 0 ]] &&
+			pass "SJB-OS-MIB: no reboot required, OS packages $want_os, none pending" || fail "sjb-os-mib OS: $(grep -E '\.7\.1\.[678]\.0' <<<"$sw")"
 		v2=$(snmpget -v2c -c "$COMM" -t 3 -r 1 -On "$AG" .1.3.6.1.2.1.1.5.0 2>&1)
 		v2bad=$(snmpget -v2c -c wrong-community -t 2 -r 0 -On "$AG" .1.3.6.1.2.1.1.5.0 2>&1)
 		[[ $v2 == *STRING* && $v2bad == *Timeout* ]] && pass "v2c: the community works from the listed manager; a wrong one gets no answer" || fail "v2c: $v2 / $v2bad"
@@ -1314,7 +1422,9 @@ n2=$(ui "$UI/ui/api/stats?window=1h" | grep -o '"samples":[0-9]*' | grep -o '[0-
 # a reboot the ruleset must be in place before snmpd listens, and snmpd must
 # be back in the management VRF.
 if [[ -n ${SNMP_A2:-} ]] && command -v snmpget >/dev/null; then
-	root_run 'systemctl reboot' >/dev/null 2>&1
+	# The reboot from the web UI (System -> Administration -> Reboot now).
+	rbr=$(ui -d '{}' "$UI/ui/api/reboot")
+	[[ $rbr == *rebooting* ]] && pass "web UI reboot accepted" || fail "web UI reboot: $rbr"
 	sleep 20
 	for _ in $(seq 60); do root_run true 2>/dev/null && break; sleep 5; done
 	for _ in $(seq 30); do [[ $(root_run systemctl is-active snmpd) == active ]] && break; sleep 2; done

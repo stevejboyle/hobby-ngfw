@@ -20,6 +20,7 @@ import (
 	"github.com/stevejboyle/sjb-os/internal/daemon"
 	"github.com/stevejboyle/sjb-os/internal/logs"
 	"github.com/stevejboyle/sjb-os/internal/nft"
+	"github.com/stevejboyle/sjb-os/internal/ospkg"
 	"github.com/stevejboyle/sjb-os/internal/store"
 	"github.com/stevejboyle/sjb-os/internal/tags"
 	"github.com/stevejboyle/sjb-os/internal/upgrade"
@@ -47,6 +48,9 @@ func (f *fakeUpgrader) Stage(r io.Reader) (*upgrade.Manifest, error) {
 }
 func (f *fakeUpgrader) Start() error    { return nil }
 func (f *fakeUpgrader) Rollback() error { return nil }
+func (f *fakeUpgrader) Packages() *ospkg.Status {
+	return &ospkg.Status{State: ospkg.StateOK, RebootRequired: true, RebootReasons: []string{"kernel 6.12.118"}}
+}
 
 func setup(t *testing.T, up Upgrader) (http.Handler, *clock, *daemon.Daemon) {
 	t.Helper()

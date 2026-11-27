@@ -51,6 +51,13 @@ type metricsState struct {
 	running atomic.Pointer[config.Config] // the running config
 	commit  atomic.Pointer[commitRecord]  // the last commit's outcome
 
+	// OS package and reboot state: read through osStatus (it runs dpkg-deb
+	// over the bundled packages), at most once per osStatusTTL.
+	osMu     sync.Mutex
+	osStatus func() *metrics.OS
+	osAt     time.Time
+	osLast   *metrics.OS
+
 	kickOnce sync.Once
 	matchMu  sync.Mutex
 	matches  map[string]map[string]uint64 // severity -> action -> IPS matches
@@ -263,6 +270,7 @@ func (d *Daemon) collect() metrics.Snapshot {
 	s := metrics.Snapshot{Time: start.UTC(), Version: d.version, Sections: map[string]metrics.SectionStatus{}}
 	s.Hostname, _ = os.Hostname()
 	s.System = metrics.ReadSystem(root, []string{"/", "/var"})
+	s.System.OS = d.osState()
 	s.Sessions = metrics.ReadSessions(root)
 	d.section(&s, "system", d.Now(), start, nil)
 	cfg := d.metrics.running.Load()
@@ -492,4 +500,31 @@ func (d *Daemon) ruleCounters(cfg *config.Config) ([]metrics.Rule, error) {
 	}
 	c := sum["default-deny"]
 	return append(out, metrics.Rule{Name: "default-deny", Action: "deny", Packets: c.Packets, Bytes: c.Bytes}), nil
+}
+
+// osStatusTTL is how long an OS package reading is reused.
+const osStatusTTL = 30 * time.Second
+
+// SetOSStatus sets how monitoring reads the OS package and reboot state.
+func (d *Daemon) SetOSStatus(f func() *metrics.OS) {
+	d.metrics.osMu.Lock()
+	defer d.metrics.osMu.Unlock()
+	d.metrics.osStatus, d.metrics.osAt, d.metrics.osLast = f, time.Time{}, nil
+}
+
+// osState is the OS package and reboot state, cached for osStatusTTL.
+func (d *Daemon) osState() *metrics.OS {
+	d.metrics.osMu.Lock()
+	defer d.metrics.osMu.Unlock()
+	if d.metrics.osStatus == nil {
+		return nil
+	}
+	if now := time.Now(); d.metrics.osLast == nil || now.Sub(d.metrics.osAt) >= osStatusTTL {
+		d.metrics.osLast, d.metrics.osAt = d.metrics.osStatus(), now
+	}
+	if d.metrics.osLast == nil {
+		return nil
+	}
+	o := *d.metrics.osLast
+	return &o
 }

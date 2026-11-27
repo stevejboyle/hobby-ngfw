@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stevejboyle/sjb-os/internal/ospkg"
 	"github.com/stevejboyle/sjb-os/internal/upgrade"
 )
 
@@ -17,7 +18,7 @@ import (
 // elsewhere with NGFW_ROOT.
 func installer() *upgrade.Installer {
 	root := envOr("NGFW_ROOT", "/")
-	in := &upgrade.Installer{Root: root, Sys: &appliance{wantRev: -1}}
+	in := &upgrade.Installer{Root: root, Sys: &appliance{wantRev: -1}, RestorePackages: restorePackages}
 	migrate := filepath.Join(root, "usr/local/sbin/sjb-migrate")
 	in.BeforeRollback = func() error {
 		if _, err := os.Stat(migrate); err != nil {
@@ -49,8 +50,12 @@ func upgradeCmd(args []string) error {
 		if err != nil {
 			return err
 		}
+		pk := packageManager().Report()
 		if len(args) > 1 && args[1] == "-json" {
-			b, _ := json.MarshalIndent(st, "", "  ")
+			b, _ := json.MarshalIndent(struct {
+				upgrade.Status
+				Packages ospkg.Status `json:"packages"`
+			}{st, pk}, "", "  ")
 			fmt.Println(string(b))
 			return nil
 		}
@@ -61,6 +66,7 @@ func upgradeCmd(args []string) error {
 		if st.InProgress {
 			fmt.Println("an upgrade is in progress")
 		}
+		printPackages(pk, false)
 		for _, e := range st.History {
 			line := fmt.Sprintf("%s  %-8s %s -> %s  %s", e.Time.Local().Format("2006-01-02 15:04"), e.Action, e.From, e.To, e.Result)
 			if e.Error != "" {
@@ -104,6 +110,7 @@ func upgradeCmd(args []string) error {
 			return err
 		}
 		fmt.Printf("SJB-OS %s is running. Fresh paint on the gatehouse, same guard.\n", b.Manifest.Version)
+		fmt.Println("OS packages install in the background: see `fwctl upgrade status` (a new kernel needs a reboot)")
 		return nil
 	case "rollback":
 		if err := noPendingCommit(); err != nil {
@@ -119,6 +126,9 @@ func upgradeCmd(args []string) error {
 			return err
 		}
 		fmt.Printf("rolled back to SJB-OS %s\n", st.RollbackTo)
+		if res.Packages != "" {
+			fmt.Println(res.Packages)
+		}
 		if res.ConfigRestored {
 			fmt.Printf("config: revision %d is the config that was running at the upgrade (revision %d); "+
 				"changes made since then are in revisions %d-%d (`show revision N`)\n",

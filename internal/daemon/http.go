@@ -302,6 +302,9 @@ func (d *Daemon) mgmtRoutes() []mgmtRoute {
 			v, err := d.RestoreBackup(c, req)
 			reply(w, v, err)
 		}},
+		{"POST /v1/reboot", change(accounts.Upgrades), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			reply(w, map[string]bool{"rebooting": true}, d.Reboot(c))
+		}},
 		{"GET /v1/logforwarding", view(accounts.Logging), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
 			reply(w, d.LogForwarding(), nil)
 		}},

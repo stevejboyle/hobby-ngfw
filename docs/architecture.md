@@ -182,7 +182,11 @@ The design below is the target. Phase 1 simplified it on purpose:
 - In-place upgrades: signed (ed25519) bundles of the appliance overlay, built
   by `sjbpkg`, applied by `fwctl upgrade` in a transient systemd unit so it
   outlives the `ngfwd` restart. Replaced files are kept; an unhealthy `ngfwd`
-  after the restart triggers an automatic restore.
+  after the restart triggers an automatic restore. Since 0.9.14 bundles also
+  carry Debian's security and point-release updates and the kernel;
+  `internal/ospkg` installs them in the background, saves the versions it
+  replaces (repacked from dpkg's records) so a rollback can put them back,
+  and reports when a reboot is needed (never automatic).
 
 ### As built on the appliance
 

@@ -20,7 +20,7 @@ const Base = ".1.3.6.1.4.1.8072.9999.9999.7"
 
 // Object identifiers in SJB-OS-MIB (relative to Base).
 const (
-	oidSystem     = ".1" // version .1, hostname .2, snapshotAge .3, ngfwdUp .4, uptime .5
+	oidSystem     = ".1" // version .1, hostname .2, snapshotAge .3, ngfwdUp .4, uptime .5, rebootRequired .6, osPackagesState .7, osPackagesPending .8
 	oidConfig     = ".2" // runningRevision .1, uncommitted .2, lastCommitOK .3, recovery .4
 	oidSessions   = ".3" // count .1, max .2
 	oidIPS        = ".4" // state .1, up .2, loaded .3, queueDropped .4, exceptionsActive .5, exceptionsInactive .6, fault .7
@@ -139,6 +139,17 @@ func Objects(s metrics.Snapshot, ok bool, age time.Duration) []varbind {
 	num(oidSystem+".3.0", ageSec)
 	add(oidSystem+".4.0", "integer", b2i(!stale))
 	add(oidSystem+".5.0", "timeticks", strconv.FormatInt(int64(s.System.UptimeSeconds*100), 10))
+	if o := s.System.OS; o != nil {
+		add(oidSystem+".6.0", "integer", b2i(o.RebootRequired))
+		st := 0
+		for i, name := range metrics.OSStates {
+			if o.PackagesState == name {
+				st = i + 1
+			}
+		}
+		num(oidSystem+".7.0", int64(st))
+		gauge(oidSystem+".8.0", uint64(o.PackagesPending))
+	}
 
 	num(oidConfig+".1.0", int64(s.Config.RunningRevision))
 	add(oidConfig+".2.0", "integer", b2i(s.Config.Uncommitted))

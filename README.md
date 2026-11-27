@@ -231,7 +231,10 @@ on Steve's own ESXi lab):
   changes checked against the areas they touch, per-user SSH keys, account
   lockout, and every change recorded under the user the firewall verified.
   Directory sign-in (LDAP, RADIUS, SAML, OIDC) is not built yet.
-- Signed in-place upgrades with automatic restore and rollback.
+- Signed in-place upgrades with automatic restore and rollback, carrying
+  Debian's security updates and the kernel too (0.9.14-r01): rollback puts
+  the earlier package versions back, and a reboot onto a new kernel is
+  flagged, never automatic.
 - An operator's own certificate (e.g. from a lab CA) for the web UI and
   tag API (0.9.12-r01), applied without a restart.
 

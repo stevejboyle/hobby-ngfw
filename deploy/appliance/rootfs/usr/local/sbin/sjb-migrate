@@ -110,7 +110,8 @@ SH
 	fi
 
 	# Debian packages shipped in the bundle install in the background, so
-	# they never hold up ngfwd or an upgrade's health check.
+	# they never hold up ngfwd or an upgrade's health check (OS updates
+	# included: fwctl packages install, see sjb-packages).
 	if compgen -G "$SHARE/packages/*.deb" >/dev/null && ! systemctl -q is-active sjb-packages; then
 		systemd-run --no-block --collect --quiet --unit=sjb-packages \
 			--description="SJB-OS bundled packages" /usr/local/sbin/sjb-packages || true

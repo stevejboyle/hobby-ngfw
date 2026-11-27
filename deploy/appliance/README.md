@@ -913,7 +913,9 @@ root key or password ships with SJB-OS, and the vendor has no way in.
 Root-only tasks for now: resetting a forgotten
 password (`fwctl web-passwd -user NAME`, `admin` by default, which sets SSH,
 console and web UI together, clears any lockout and takes effect at once, no
-restart needed; superusers can do the same from the CLI or web UI), and Debian updates (`apt update && apt upgrade`). The full
+restart needed; superusers can do the same from the CLI or web UI). Debian
+updates come with SJB-OS upgrades (see Upgrades); `apt update && apt upgrade`
+as root still works between releases. The full
 journal (`journalctl`) is there too, beyond what the Logs views show.
 
 ## Applications (App Identification)
@@ -1143,7 +1145,7 @@ Suricata as not installed.
   an update. A lab appliance that must block rather than pass uninspected
   traffic would need fail-closed queues; SJB-OS doesn't offer that.
 - It ships in the upgrade bundle: Debian 13's Suricata 7.0.10 (kept patched
-  by `apt upgrade`), installed in the background after the upgrade, run as
+  by later bundles), installed in the background after the upgrade, run as
   `sjb-ips.service`.
 - Not yet: reset instead of drop, file and URL filtering, IPv6.
 
@@ -1759,10 +1761,52 @@ Only bundles signed with the SJB-OS release key are accepted, and only
 newer versions (`-reinstall` re-applies the installed one). Versions are
 MAJOR.MINOR.PATCH with an optional suffix: `-rNN` is a revision build after
 that release (0.6.1 counts as 0.6.1-r00, then r01, r02, ... compared as
-numbers), and any other suffix, such as `-rc1`, comes before the release. The kernel and
-Debian packages are not part of a bundle: keep them patched as root with
-`apt update && apt upgrade` (the appliance reaches the Debian mirrors over
-the outside link).
+numbers), and any other suffix, such as `-rc1`, comes before the release.
+
+### Debian security updates and the kernel
+
+From 0.9.14 each bundle also carries Debian's updates for the packages the
+appliance runs: security fixes, point-release updates and a new kernel when
+there is one, as signed files inside the bundle (no internet access needed).
+They install in the background after the upgrade (`sjb-packages`), only
+where the bundled version is newer, never as a downgrade:
+
+```
+admin@sjb-fw> show version
+installed: SJB-OS 0.9.14-r01
+rollback:  `fwctl upgrade rollback` returns to 0.9.13-r03
+OS packages: 25 updated (10 security) at 2026-11-27 14:02
+kernel:      6.12.117+deb13-amd64
+REBOOT REQUIRED: kernel 6.12.118
+```
+
+- **Reboot:** a new kernel takes effect only after a reboot, which SJB-OS
+  never does on its own. `show version`, System → Administration, the
+  `sjbos_reboot_required` metric and `sjbRebootRequired` (SNMP) say when one
+  is needed. Reboot at a time that suits you: `request system reboot` in the
+  CLI, or **Reboot now** in the web UI (users who may change upgrades).
+  Traffic stops for about a minute. The previous kernel stays installed as a
+  fallback; older ones are removed once the newest is running. A reboot is
+  *recommended* (not required) after updates to libc6, systemd or OpenSSL,
+  so long-running services pick them up.
+- **Rollback:** before replacing a package, the install saves the installed
+  version (rebuilt from dpkg's own records, changed config files included)
+  beside the upgrade's other backups. `fwctl upgrade rollback` puts those
+  versions back first, then removes the packages the upgrade added, the new
+  kernel included. If the appliance was already running that kernel, it is
+  removed anyway and a reboot is required: until then, kernel modules that
+  aren't loaded yet can't be loaded. A package something else still needs
+  is kept, and the rollback says which. Upgrades made before 0.9.14 saved
+  nothing, so their rollback leaves the packages as they are.
+- **Status:** `fwctl upgrade status` (and `show version`) gives the result
+  of the last install, or why it failed; `fwctl packages status` lists every
+  package changed. A failed install is retried the next time ngfwd starts.
+- **Disk space:** an install needs room for the new packages plus the saved
+  copies, with 200 MB to spare, and stops before changing anything if there
+  isn't.
+- Between releases, `apt update && apt upgrade` as root still works (the
+  appliance reaches the Debian mirrors over the outside link); a rollback
+  then puts back only what the bundle's install changed.
 
 ### Appliances older than 0.8.0
 
@@ -1828,9 +1872,9 @@ unchanged. The full history lives in `/var/lib/ngfw/revisions/`.
   import your own; there is no ACME (automatic certificates) yet.
 - Users are local to the appliance: no LDAP, RADIUS, SAML or OIDC yet. The
   web UI and SSH/console count failed logins separately.
-- Upgrades cover SJB-OS itself and the packages it ships (FRR, Kea,
-  App Identification's libraries), not
-  the kernel or other Debian packages (apt).
+- Debian updates and the kernel arrive only with SJB-OS releases (or `apt`
+  as root between them). A kernel update needs a reboot, which you start;
+  there is no live patching.
 - Users can log in over SSH with a password. For anything beyond a lab, give
   each user an SSH key and a strong password.
 - No root key or password ships with SJB-OS; root has only what you set at

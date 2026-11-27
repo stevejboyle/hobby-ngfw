@@ -75,9 +75,18 @@ outside) and manages it over SSH and the tag API on mgmt.
   runs chpasswd before writing the hash (and keeps admin's hash in the old
   `/etc/ngfw/web-users` for rollbacks). Keep it that way.
 - Debian packages ship inside bundles as files under
-  /usr/share/sjb-os/packages (build.sh + fetch-packages.sh work out what
-  the base image lacks; sjb-packages installs missing-or-older ones in the
-  background, never downgrading). To add a package, add it to PACKAGES.
+  /usr/share/sjb-os/packages: what the base image lacks (PACKAGES) plus
+  Debian's updates to what it has (fetch-packages.sh resolves a
+  dist-upgrade against BASE_RAW's dpkg status, from trixie, trixie-updates
+  and trixie-security, and writes os-updates.txt). sjb-packages runs
+  `fwctl packages install` (internal/ospkg) in the background: missing or
+  older only, never downgrading; before replacing a package it repacks the
+  installed version (in Go, from dpkg's status and info files, no
+  dpkg-repack) into releases/<previous>/packages for rollback, once per
+  upgrade. Rollback (Installer.RestorePackages) reinstalls those with
+  --force-downgrade and removes what the upgrade added, kernels included.
+  Reboots are never automatic: ospkg.Report computes "reboot required"
+  from the live kernel list. To add a package, add it to PACKAGES.
 - VRF interfaces: netfilter's forward and input hooks see the VRF device as
   iif. The compiler matches interfaces in a VRF with `meta sdifname`, and in
   NAT postrouting (no sdif there) by a per-interface mark set in the raw

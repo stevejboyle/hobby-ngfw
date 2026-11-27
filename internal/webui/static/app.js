@@ -2110,6 +2110,33 @@ async function pageIPS() {
     listSection(ipsExceptionSpec(st.exceptions)));
 }
 
+// osPackagesPanel shows what the last upgrade did to the OS packages and
+// whether a reboot is needed, with a Reboot button for those who may
+// change upgrades.
+function osPackagesPanel(up) {
+  const pk = up.packages;
+  if (!pk) return null;
+  const when = pk.time ? new Date(pk.time).toLocaleString() : "";
+  const sec = (pk.changes || []).filter((c) => c.security).length;
+  const line = pk.state === "ok" ? `OS packages: ${(pk.changes || []).length} updated (${sec} security) at ${when}.`
+    : pk.state === "installing" ? `OS packages: installing ${(pk.changes || []).length} package(s), started ${when}…`
+    : pk.state === "failed" ? `OS packages: the install failed at ${when}: ${pk.error}`
+    : "OS packages: as shipped (no updates installed by an upgrade).";
+  const reboot = can("upgrades", "change") ? h("button", { onclick: () => confirmDialog("Reboot the appliance?", "Traffic stops until it is back, about a minute. This page reconnects when it is.", async () => {
+    await api("POST", "reboot", {}); toast("Rebooting…"); waitForUpgrade(up.version);
+  }, "Reboot") }, "Reboot now") : null;
+  return h("div", {},
+    h("p", { class: pk.state === "failed" ? "error" : "" }, line,
+      pk.pending > 0 && pk.state !== "installing" ? h("span", { class: "muted" }, ` ${pk.pending} bundled package(s) not installed yet.`) : null),
+    pk.running_kernel ? h("p", { class: "muted small" }, `Kernel ${pk.running_kernel}.`) : null,
+    pk.reboot_required ? h("div", { class: "notice warn" }, h("strong", {}, "Reboot required: "), (pk.reboot_reasons || []).join("; "), ". ", reboot)
+      : pk.reboot_recommended ? h("p", { class: "muted" }, "Reboot recommended: ", (pk.reboot_reasons || []).join("; "), ". ", reboot) : null,
+    (pk.changes || []).length ? h("details", { class: "spaced" }, h("summary", {}, "Packages changed"),
+      h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, h("th", {}, "Package"), h("th", {}, "From"), h("th", {}, "To"), h("th", {}, ""))),
+        h("tbody", {}, pk.changes.map((c) => h("tr", {}, h("td", {}, c.package), h("td", {}, c.from), h("td", {}, c.to), h("td", {}, c.security ? "security" : ""))))))) : null);
+}
+
 async function pageSystem() {
   let up = null;
   if (can("upgrades")) { try { up = await api("GET", "upgrade"); } catch (e) { up = { error: e.message }; } }
@@ -2141,7 +2168,8 @@ async function pageSystem() {
     !up ? null : h("section", { class: "panel" }, h("h2", {}, "Upgrade"),
       up.error ? h("p", { class: "error" }, up.error) : h("div", {},
         h("p", {}, `Installed: SJB-OS ${up.version}.`, up.in_progress ? h("strong", {}, " An upgrade is in progress.") : null),
-        h("p", { class: "muted small" }, "Upgrades are signed bundles (.upgrade files from the GitHub release). Config, tags and revisions are kept. If ngfwd does not come back healthy, the previous version is restored automatically."),
+        h("p", { class: "muted small" }, "Upgrades are signed bundles (.upgrade files from the GitHub release). Config, tags and revisions are kept. If ngfwd does not come back healthy, the previous version is restored automatically. Bundles also carry Debian's security and point-release updates, the kernel included; they install in the background after the upgrade, and a rollback puts the earlier versions back."),
+        osPackagesPanel(up),
         can("upgrades", "change") ? [h("div", { class: "row" }, h("label", {}, "Bundle", file), upload, install), status] : h("p", { class: "muted small" }, "Your role can see upgrades but not install them."),
         up.rollback_to && can("upgrades", "change") ? h("p", {}, h("button", { onclick: () => confirmDialog(`Roll back to SJB-OS ${up.rollback_to}?`, "The files the last upgrade replaced are restored and ngfwd restarts.", async () => {
           await api("POST", "upgrade/rollback", {}); toast("Rolling back…"); waitForUpgrade(up.version);

@@ -38,6 +38,7 @@ import (
 	"github.com/stevejboyle/sjb-os/internal/netdev"
 	"github.com/stevejboyle/sjb-os/internal/nft"
 	"github.com/stevejboyle/sjb-os/internal/nicaddr"
+	"github.com/stevejboyle/sjb-os/internal/ospkg"
 	"github.com/stevejboyle/sjb-os/internal/routes"
 	"github.com/stevejboyle/sjb-os/internal/snmp"
 	"github.com/stevejboyle/sjb-os/internal/stats"
@@ -188,6 +189,11 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 	}
 	d.SetLogForwarder(fwd)
 	d.SetVersion(installedVersion())
+	osPkgs := &ospkg.Manager{Root: ui.root, Dpkg: ospkg.ExecDpkg{}, Host: ospkg.LiveHost{}}
+	d.SetOSStatus(func() *metrics.OS {
+		st := osPkgs.Report()
+		return &metrics.OS{PackagesState: st.State, PackagesPending: st.Pending, RebootRequired: st.RebootRequired, Kernel: st.RunningKernel}
+	})
 	defer fwd.Close()
 	// Users and roles: one password per user for SSH, the console and the
 	// web UI; every change goes to the Unix login and the user database
@@ -313,6 +319,7 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 			Upgrader: &webui.SystemdUpgrader{
 				Installer: &upgrade.Installer{Root: ui.root},
 				Fwctl:     ui.fwctl,
+				OS:        osPkgs,
 			},
 			Log: log,
 		})

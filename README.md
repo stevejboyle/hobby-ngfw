@@ -213,6 +213,10 @@ on Steve's own ESXi lab):
   decryption entry shows the source's and destination's country and
   autonomous system, searchable and forwarded in JSON and CEF, from DB-IP's
   country and ASN data.
+- Online updates (0.9.17-r01): the appliance checks its update server
+  (`updates.os.sjbconsulting.ai` by default, configurable) daily, downloads
+  and verifies a newer signed release, and waits for an admin to install
+  it from the CLI or web UI.
 - IPS (Suricata, Emerging Threats Open) on chosen allow rules, with
   per-rule profiles, a threat log, and exceptions for one signature by
   rule, client or server (0.9.12-r01).

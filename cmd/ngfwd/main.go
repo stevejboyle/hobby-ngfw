@@ -197,6 +197,14 @@ func run(log *slog.Logger, stateDir, socket, apiListen, apiKeys, tlsCert, tlsKey
 		return &metrics.OS{PackagesState: st.State, PackagesPending: st.Pending, RebootRequired: st.RebootRequired, Kernel: st.RunningKernel}
 	})
 	defer fwd.Close()
+	// Online updates: a daily check of the update server; a newer release
+	// is downloaded and verified, and waits for an admin to install it.
+	fwctlBin := ui.fwctl
+	d.SetUpdates(daemon.UpdateSource{
+		Installer: &upgrade.Installer{Root: ui.root},
+		Start:     func(p string) error { return upgrade.StartFwctl(fwctlBin, "apply", p) },
+	})
+	go d.RunUpdateChecks(context.Background())
 	// Users and roles: one password per user for SSH, the console and the
 	// web UI; every change goes to the Unix login and the user database
 	// together.

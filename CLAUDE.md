@@ -223,7 +223,8 @@ internal/snmp/      SNMP agent: config + credentials -> snmpd.conf (goldens in
                     helper (fwctl snmp-pass)
 internal/upgrade/   signed upgrade bundles: build, verify, apply, auto-restore,
                     rollback (run by `fwctl upgrade`; a rollback re-commits
-                    the config running at the upgrade if it changed since)
+                    the config running at the upgrade if it changed since);
+                    the signed release index (index.go) and StartFwctl
 internal/accounts/  users, roles, permission areas, lockout, SSH keys, Unix logins
 internal/webui/     web UI: session auth, JSON API under /ui/api/, embedded
                     static pages (plain JS/CSS in static/, no build step)
@@ -275,6 +276,18 @@ records `+local-changes` in its source manifest.
   reading or forwarding logs must not wait for a commit. DB-IP's ZZ
   (private, reserved) is shown blank. A journal line never supplies geo
   fields (fill replaces them). CEF uses vendor keys sjbSrcCountry etc.
+- Online updates (0.9.17, internal/daemon/updates.go): a daily check of
+  system update_server (default https://updates.os.sjbconsulting.ai) for
+  v1/stable.json and its .sig, signed with the release key over a domain
+  prefix (upgrade.SignIndex/VerifyIndex). A newer release is downloaded,
+  checked (size, SHA-256, bundle signature) and staged as
+  /var/lib/sjb-os/incoming/auto.upgrade; never installed without an admin
+  (InstallUpdate runs `fwctl upgrade apply` through upgrade.StartFwctl).
+  Checks and downloads never hold d.mu; updatesState has its own lock. An
+  index older than one accepted is refused (replay). update_check and
+  update_server are in the `upgrades` area, which is now a config area.
+  Publishing a release adds a step: `sjbpkg index` into the
+  stevejboyle/sjb-os-updates Pages repo (ask Steve before pushing it).
 
 ## Known phase 1 limits
 

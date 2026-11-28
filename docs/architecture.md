@@ -198,6 +198,15 @@ The design below is the target. Phase 1 simplified it on purpose:
   (`logs.Journal.Geo`, the daemon's `GeoOf`), as it adds zones and rule
   names, for the Logs views and log forwarding alike. The lookups read the
   databases through an atomic pointer, never the daemon lock.
+- Online updates (0.9.17): an update server publishes a release index
+  (`v1/stable.json`) signed with the release key, beside a detached
+  signature; the index names the newest bundle's URL, size and SHA-256.
+  ngfwd checks it daily (`RunUpdateChecks`), downloads a newer bundle,
+  checks its size, hash and signature, and stages it in
+  `/var/lib/sjb-os/incoming/auto.upgrade`. Installing is always an admin's
+  call and runs the same `fwctl upgrade apply` as an upload. The default
+  server is GitHub Pages (a small repo holding the index), and the bundles
+  stay on the GitHub releases. `sjbpkg index` writes and signs the index.
 
 ### As built on the appliance
 

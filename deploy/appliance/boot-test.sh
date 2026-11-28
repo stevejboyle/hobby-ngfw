@@ -1590,6 +1590,93 @@ PY
 	st=$(cli_run show status)
 	[[ $st == *running_revision* && $(root_run id -nG "$ADMIN") != *sudo* ]] &&
 		pass "after rollback $ADMIN is still captive (undo, then $ORIG set it up again)" || fail "after rollback: $st"
+
+	# Online updates: a signed release index and a bundle served over HTTPS
+	# inside the appliance (127.0.0.1:18443, a test CA ngfwd trusts for this
+	# run only through a runtime drop-in). The real update server is never
+	# contacted. The bundle is V3, signed with the release key like the others.
+	V3=$MAJ.$MIN.$((PAT + 3))-boottest
+	bundle "$V3" "$WORK/v3.upgrade"
+	U=$WORK/upd; mkdir -p "$U/srv"
+	(cd "$U" && openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout ca.key -subj "/CN=Boot Test Update CA" \
+		-days 2 -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign -out ca.crt &&
+		openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout srv.key -subj "/CN=127.0.0.1" -out srv.csr &&
+		printf "subjectAltName=IP:127.0.0.1\nextendedKeyUsage=serverAuth\n" >srv.ext &&
+		openssl x509 -req -in srv.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 2 -extfile srv.ext -out srv.crt) >/dev/null 2>&1
+	cp "$WORK/v3.upgrade" "$U/srv/sjb-os-$V3.upgrade"
+	(cd "$SRC" && go run ./cmd/sjbpkg index -bundle "$WORK/v3.upgrade" -url "https://127.0.0.1:18443/sjb-os-$V3.upgrade" \
+		-notes "https://127.0.0.1:18443/notes" -key "$SIGNING_KEY" -o "$U/srv") >/dev/null
+	tar -C "$U" -cf - ca.crt srv.crt srv.key srv | root_run 'set -e; rm -rf /root/upd; mkdir -p /root/upd; tar -C /root/upd -xf -
+		cat /etc/ssl/certs/ca-certificates.crt /root/upd/ca.crt >/root/upd/roots.pem
+		mkdir -p /run/systemd/system/ngfwd.service.d
+		printf "[Service]\nEnvironment=SSL_CERT_FILE=/root/upd/roots.pem\n" >/run/systemd/system/ngfwd.service.d/boot-test-updates.conf
+		systemctl daemon-reload; systemctl restart ngfwd
+		cat >/root/upd/serve.py <<EOF
+import http.server, ssl, functools
+h = functools.partial(http.server.SimpleHTTPRequestHandler, directory="/root/upd/srv")
+s = http.server.ThreadingHTTPServer(("127.0.0.1", 18443), h)
+c = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); c.load_cert_chain("/root/upd/srv.crt", "/root/upd/srv.key")
+s.socket = c.wrap_socket(s.socket, server_side=True)
+s.serve_forever()
+EOF
+		nohup python3 /root/upd/serve.py >/root/upd/serve.log 2>&1 &'
+	for _ in $(seq 30); do [[ $(root_run systemctl is-active ngfwd) == active ]] && cli_run show status >/dev/null 2>&1 && break; sleep 2; done
+	script=$'configure\nset system update-server https://127.0.0.1:18443\ncommit -m "boot test: update server"\nexit\nexit\n'
+	out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" 2>&1)
+	su=$(cli_run show system updates)
+	[[ $out == *"committed revision"* && $su == *"update server: https://127.0.0.1:18443"* && $su == *"daily check:   on"* && $su == *"installed:     SJB-OS $ORIG"* ]] &&
+		pass "set system update-server; show system updates: the server, daily check on, SJB-OS $ORIG installed" || fail "update server: ${out: -200} / $su"
+	chk=$(cli_run request system upgrade check 2>&1)
+	[[ $chk == *"downloaded:    SJB-OS $V3"*"request system upgrade install"* && $(root_run 'ls /var/lib/sjb-os/incoming/') == *auto.upgrade* ]] &&
+		pass "request system upgrade check: SJB-OS $V3 downloaded and verified, waiting to be installed" || fail "upgrade check: $chk"
+	ver=$(cli_run show version)
+	[[ $ver == *"update:    SJB-OS $V3 is downloaded"* && $(root_run cat /etc/ngfw-version) == "$ORIG" ]] &&
+		pass "show version says the update is downloaded; nothing installed on its own" || fail "show version: ${ver: -300}"
+	# ngfwd restarted (the drop-in), so log in to the web UI again.
+	login=$(curl -sk -c "$JAR" -H 'Content-Type: application/json' -d "{\"user\":\"$ADMIN\",\"password\":\"$PW\"}" "$UI/ui/api/login")
+	CSRF=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("csrf",""))' <<<"$login" 2>/dev/null)
+	uu=$(ui "$UI/ui/api/updates")
+	us=$(ui "$UI/ui/api/status")
+	[[ $uu == *'"update_ready":true'* && $us == *'"update_ready":true'* ]] && pass "web UI: the downloaded release, and the update-ready flag" || fail "ui updates: ${uu:0:300} / ${us:0:200}"
+	if [[ -n ${pk:-} ]]; then
+		mu=$(curl -sk -H "Authorization: Bearer $pk" "https://127.0.0.1:$API_PORT/metrics" | grep '^sjbos_update')
+		[[ $mu == *"sjbos_update_available 1"* && $mu == *"sjbos_update_last_check_success 1"* && $mu == *sjbos_update_check_age_seconds* ]] &&
+			pass "Prometheus: sjbos_update_available 1, the last check ok, its age" || fail "update metrics: $mu"
+	fi
+	# A tampered index is refused; what is downloaded stays.
+	root_run 'cp /root/upd/srv/v1/stable.json /root/upd/stable.good; sed -i "s/\"schema\": 1/\"schema\":  1/" /root/upd/srv/v1/stable.json'
+	bad=$(cli_run request system upgrade check 2>&1)
+	su=$(cli_run show system updates)
+	[[ $bad == *"signature does not match"* && $su == *"downloaded:    SJB-OS $V3"* ]] &&
+		pass "a tampered release index is refused; the downloaded release stays" || fail "tampered index: ${bad: -300} / $su"
+	root_run 'cp /root/upd/stable.good /root/upd/srv/v1/stable.json'
+	script=$'configure\nset system update-check off\ncommit -m "boot test: update check off"\nexit\nexit\n'
+	retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<"$script" >/dev/null 2>&1
+	su=$(cli_run show system updates)
+	[[ $su == *"daily check:   off"* ]] && pass "set system update-check off: the daily check stops (Check now still works)" || fail "update-check off: $su"
+	out=$(retry255 sshpass -p "$PW" ssh "${SSHOPTS[@]}" -T -o PubkeyAuthentication=no "$ADMIN@127.0.0.1" <<<$'request system upgrade install
+yes
+exit
+' 2>&1)
+	sleep 5
+	wait_upgrade
+	for _ in $(seq 30); do [[ $(root_run systemctl is-active ngfwd) == active ]] && break; sleep 2; done
+	st=$(upstatus)
+	su=$(cli_run show system updates)
+	[[ $out == *"installing SJB-OS $V3"* && $(root_run cat /etc/ngfw-version) == "$V3" && $st == *'"result": "ok"'* &&
+		$su != *"downloaded:"* && $(root_run 'ls /var/lib/sjb-os/incoming/') != *auto.upgrade* ]] &&
+		pass "request system upgrade install: now SJB-OS $V3; the downloaded bundle is cleaned up" ||
+		fail "online install: ${out: -300} / $(root_run cat /etc/ngfw-version) / ${st: -300} / $su"
+	root_run 'pkill -f /root/upd/serve.py; rm -f /run/systemd/system/ngfwd.service.d/boot-test-updates.conf; systemctl daemon-reload' >/dev/null 2>&1
+	out=$(root_run fwctl upgrade rollback 2>&1)
+	act=
+	for _ in $(seq 15); do
+		act=$(root_run systemctl is-active ngfwd)
+		[[ $act == active ]] && break
+		sleep 2
+	done
+	[[ $(root_run cat /etc/ngfw-version) == "$ORIG" && $act == active ]] &&
+		pass "rollback after the online install returns to $ORIG" || fail "rollback after online install: ngfwd $act: ${out: -300}"
 else
 	fail "upgrade checks need Go and the signing key at $SIGNING_KEY"
 fi

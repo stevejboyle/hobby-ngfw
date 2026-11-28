@@ -180,6 +180,7 @@ zones: [{name: inside}]
 		{"hostname", base, strings.Replace(base, "hostname: fw", "hostname: fw2", 1), []Area{Network}},
 		{"zones", base, strings.Replace(base, "[{name: inside}]", "[{name: inside}, {name: outside}]", 1), []Area{Policy}},
 		{"ips switch", base, strings.Replace(base, "mgmt_interface: mgmt", "mgmt_interface: mgmt, ips: \"off\"", 1), []Area{IPS}},
+		{"update server", base, strings.Replace(base, "mgmt_interface: mgmt", "mgmt_interface: mgmt, update_server: \"https://u.example.com\"", 1), []Area{Upgrades}},
 		{"from nothing", "", base, []Area{Policy, Network}},
 		{"unparseable", base, "rules: [", ConfigAreas},
 	}
@@ -192,6 +193,10 @@ zones: [{name: inside}]
 	policyOnly := Principal{Name: "pat", Role: Role{Name: "policy-editor", Perms: map[Area]Level{Policy: Change, Network: View}}}
 	if err := policyOnly.CheckConfigChange("commit", []byte(base), []byte(strings.Replace(base, "hostname: fw", "hostname: x", 1))); !errors.Is(err, ErrForbidden) || !strings.Contains(err.Error(), "network") {
 		t.Errorf("network change by a policy editor: %v", err)
+	}
+	admin := Principal{Name: "ann", Role: BuiltinRoles()[1]}
+	if err := admin.CheckConfigChange("commit", []byte(base), []byte(strings.Replace(base, "mgmt_interface: mgmt", "mgmt_interface: mgmt, update_check: \"off\"", 1))); !errors.Is(err, ErrForbidden) || !strings.Contains(err.Error(), "upgrades") {
+		t.Errorf("update-check change by the admin role: %v", err)
 	}
 	if err := policyOnly.CheckConfigChange("commit", []byte(base), []byte(strings.Replace(base, "[{name: inside}]", "[{name: inside}, {name: outside}]", 1))); err != nil {
 		t.Errorf("policy change by a policy editor: %v", err)

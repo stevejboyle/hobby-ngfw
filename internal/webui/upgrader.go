@@ -4,9 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/stevejboyle/sjb-os/internal/ospkg"
 	"github.com/stevejboyle/sjb-os/internal/upgrade"
@@ -100,10 +98,5 @@ func (u *SystemdUpgrader) Rollback() error {
 }
 
 func (u *SystemdUpgrader) run(args ...string) error {
-	cmd := append([]string{"--unit=sjb-upgrade", "--collect", "--quiet", "--description=SJB-OS upgrade", u.Fwctl, "upgrade"}, args...)
-	out, err := exec.Command("systemd-run", cmd...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("could not start the upgrade (%v): %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return upgrade.StartFwctl(u.Fwctl, args...)
 }

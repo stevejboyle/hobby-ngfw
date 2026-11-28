@@ -93,6 +93,18 @@ type System struct {
 	// OS is the state of the Debian packages upgrades install (nil when
 	// unknown, such as off the appliance).
 	OS *OS `json:"os,omitempty"`
+	// Updates is the online update state (nil when not available).
+	Updates *Updates `json:"updates,omitempty"`
+}
+
+// Updates is the online update check's state.
+type Updates struct {
+	// Available: a newer release is downloaded and ready to install.
+	Available bool `json:"available"`
+	// LastCheckOK is false when the last check failed.
+	LastCheckOK bool `json:"last_check_ok"`
+	// CheckAgeSeconds is the time since the last check (nil: never).
+	CheckAgeSeconds *float64 `json:"check_age_seconds,omitempty"`
 }
 
 // OS package states, as fwctl records them.

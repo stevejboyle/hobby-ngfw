@@ -90,10 +90,12 @@ var Kinds = []*Kind{
 		{Name: "mgmt-interface", Field: "mgmt_interface", Kind: vRef, Refs: ifaces, Help: "never filtered by policy"},
 		{Name: "app-identification", Field: "app_id", Kind: vEnum, Enum: []string{"on", "off"}, Help: "App Identification: name the application in each connection (on unless set off)"},
 		{Name: "ips", Field: "ips", Kind: vEnum, Enum: []string{"on", "off"}, Help: "IPS: inspect traffic of rules with an ips-profile (on unless set off)"},
-		{Name: "geoip-auto-update", Field: "geoip_auto_update", Kind: vEnum, Enum: []string{"on", "off"}, Help: "check daily for a newer country database while rules use countries (on unless set off)"},
+		{Name: "geoip-auto-update", Field: "geoip_auto_update", Kind: vEnum, Enum: []string{"on", "off"}, Help: "check daily for newer country and AS databases (on unless set off)"},
 		{Name: "ips-disabled-signatures", Field: "ips_disabled_signatures", Kind: vList, Hint: "<sid>", Help: "signature IDs to leave out of the IPS (false positives; the threat log shows SIDs)"},
 		{Name: "decryption", Field: "decryption", Kind: vEnum, Enum: []string{"on", "off", "observe"}, Help: "TLS decryption for connections a decryption-rule decrypts: on (default), off, or observe (log what it would decrypt, pass everything through)"},
 		{Name: "decryption-builtin-exclusions", Field: "decryption_builtin_exclusions", Kind: vEnum, Enum: []string{"on", "off"}, Help: "never decrypt SJB-OS's built-in list of banking, payment, health and government sites (on unless set off)"},
+		{Name: "update-check", Field: "update_check", Kind: vEnum, Enum: []string{"on", "off"}, Help: "check the update server daily and download a newer SJB-OS release (never installed without an admin; on unless set off)"},
+		{Name: "update-server", Field: "update_server", Kind: vStr, Hint: "<https-url>", Help: "update server (default https://updates.os.sjbconsulting.ai)"},
 	}},
 	{Name: "decryption-rule", Key: "decryption_rules", Ordered: true, Help: "which TLS connections to decrypt, first match wins (unmatched: not decrypted)", Attrs: []Attr{
 		{Name: "from", Field: "from", Kind: vList, Refs: zones, Any: true, Help: "source zones"},

@@ -323,6 +323,17 @@ func (d *Daemon) mgmtRoutes() []mgmtRoute {
 			v, err := d.RestoreBackup(c, req)
 			reply(w, v, err)
 		}},
+		{"GET /v1/updates", view(accounts.Upgrades), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			reply(w, d.Updates(), nil)
+		}},
+		{"POST /v1/updates/check", change(accounts.Upgrades), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			v, err := d.StartUpdateCheck(c, 20*time.Second)
+			reply(w, v, err)
+		}},
+		{"POST /v1/updates/install", change(accounts.Upgrades), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
+			v, err := d.InstallUpdate(c)
+			reply(w, v, err)
+		}},
 		{"POST /v1/reboot", change(accounts.Upgrades), func(w http.ResponseWriter, r *http.Request, c accounts.Caller) {
 			reply(w, map[string]bool{"rebooting": true}, d.Reboot(c))
 		}},

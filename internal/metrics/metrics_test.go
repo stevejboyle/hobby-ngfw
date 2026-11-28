@@ -277,4 +277,24 @@ func TestPrometheusGeoIP(t *testing.T) {
 	if !strings.Contains(buf.String(), "sjbos_asn_age_seconds 3600\n") {
 		t.Error("no sjbos_asn_age_seconds")
 	}
+	if strings.Contains(buf.String(), "sjbos_update_") {
+		t.Error("update metrics without online updates")
+	}
+	s.System.Updates = &Updates{Available: true, LastCheckOK: true}
+	buf.Reset()
+	WritePrometheus(&buf, s)
+	checkFormat(t, buf.String())
+	if !strings.Contains(buf.String(), "sjbos_update_available 1\n") || !strings.Contains(buf.String(), "sjbos_update_last_check_success 1\n") || strings.Contains(buf.String(), "sjbos_update_check_age_seconds") {
+		t.Error("update metrics, never checked")
+	}
+	age = 7200
+	s.System.Updates = &Updates{LastCheckOK: false, CheckAgeSeconds: &age}
+	buf.Reset()
+	WritePrometheus(&buf, s)
+	checkFormat(t, buf.String())
+	for _, want := range []string{"sjbos_update_available 0\n", "sjbos_update_last_check_success 0\n", "sjbos_update_check_age_seconds 7200\n"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("missing %q", want)
+		}
+	}
 }

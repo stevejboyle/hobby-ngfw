@@ -64,6 +64,7 @@ var operational = []Candidate{
 var showWhat = []Candidate{
 	{"status", "running revision and pending confirmation"},
 	{"version", "SJB-OS version and upgrade history"},
+	{"system", "system updates: the update server and a downloaded release"},
 	{"running", "the running config"},
 	{"candidate", "the candidate config"},
 	{"diff", "running vs candidate"},
@@ -167,9 +168,13 @@ func OperationalCandidates(words []string) []Candidate {
 	case words[0] == "show" && len(words) == 2 && words[1] == "statistics":
 		return []Candidate{{"1h", "the last hour (default)"}, {"24h", "the last day"}, {"7d", "the last week"}}
 	case words[0] == "request" && len(words) == 1:
-		return []Candidate{{"ips", "the IPS"}, {"decryption", "TLS decryption"}, {"management-certificate", "the web UI and tag API certificate"}, {"user", "add, change or delete users (superusers)"}, {"role", "add, change or delete custom roles (superusers)"}, {"snmp", "SNMP credentials (superusers)"}, {"api-key", "add or delete API keys (superusers)"}, {"system", "reboot the appliance"}}
+		return []Candidate{{"ips", "the IPS"}, {"decryption", "TLS decryption"}, {"management-certificate", "the web UI and tag API certificate"}, {"user", "add, change or delete users (superusers)"}, {"role", "add, change or delete custom roles (superusers)"}, {"snmp", "SNMP credentials (superusers)"}, {"api-key", "add or delete API keys (superusers)"}, {"system", "reboot the appliance; check for and install SJB-OS updates"}}
 	case words[0] == "request" && len(words) == 2 && words[1] == "system":
-		return []Candidate{{"reboot", "restart the appliance (traffic stops for about a minute)"}}
+		return []Candidate{{"reboot", "restart the appliance (traffic stops for about a minute)"}, {"upgrade", "check the update server, or install a downloaded release"}}
+	case words[0] == "request" && len(words) == 3 && words[1] == "system" && words[2] == "upgrade":
+		return []Candidate{{"check", "ask the update server for a newer release now (downloads it)"}, {"install", "install the downloaded release; ngfwd restarts"}}
+	case words[0] == "show" && len(words) == 2 && words[1] == "system":
+		return []Candidate{{"updates", "the update server, the last check, a release waiting to install"}}
 	case words[0] == "request" && len(words) == 2 && words[1] == "snmp":
 		return []Candidate{{"credential", "v3 users and v2c communities"}}
 	case words[0] == "request" && len(words) == 3 && words[1] == "snmp" && words[2] == "credential":

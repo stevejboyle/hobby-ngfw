@@ -95,6 +95,13 @@ func WritePrometheus(out io.Writer, s Snapshot) error {
 		}
 		p.one("sjbos_os_packages_pending", "gauge", "Bundled Debian packages not installed yet.", float64(o.PackagesPending))
 	}
+	if u := s.System.Updates; u != nil {
+		p.one("sjbos_update_available", "gauge", "1 when a newer SJB-OS release is downloaded and ready to install.", b2f(u.Available))
+		p.one("sjbos_update_last_check_success", "gauge", "1 unless the last update server check failed.", b2f(u.LastCheckOK))
+		if u.CheckAgeSeconds != nil {
+			p.one("sjbos_update_check_age_seconds", "gauge", "Seconds since the last update server check.", *u.CheckAgeSeconds)
+		}
+	}
 	if g := s.GeoIP; g != nil {
 		p.one("sjbos_geoip_age_seconds", "gauge", "Seconds since the country database in use was installed.", g.AgeSeconds)
 		p.one("sjbos_geoip_last_update_success", "gauge", "1 unless the last country database update check failed.", b2f(g.LastUpdateOK))

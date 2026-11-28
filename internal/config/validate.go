@@ -7,6 +7,7 @@ import (
 	"github.com/stevejboyle/sjb-os/internal/appid"
 	"github.com/stevejboyle/sjb-os/internal/geoip"
 	"net/netip"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -57,6 +58,16 @@ func (c *Config) Validate() error {
 	case "", "on", "off":
 	default:
 		v.add("system.geoip_auto_update", "must be on or off, got %q", c.System.GeoIPAutoUpdate)
+	}
+	switch c.System.UpdateCheck {
+	case "", "on", "off":
+	default:
+		v.add("system.update_check", "must be on or off, got %q", c.System.UpdateCheck)
+	}
+	if c.System.UpdateServer != "" {
+		if err := validUpdateServer(c.System.UpdateServer); err != nil {
+			v.add("system.update_server", "%v", err)
+		}
 	}
 
 	zones := v.names("zones", len(c.Zones), func(i int) string { return c.Zones[i].Name })
@@ -609,3 +620,25 @@ func CountryCode(s string) (string, bool) {
 
 // isAnyList reports whether a match list matches everything.
 func isAnyList(vals []string) bool { return len(vals) == 0 || (len(vals) == 1 && vals[0] == Any) }
+
+// validUpdateServer: an https URL naming a host, optionally with a path
+// prefix, and nothing else (no user, query or fragment).
+func validUpdateServer(s string) error {
+	u, err := url.Parse(s)
+	if err != nil {
+		return fmt.Errorf("not a URL: %q", s)
+	}
+	switch {
+	case u.Scheme != "https":
+		return fmt.Errorf("must be an https URL, got %q", s)
+	case u.Host == "" || u.Opaque != "":
+		return fmt.Errorf("must name a host, like https://updates.example.com, got %q", s)
+	case u.User != nil:
+		return fmt.Errorf("must not hold a user name or password")
+	case u.RawQuery != "" || u.Fragment != "" || strings.HasSuffix(s, "?") || strings.HasSuffix(s, "#"):
+		return fmt.Errorf("must not have a query or fragment, got %q", s)
+	case strings.ContainsAny(s, " \t\n\"'"):
+		return fmt.Errorf("must not contain spaces or quotes")
+	}
+	return nil
+}

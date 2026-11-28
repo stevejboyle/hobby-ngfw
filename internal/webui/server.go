@@ -407,6 +407,17 @@ func New(d *daemon.Daemon, o Options) http.Handler {
 	mux.HandleFunc("POST /ui/api/upgrade/start", s.auth(accounts.NeedChange(accounts.Upgrades), s.upgradeStart))
 	mux.HandleFunc("POST /ui/api/upgrade/rollback", s.auth(accounts.NeedChange(accounts.Upgrades), s.upgradeRollback))
 	mux.HandleFunc("POST /ui/api/reboot", s.auth(accounts.NeedChange(accounts.Upgrades), s.reboot))
+	mux.HandleFunc("GET /ui/api/updates", s.auth(accounts.NeedView(accounts.Upgrades), func(w http.ResponseWriter, r *http.Request, _ *session, _ string) {
+		reply(w, s.d.Updates(), nil)
+	}))
+	mux.HandleFunc("POST /ui/api/updates/check", s.auth(accounts.NeedChange(accounts.Upgrades), func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+		v, err := s.d.StartUpdateCheck(ss.caller(), 20*time.Second)
+		reply(w, v, err)
+	}))
+	mux.HandleFunc("POST /ui/api/updates/install", s.auth(accounts.NeedChange(accounts.Upgrades), func(w http.ResponseWriter, r *http.Request, ss *session, _ string) {
+		v, err := s.d.InstallUpdate(ss.caller())
+		reply(w, v, err)
+	}))
 	s.accountRoutes(mux)
 	mux.HandleFunc("/ui/api/", func(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, "no such API call")
@@ -587,6 +598,7 @@ func (s *server) status(w http.ResponseWriter, r *http.Request, _ *session, _ st
 			out["version"] = us.Version
 		}
 	}
+	out["update_ready"] = s.d.Updates().UpdateReady
 	host, _ := os.Hostname()
 	out["hostname"] = host
 	counts := map[string]int{}

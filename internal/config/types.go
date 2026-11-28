@@ -201,6 +201,13 @@ type System struct {
 	// GeoIPAutoUpdate turns the daily check for a newer country database
 	// on (also when unset) or off.
 	GeoIPAutoUpdate string `yaml:"geoip_auto_update,omitempty" json:"geoip_auto_update"`
+	// UpdateCheck turns the daily check of the update server for a newer
+	// SJB-OS release on (also when unset) or off. A newer release is
+	// downloaded and verified, never installed without an admin.
+	UpdateCheck string `yaml:"update_check,omitempty" json:"update_check"`
+	// UpdateServer is the update server's https URL; unset means
+	// DefaultUpdateServer.
+	UpdateServer string `yaml:"update_server,omitempty" json:"update_server"`
 	// IPSDisabledSignatures are signature IDs left out of the IPS rules
 	// (false positives).
 	IPSDisabledSignatures []string `yaml:"ips_disabled_signatures,omitempty" json:"ips_disabled_signatures"`
@@ -286,3 +293,19 @@ type Rule struct {
 // GeoIPAutoUpdateOn reports whether the appliance checks daily for a newer
 // country database.
 func (s System) GeoIPAutoUpdateOn() bool { return s.GeoIPAutoUpdate != "off" }
+
+// DefaultUpdateServer is where appliances look for new releases unless
+// system update_server says otherwise.
+const DefaultUpdateServer = "https://updates.os.sjbconsulting.ai"
+
+// UpdateCheckOn reports whether the appliance checks daily for a newer
+// release.
+func (s System) UpdateCheckOn() bool { return s.UpdateCheck != "off" }
+
+// UpdateServerURL is the update server in use.
+func (s System) UpdateServerURL() string {
+	if s.UpdateServer == "" {
+		return DefaultUpdateServer
+	}
+	return s.UpdateServer
+}

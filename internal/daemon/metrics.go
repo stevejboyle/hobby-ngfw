@@ -277,6 +277,7 @@ func (d *Daemon) collect() metrics.Snapshot {
 	s.Hostname, _ = os.Hostname()
 	s.System = metrics.ReadSystem(root, []string{"/", "/var"})
 	s.System.OS = d.osState()
+	s.System.Updates = d.updatesMetrics()
 	s.Sessions = metrics.ReadSessions(root)
 	d.section(&s, "system", d.Now(), start, nil)
 	cfg := d.metrics.running.Load()

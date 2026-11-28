@@ -67,11 +67,11 @@ var Areas = []AreaInfo{
 	{Tags, "Tags", "tag registrations (tag API key values: superusers only)", false},
 	{Monitoring, "Monitoring", "logs, statistics, applications, ARP, routing status, ping", true},
 	{Revisions, "Revisions", "commit history; change: confirm a commit, roll back", false},
-	{Upgrades, "Upgrades", "SJB-OS upgrades and upgrade rollback", false},
+	{Upgrades, "Upgrades", "SJB-OS upgrades and upgrade rollback; online update checks and the update server", false},
 }
 
 // ConfigAreas are the areas that cover parts of the firewall config.
-var ConfigAreas = []Area{Policy, Network, DHCP, IPS, Decryption, Logging}
+var ConfigAreas = []Area{Policy, Network, DHCP, IPS, Decryption, Logging, Upgrades}
 
 func knownArea(a Area) (AreaInfo, bool) {
 	for _, i := range Areas {

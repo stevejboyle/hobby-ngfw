@@ -441,6 +441,12 @@ func TestCountries(t *testing.T) {
 			c.DecryptionRules = []DecryptionRule{{Name: "d", Source: []string{"g"}, Action: "decrypt"}}
 		}, `group "g" has countries in it`},
 		{"bad auto-update", func(c *Config) { c.System.GeoIPAutoUpdate = "daily" }, "geoip_auto_update"},
+		{"bad update-check", func(c *Config) { c.System.UpdateCheck = "daily" }, "update_check"},
+		{"http update server", func(c *Config) { c.System.UpdateServer = "http://updates.example.com" }, "must be an https URL"},
+		{"update server without host", func(c *Config) { c.System.UpdateServer = "https:///x" }, "must name a host"},
+		{"update server with user", func(c *Config) { c.System.UpdateServer = "https://u:p@updates.example.com" }, "user name"},
+		{"update server with query", func(c *Config) { c.System.UpdateServer = "https://updates.example.com/?a=b" }, "query"},
+		{"update server with space", func(c *Config) { c.System.UpdateServer = "https://updates.example.com/a b" }, "spaces"},
 	} {
 		c := base()
 		tt.mod(c)
@@ -454,5 +460,21 @@ func TestCountries(t *testing.T) {
 	}
 	if _, ok := CountryCode("countries"); ok {
 		t.Error("not a country reference")
+	}
+}
+
+func TestUpdateSettings(t *testing.T) {
+	var s System
+	if !s.UpdateCheckOn() || s.UpdateServerURL() != DefaultUpdateServer {
+		t.Errorf("defaults: %v %q", s.UpdateCheckOn(), s.UpdateServerURL())
+	}
+	s.UpdateCheck, s.UpdateServer = "off", "https://updates.example.com/sjb"
+	if s.UpdateCheckOn() || s.UpdateServerURL() != "https://updates.example.com/sjb" {
+		t.Errorf("set: %v %q", s.UpdateCheckOn(), s.UpdateServerURL())
+	}
+	for _, ok := range []string{"https://updates.example.com", "https://updates.example.com/", "https://10.0.0.5:8443/sjb-os"} {
+		if err := validUpdateServer(ok); err != nil {
+			t.Errorf("%s: %v", ok, err)
+		}
 	}
 }

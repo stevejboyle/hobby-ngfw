@@ -186,6 +186,7 @@ async function refresh() {
   state.cand = normalise(cand);
   state.clockSkew = Date.parse(st.now) - Date.now();
   $("#version").textContent = st.version ? "v" + st.version : "";
+  if (st.update_ready && can("upgrades")) $("#version").append(" ", h("a", { href: "#system", class: "update-pill", title: "A newer SJB-OS release is downloaded and ready to install (Administration)" }, "update ready"));
   $("#host").textContent = `${state.user}@${st.hostname || "sjb-fw"}` + (state.me ? ` (${state.me.role})` : "");
   renderBars();
 }
@@ -2262,9 +2263,47 @@ function osPackagesPanel(up) {
         h("tbody", {}, pk.changes.map((c) => h("tr", {}, h("td", {}, c.package), h("td", {}, c.from), h("td", {}, c.to), h("td", {}, c.security ? "security" : ""))))))) : null);
 }
 
+// onlineUpdatesPanel: the update server, the last check, and the
+// downloaded release with its Install button.
+function onlineUpdatesPanel(u, installed) {
+  if (!u || u.error) return u && u.error ? h("p", { class: "error" }, u.error) : null;
+  if (!u.available) return null;
+  const change = can("upgrades", "change");
+  const msg = h("div", { class: "muted" });
+  const lc = u.last_check || {};
+  const when = lc.time ? new Date(lc.time).toLocaleString() : null;
+  const check = h("button", { onclick: async () => {
+    check.disabled = true; msg.textContent = "Checking the update server…";
+    try {
+      const r = await api("POST", "updates/check", {});
+      msg.textContent = r.checking ? "Still downloading; this page shows the result when it's done." : "";
+      if (r.checking) setTimeout(() => route(), 15000); else route();
+    } catch (e) { toast(e.message); route(); }
+  } }, "Check now");
+  const ready = u.update_ready && u.staged;
+  const install = ready && change ? h("button", { class: "primary", onclick: () => confirmDialog(`Install SJB-OS ${u.staged.version}?`,
+    `It replaces ${u.installed}. ngfwd restarts and the firewall keeps its rules meanwhile; this page reconnects when it's back. If ngfwd doesn't come back healthy, ${u.installed} is restored automatically.`, async () => {
+      await api("POST", "updates/install", {}); toast("Installing…"); waitForUpgrade(installed);
+    }, "Install") }, `Install SJB-OS ${u.staged.version}`) : null;
+  return h("div", { class: "spaced" },
+    h("h3", {}, "Online updates"),
+    h("p", {}, "Update server: ", h("span", { class: "mono" }, u.server), ". ",
+      u.enabled ? "Checked daily over the outside link; a newer release is downloaded and verified, then waits here for you to install it." : h("span", {}, "The daily check is off (", h("span", { class: "mono" }, "set system update-check on"), "); Check now still works.")),
+    u.checking ? h("p", {}, h("strong", {}, "A check is running now.")) : null,
+    when ? h("p", { class: "small" }, `Last check ${when}: `, h("span", { class: lc.ok ? "" : "error" }, lc.ok ? lc.result : "failed: " + lc.result),
+      lc.latest && lc.latest.notes ? [" ", h("a", { href: lc.latest.notes, target: "_blank", rel: "noopener" }, `Release notes for ${lc.latest.version}`)] : null)
+      : (u.checking ? null : h("p", { class: "small muted" }, "Not checked yet.")),
+    ready ? h("div", { class: "notice" }, h("strong", {}, `SJB-OS ${u.staged.version} is downloaded and verified`), ` (${u.staged.size >= 1048576 ? Math.round(u.staged.size / 1048576) + " MB" : Math.max(1, Math.round(u.staged.size / 1024)) + " KB"}). `,
+      change ? install : h("span", { class: "muted" }, "Your role can't install it.")) : null,
+    change ? h("div", { class: "row" }, check, msg) : null);
+}
+
 async function pageSystem() {
-  let up = null;
-  if (can("upgrades")) { try { up = await api("GET", "upgrade"); } catch (e) { up = { error: e.message }; } }
+  let up = null, upd = null;
+  if (can("upgrades")) {
+    try { up = await api("GET", "upgrade"); } catch (e) { up = { error: e.message }; }
+    try { upd = await api("GET", "updates"); } catch (e) { upd = { error: e.message }; }
+  }
   const file = h("input", { type: "file", accept: ".upgrade" });
   const status = h("div", { class: "muted" });
   const install = h("button", { class: "primary hidden" }, "Install");
@@ -2293,8 +2332,10 @@ async function pageSystem() {
     !up ? null : h("section", { class: "panel" }, h("h2", {}, "Upgrade"),
       up.error ? h("p", { class: "error" }, up.error) : h("div", {},
         h("p", {}, `Installed: SJB-OS ${up.version}.`, up.in_progress ? h("strong", {}, " An upgrade is in progress.") : null),
-        h("p", { class: "muted small" }, "Upgrades are signed bundles (.upgrade files from the GitHub release). Config, tags and revisions are kept. If ngfwd does not come back healthy, the previous version is restored automatically. Bundles also carry Debian's security and point-release updates, the kernel included; they install in the background after the upgrade, and a rollback puts the earlier versions back."),
         osPackagesPanel(up),
+        onlineUpdatesPanel(upd, up.version),
+        h("h3", {}, "Upload a bundle"),
+        h("p", { class: "muted small" }, "Upgrades are signed bundles (.upgrade files from the GitHub release). Config, tags and revisions are kept. If ngfwd does not come back healthy, the previous version is restored automatically. Bundles also carry Debian's security and point-release updates, the kernel included; they install in the background after the upgrade, and a rollback puts the earlier versions back."),
         can("upgrades", "change") ? [h("div", { class: "row" }, h("label", {}, "Bundle", file), upload, install), status] : h("p", { class: "muted small" }, "Your role can see upgrades but not install them."),
         up.rollback_to && can("upgrades", "change") ? h("p", {}, h("button", { onclick: () => confirmDialog(`Roll back to SJB-OS ${up.rollback_to}?`, "The files the last upgrade replaced are restored and ngfwd restarts.", async () => {
           await api("POST", "upgrade/rollback", {}); toast("Rolling back…"); waitForUpgrade(up.version);

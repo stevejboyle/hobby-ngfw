@@ -36,6 +36,8 @@ const shellHelp = `SJB-OS commands:
   show status                 running revision, uncommitted changes, pending confirm
   show version                SJB-OS version, upgrade history, OS packages
                               and whether a reboot is needed
+  show system updates         the update server, the last check, and a
+                              downloaded release waiting to be installed
   show running | candidate    the config, as YAML
   show diff                   running vs candidate
   show ruleset                nftables ruleset the candidate compiles to
@@ -124,6 +126,12 @@ const shellHelp = `SJB-OS commands:
 
   request ips update          download the latest IPS signatures now
   request geoip update        check DB-IP for newer country and AS databases now
+  request system upgrade check
+                              ask the update server for a newer SJB-OS release
+                              now; a newer one is downloaded and verified
+  request system upgrade install
+                              install the downloaded release (show system
+                              updates says which); ngfwd restarts
   request system reboot       restart the appliance (onto a kernel an upgrade
                               installed: show version says when); traffic
                               stops for about a minute
@@ -532,6 +540,10 @@ func runShellLine(line string, in io.Reader) error {
 			return requestGeoIPUpdate()
 		case "system reboot":
 			return requestReboot(in)
+		case "system upgrade check":
+			return requestUpgradeCheck()
+		case "system upgrade install":
+			return requestUpgradeInstall(in)
 		case "decryption ca generate":
 			return requestDecryptionCAGenerate(in)
 		case "decryption ca import":
@@ -539,7 +551,7 @@ func runShellLine(line string, in io.Reader) error {
 		case "decryption learned clear":
 			return requestDecryptionLearnedClear()
 		}
-		return fmt.Errorf("request ips update | geoip update | system reboot | decryption ca generate | decryption ca import | decryption learned clear | management-certificate import|self-signed | log-forwarding test NAME | snmp credential ... | api-key add|delete ... | backup ... | user ... | role ...")
+		return fmt.Errorf("request ips update | geoip update | system reboot | system upgrade check|install | decryption ca generate | decryption ca import | decryption learned clear | management-certificate import|self-signed | log-forwarding test NAME | snmp credential ... | api-key add|delete ... | backup ... | user ... | role ...")
 	case "ping":
 		return pingCmd(rest)
 	case "passwd":
@@ -560,7 +572,13 @@ func showCmd(args []string) error {
 	case what == "status" && len(rest) == 0:
 		return dispatch("status", nil)
 	case what == "version" && len(rest) == 0:
-		return upgradeCmd([]string{"status"})
+		if err := upgradeCmd([]string{"status"}); err != nil {
+			return err
+		}
+		printUpdateLine()
+		return nil
+	case what == "system" && len(rest) == 1 && rest[0] == "updates":
+		return showUpdates()
 	case (what == "running" || what == "candidate") && len(rest) == 0:
 		return dispatch("show", []string{what})
 	case what == "diff" && len(rest) == 0:

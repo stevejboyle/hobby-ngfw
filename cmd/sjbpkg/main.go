@@ -4,6 +4,7 @@
 //	sjbpkg keygen -out KEYFILE [-name NAME]
 //	sjbpkg build -root DIR -version V [-min-from V] -key KEYFILE -o FILE
 //	sjbpkg verify -keys DIR FILE
+//	sjbpkg index -bundle FILE -url URL [-notes URL] -key KEYFILE -o DIR
 package main
 
 import (
@@ -22,6 +23,8 @@ const usage = `usage:
   sjbpkg build -root DIR -version V [-min-from V] -key KEYFILE -o FILE
                                               sign the overlay under DIR into a bundle
   sjbpkg verify -keys DIR FILE              check a bundle against the *.pub keys in DIR
+  sjbpkg index -bundle FILE -url URL [-notes URL] -key KEYFILE -o DIR
+                                              write and sign DIR/v1/stable.json for an update server
   sjbpkg geoip-convert [-in F -month M] -o DIR
                                               the DB-IP country database, in the appliance's format
 `
@@ -39,6 +42,8 @@ func main() {
 		err = build(os.Args[2:])
 	case "verify":
 		err = verify(os.Args[2:])
+	case "index":
+		err = index(os.Args[2:])
 	case "geoip-convert":
 		err = geoipConvert(os.Args[2:])
 	default:

@@ -234,6 +234,7 @@ show the same):
 | Command | What it does |
 | --- | --- |
 | `show status`, `show version` | Running revision, pending confirm; SJB-OS version and upgrade history |
+| `show system updates`, `request system upgrade check\|install` | Online updates: the update server, the last check, a downloaded release; check now, install it (see [Online updates](#online-updates)) |
 | `show running`, `show candidate`, `show diff` | The config as YAML, and what changed |
 | `show ruleset`, `show revisions`, `show revision N` | Compiled nftables ruleset; commit history; an old config |
 | `show tags [TAG]`, `show interfaces`, `show api-keys` | Registrations, addresses, tag API keys |
@@ -821,7 +822,7 @@ their own account.
 | `tags` | Tag registrations |
 | `monitoring` | Logs, statistics, applications, ARP, routing status, ping (view only) |
 | `revisions` | Commit history; change: confirm a commit, roll back |
-| `upgrades` | SJB-OS upgrades and upgrade rollback |
+| `upgrades` | SJB-OS upgrades and upgrade rollback; online update checks and installs, and the `update-check` and `update-server` settings |
 
 Users and roles themselves are for superusers only; no custom role can be
 given them. A role with view on any config area sees the whole config (it
@@ -1599,6 +1600,8 @@ certificate) serves Prometheus metrics, all named `sjbos_*`:
 - **Tags:** addresses per tag.
 - **Services:** up or down, and whether the config needs them.
 - **System health:** CPU, load, memory, disk and uptime.
+- **Updates:** OS packages and a pending reboot; a downloaded SJB-OS release
+  waiting to be installed, and the last update check.
 - **Config:** the running revision, uncommitted changes, and whether the
   last commit succeeded.
 
@@ -1838,6 +1841,10 @@ programs and appliance files (ngfwd, fwctl, units, scripts) and nothing else:
 config, revisions, tags, keys, certificates, passwords and network settings
 stay as they are.
 
+**Online (from 0.9.17):** the appliance checks its update server once a day,
+downloads a newer release and verifies it, then waits for you to install it;
+see [Online updates](#online-updates) below.
+
 **From the web UI:** System → Administration → Upgrade, choose the `.upgrade` file, *Upload
 and check* (the signature is verified before anything is installed), then
 *Install*. The page reconnects when ngfwd is back; log in again.
@@ -1875,6 +1882,60 @@ newer versions (`-reinstall` re-applies the installed one). Versions are
 MAJOR.MINOR.PATCH with an optional suffix: `-rNN` is a revision build after
 that release (0.6.1 counts as 0.6.1-r00, then r01, r02, ... compared as
 numbers), and any other suffix, such as `-rc1`, comes before the release.
+
+### Online updates
+
+From 0.9.17 the appliance looks for new releases itself. Once a day, over
+the outside link, it asks its update server for the newest release. When
+that release is newer than the one installed, it downloads it, checks it
+and keeps it, ready to install. **It never installs anything on its own:**
+an admin installs it when it suits them.
+
+```
+admin@sjb-fw> show system updates
+update server: https://updates.os.sjbconsulting.ai
+daily check:   on; checked daily over the outside link
+installed:     SJB-OS 0.9.17-r01
+last check:    2026-12-04 09:12, downloaded SJB-OS 0.9.18-r01 (signed by sjb-os-release); ready to install
+latest:        SJB-OS 0.9.18-r01  (https://github.com/stevejboyle/sjb-os/releases/tag/v0.9.18-r01)
+downloaded:    SJB-OS 0.9.18-r01 (167 MB, 2026-12-04 09:12), ready: request system upgrade install
+admin@sjb-fw> request system upgrade install
+Install SJB-OS 0.9.18-r01 over 0.9.17-r01 now? ngfwd restarts (traffic keeps flowing); the session reconnects when it is back. [yes/no] yes
+```
+
+- **Check now:** `request system upgrade check` (or *Check now* on System →
+  Administration). A download can take a few minutes; `show system
+  updates` shows when it's done.
+- **Install:** `request system upgrade install`, or the *Install* button on
+  the same page. It is the same upgrade as an uploaded bundle: the
+  automatic restore if ngfwd doesn't come back healthy, and the rollback
+  afterwards. It is refused while a commit waits for confirmation. `show
+  version` and the web UI's header say when a release is waiting.
+- **What is checked:**
+  - The server publishes a small release index (`v1/stable.json`) signed
+    with the SJB-OS release key. The appliance checks that signature, and
+    refuses an index older than one it has already accepted.
+  - The bundle the index names is downloaded over HTTPS, and its size and
+    SHA-256 must match the index.
+  - Then the bundle's own signature is verified, just as for an upload.
+  - Only newer versions are downloaded, and only when there is room on the
+    disk.
+  - A failed check leaves a downloaded release in place and is reported in
+    `show system updates`, the system log, and the
+    `sjbos_update_last_check_success` metric.
+- **What the server sees:** plain HTTPS GETs from the appliance's outside
+  address, with the User-Agent `SJB-OS/<version>`. Nothing else is sent.
+- **Settings** (permission area `upgrades`):
+  - `set system update-check off` stops the daily check.
+    `request system upgrade check` still works.
+  - `set system update-server https://HOST[/PATH]` uses another server, such
+    as your own mirror of `v1/stable.json`, `v1/stable.json.sig` and the
+    bundles. `delete system update-server` goes back to the default.
+- **No internet access:** turn the check off and upload bundles by hand as
+  before.
+- **Monitoring:** Prometheus has `sjbos_update_available` (1 when a release
+  is downloaded and waiting), `sjbos_update_last_check_success` and
+  `sjbos_update_check_age_seconds`. The status API has `GET /v1/updates`.
 
 ### Debian security updates and the kernel
 

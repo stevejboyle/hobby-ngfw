@@ -184,7 +184,7 @@ func TestConfigCandidates(t *testing.T) {
 		{"set rule allow-web log", "", "yes no"},
 		{"set route r1 destination", "", "<prefix>"},
 		{"delete rule allow-web service", "", "web ["},
-		{"set system", "", "hostname mgmt-interface app-identification ips geoip-auto-update ips-disabled-signatures decryption decryption-builtin-exclusions"},
+		{"set system", "", "hostname mgmt-interface app-identification ips geoip-auto-update ips-disabled-signatures decryption decryption-builtin-exclusions update-check update-server"},
 		{"move rule allow-web", "", "top bottom before after"},
 		{"move rule allow-web before", "", "block-quarantined block-p2p allow-dns"},
 		{"run show", "ro", "routes roles role"},

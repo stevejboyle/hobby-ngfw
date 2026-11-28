@@ -457,3 +457,23 @@ func TestCountriesAndGeoIP(t *testing.T) {
 		t.Errorf("rule after save: %v", r)
 	}
 }
+
+func TestUpdatesHandlers(t *testing.T) {
+	h, _, d := setup(t, nil)
+	c := login(t, h)
+	code, out, _ := c.do("GET", "/ui/api/updates", nil)
+	if code != 200 || out["available"] != false || out["server"] != "https://updates.os.sjbconsulting.ai" {
+		t.Fatalf("updates: %d %v", code, out)
+	}
+	if code, _, _ := c.do("POST", "/ui/api/updates/check", map[string]any{}); code != 400 {
+		t.Errorf("check without online updates: %d", code)
+	}
+	if code, _, _ := c.do("POST", "/ui/api/updates/install", map[string]any{}); code != 400 {
+		t.Errorf("install without online updates: %d", code)
+	}
+	_ = d
+	code, out, _ = c.do("GET", "/ui/api/status", nil)
+	if code != 200 || out["update_ready"] != false {
+		t.Errorf("status: %d %v", code, out["update_ready"])
+	}
+}

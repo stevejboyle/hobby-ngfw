@@ -5,6 +5,23 @@ the attribution as they are; fill in the rest. Describe what was built and
 tested, never what it is equivalent to, and don't compare it to commercial
 products.
 
+## Publishing (after `gh release create`)
+
+Online updates read the release index on the update server. With Steve's
+go-ahead, sign a new index for the release and push it to the Pages repo
+that serves `updates.os.sjbconsulting.ai`:
+
+```bash
+go run ./cmd/sjbpkg index -bundle build/appliance/sjb-os-<version>.upgrade \
+  -url https://github.com/stevejboyle/sjb-os/releases/download/v<version>/sjb-os-<version>.upgrade \
+  -notes https://github.com/stevejboyle/sjb-os/releases/tag/v<version> \
+  -key ~/.config/sjb-os/upgrade-signing.key -o ../sjb-os-updates
+```
+
+Then commit and push `v1/stable.json` and `v1/stable.json.sig` in
+`../sjb-os-updates`. Appliances on 0.9.17 or later find the release within a
+day.
+
 ---
 
 **An experimental demonstration of AI-generated software for isolated lab

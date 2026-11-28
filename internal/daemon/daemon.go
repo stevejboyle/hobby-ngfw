@@ -105,6 +105,8 @@ type Daemon struct {
 	// geoLookup is the country and AS databases for the logs' lookups
 	// (GeoOf), kept apart from d.mu for the same reason.
 	geoLookup atomic.Pointer[geoDBs]
+	// updates is the online update state (updates.go); nil without it.
+	updates atomic.Pointer[updatesState]
 	// ipsCodes are the running config's IPS exception codes (ips.go).
 	ipsCodes map[int]uint32
 	// recovery, when set, says live enforcement may not match the recorded

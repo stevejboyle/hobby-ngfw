@@ -39,8 +39,8 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 
 ## The evidence
 
-- **Time:** 20 days of calendar time (2026-11-08 to 2026-11-27, 50
-  releases through 0.9.15-r01) and about 36.8 hours of Steve's active
+- **Time:** 20 days of calendar time (2026-11-08 to 2026-11-27, 51
+  releases through 0.9.16-r01) and about 38.1 hours of Steve's active
   time. The first milestone took nine days (to 0.9.9-r08, 38 releases)
   and 27.3 hours, of which 22.9 took it to its first full release
   (0.9.9-r03) and 0.6 went on TLS decryption (0.9.9-r04 to r06). The
@@ -50,10 +50,10 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
   and SNMP) and its hardening, and Debian security updates and the
   kernel through the signed bundles. The hours are estimates of active time derived from the session
   transcripts, not stopwatch measurements: a gap between Steve's messages
-  counts in full up to 30 minutes and as 5 minutes beyond that, and eight
+  counts in full up to 30 minutes and as 5 minutes beyond that, and nine
   figures (three of 0.5 hours: his ChatGPT reviews and the 2026-11-21
   follow-ups; 1.3 hours for 0.9.13-r01; 0.3 for 0.9.13-r02; 0.8 for
-  0.9.13-r03; 1.0 for 0.9.14-r01; 1.3 for 0.9.15-r01) are his own
+  0.9.13-r03; 1.0 for 0.9.14-r01; 1.3 for 0.9.15-r01; 1.3 for 0.9.16-r01) are his own
   estimates. Row by row:
   [docs/effort-log.md](docs/effort-log.md).
 - **AI cost:** a $20/month Claude Pro plan. The 2.4 billion tokens it
@@ -84,7 +84,7 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
   `deploy/appliance/soak-test.sh` runs the appliance under continuous
   traffic, monitoring, commits and failures for a set time (20 minutes by
   default, 24 hours for the long run), recording resource use.
-- **Releases:** 50 through 2026-11-27 (0.9.15-r01); the 38 in the first
+- **Releases:** 51 through 2026-11-27 (0.9.16-r01); the 38 in the first
   nine days (through 0.9.9-r08) were each gated by the boot test. Since r08,
   version bumps and the r10 fix get the boot test, and other revisions
   run the tests that cover their change. The public history starts at
@@ -95,9 +95,9 @@ AI (ChatGPT) and by the automated tests and boot tests described below.
 
 | | Built the usual way (estimate) | Built with AI (from the record) |
 | --- | --- | --- |
-| Time to build | About 16 months | 20 days, Nov 8 to 27, 2026 (to 0.9.15-r01) |
+| Time to build | About 16 months | 20 days, Nov 8 to 27, 2026 (to 0.9.16-r01) |
 | People | One specialist, or about eight engineers | One person directing AI |
-| Human hours | 3,100 to 19,100 engineering hours | About 36.8 hours over those 20 days (27.3 in the first nine), estimated from the session transcripts |
+| Human hours | 3,100 to 19,100 engineering hours | About 38.1 hours over those 20 days (27.3 in the first nine), estimated from the session transcripts |
 | Cost | $460,000 to $1.8 million in salary and benefits | A $20/month Claude Pro plan ($760 of tokens at API list prices) |
 
 The left column is a model-based estimate; the right comes from the
